@@ -40,6 +40,7 @@ buildSync({
 })
 
 const h = createRequire(join(work, 'x.cjs'))('./history.bundle.cjs')
+const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -118,6 +119,53 @@ ok(row('dead') && row('dead').gone === true, 'a folder that has been deleted is 
 // being unopenable - only the button changes.
 ok(rows.length === 2, 'and the row itself is kept - its output is still readable', rows.length)
 
+// A closed client chat lives INSIDE a temporary copy. Once the empty copy is swept,
+// History must use the same client's permanent folder and keep the exact conversation.
+const repo = join(work, 'clients')
+const client = join(repo, 'clients', 'client-example')
+const refs = join(repo, '.git', 'refs', 'heads')
+mkdirSync(client, { recursive: true })
+mkdirSync(refs, { recursive: true })
+writeFileSync(join(refs, 'lane-c'), '1'.repeat(40) + '\n')
+const removedCopy = join(work, 'clients-c')
+const saved = {
+  id: 'client-copy', startedAt: Date.now(), endedAt: Date.now(),
+  title: 'Example client', agent: 'codex', resumeId: 'exact-example-conversation',
+  cwd: join(removedCopy, 'clients', 'client-example')
+}
+const clientMeta = join(dir, 'client-copy.json')
+const clientRow = () => h.list().find(r => r.id === 'client-copy')
+const writeClient = (change = {}) => writeFileSync(clientMeta, JSON.stringify({ ...saved, ...change }))
+writeClient()
+let recovered = clientRow()
+ok(recovered?.gone === false, 'a client in a swept copy remains openable', JSON.stringify(recovered))
+ok(recovered?.cwd === client, 'Open again receives the permanent CLIENT folder, not its project root', recovered?.cwd)
+ok(recovered?.resumeId === saved.resumeId, 'recovery preserves the exact conversation id', recovered?.resumeId)
+ok(JSON.parse(readFileSync(clientMeta, 'utf8')).cwd === saved.cwd, 'reading history preserves the original saved path')
+ok(!readdirSync(work).includes('clients-c'), 'listing History does not recreate a swept copy')
+
+// Existing copies retain their own work. This is recovery from a swept root, not a
+// reason to jump to another checkout when somebody removed a client inside a live one.
+mkdirSync(removedCopy)
+recovered = clientRow()
+ok(recovered?.gone === true && recovered.cwd === saved.cwd, 'a surviving copy with a missing client is left alone')
+rmSync(removedCopy, { recursive: true })
+
+// A sibling repository and a suffix alone do not prove a copy. The original lane
+// branch must still be recorded in that repository, including when refs are packed.
+rmSync(join(refs, 'lane-c'))
+recovered = clientRow()
+ok(recovered?.gone === true && recovered.cwd === saved.cwd, 'an unproven similarly named folder remains missing')
+writeFileSync(join(repo, '.git', 'packed-refs'), '# pack-refs with: peeled fully-peeled sorted\n' + '1'.repeat(40) + ' refs/heads/lane-c\n')
+recovered = clientRow()
+ok(recovered?.gone === false && recovered.cwd === client, 'packed lane references also prove a swept copy')
+writeClient({ cwd: join(removedCopy, 'clients', 'not-in-the-project') })
+ok(clientRow()?.gone === true, 'a missing client in the permanent project stays missing')
+writeClient({ cwd: removedCopy })
+recovered = clientRow()
+ok(recovered?.gone === false && recovered.cwd === repo, 'a swept project-root chat also gets a usable reopen path')
+rmSync(clientMeta)
+
 // --- a row written with the whole agent SPEC where its id belongs -------------------
 // Two of these are on this machine (a `shell` spec, 2026-08-23). Every later reader
 // expects a string: `agents.find((a) => a.id === e.agent)` misses, and the logo's
@@ -166,6 +214,37 @@ ok(
   !/\(spec\?\.label \?\? id\)\.replace/.test(logo),
   'AgentLogo does not call .replace on a value it has not proved is a string'
 )
+
+// A clipped raw tail must still be a native Codex screen, with working mouse/paste.
+// Modes may change anywhere before the cut, not only in the first block of the log.
+const init = '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?2004h'
+for (const [name, before, alternate] of [
+  ['native', init, true],
+  ['late-native', 'x'.repeat(70000) + init, true],
+  ['exited-native', init + '\x1b[?1049l\x1b[?1003l\x1b[?2004l', false],
+  ['reset-native', init + '\x1bc', false]
+]) {
+  const raw = before + '\r\n' + 'paint\r\n'.repeat(1000) + '\x1b[1;1HCurrent frame'
+  writeFileSync(join(dir, `${name}.log`), raw)
+  const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+  await new Promise(resolve => term.write(h.tail(name, 1000), resolve))
+  ok(term.buffer.active.type === (alternate ? 'alternate' : 'normal'), `${name}: tail retains active buffer`)
+  ok(term.modes.mouseTrackingMode === (alternate ? 'any' : 'none'), `${name}: tail retains mouse controls`)
+  ok(term.modes.bracketedPasteMode === alternate, `${name}: tail retains paste mode`)
+  term.dispose()
+}
+
+// --- a pane with a History row records its conversation id when it closes ------------
+// writeEnd finds no meta file for a pane that never had a row and silently does nothing,
+// which is how asleep-restored panes lost their resumeId (2026-10-02).
+rmSync(dir, { recursive: true, force: true })
+mkdirSync(dir, { recursive: true })
+h.recordStart({ id: 's-asleep', title: 't', cwd: '/x', agent: 'claude', createdAt: Date.now(), cols: 80, rows: 24 })
+h.recordEnd('s-asleep', 'conv-123')
+const asleepRow = JSON.parse(readFileSync(join(dir, 's-asleep.json'), 'utf8'))
+ok(asleepRow.resumeId === 'conv-123' && typeof asleepRow.endedAt === 'number', 'recordEnd on a pane with a row records resumeId', asleepRow)
+h.recordEnd('s-norow', 'conv-9')
+ok(!ids().includes('s-norow'), 'recordEnd without a row writes nothing (why the row must exist)', ids().join())
 
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall passed')

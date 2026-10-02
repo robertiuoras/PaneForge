@@ -101,21 +101,18 @@ export default function LaneStrip({ boards, sessions, onFocus }: Props): JSX.Ele
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
 
-  // Unsticking a lane never needed a human to decide anything - the button only ever
-  // typed the same paragraph into whichever pane was free. So the app does that itself:
-  // the lane's own chat gets its own conflict back, and once the conflict is adoptable
-  // (its chat has gone quiet) any idle pane takes it. Never a pane that is mid-turn -
-  // that job waits for a free one rather than landing in the middle of someone's answer.
+  // The lane's own chat gets its own conflict back, by itself. Only that chat: handing an
+  // adoptable conflict to any idle pane landed another repo's merge in client and
+  // toolstash chats, so a conflict whose own chat has gone quiet now raises ONE card for
+  // a person instead (scripts/lane.mjs clashCards). Never a pane that is mid-turn - that
+  // job waits for the chat to be free rather than landing in the middle of its answer.
   useEffect(() => {
     for (const board of boards)
       for (const lane of board.lanes) {
         if (!lane.conflicted || lane.resolver) continue
         const key = `${board.repo}:${lane.lane}:${lane.conflictSince ?? 0}`
         if (handed.current.has(key)) continue
-        const own = laneOwner(lane, sessions)
-        const target =
-          own ??
-          (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
+        const target = laneOwner(lane, sessions)
         if (!target || target.asleep || target.status === 'exited' || target.status === 'working') continue
         handed.current.add(key)
         // Not `write(text + '\r')`. That is the shape measured failing on 2026-08-11 for

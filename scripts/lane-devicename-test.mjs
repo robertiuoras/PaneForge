@@ -20,7 +20,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -62,6 +62,18 @@ execFileSync(
   { cwd: repoRoot, stdio: 'pipe' }
 )
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
+
+// tsc emits `./logWrite` with no extension (right for the bundled app, unloadable by Node);
+// same fix as lane-owner-test: add the extension in the emitted copy, not in src.
+for (const f of readdirSync(join(out, 'main'))) {
+  if (!f.endsWith('.js')) continue
+  const at = join(out, 'main', f)
+  const fixed = readFileSync(at, 'utf8').replace(
+    /(from\s+['"])(\.\.?\/[^'"]+?)(['"])/g,
+    (all, head, spec, tail) => (/\.[a-z]+$/i.test(spec) ? all : `${head}${spec}.js${tail}`)
+  )
+  writeFileSync(at, fixed)
+}
 
 /** laneBoard caches for four seconds and reads PF_DEVICE once, at load. */
 function load() {
@@ -192,6 +204,10 @@ const MINUTE = 60_000
     JSON.stringify(laneBoard()?.lanes))
 }
 
-rmSync(work, { recursive: true, force: true })
+try {
+  rmSync(work, { recursive: true, force: true })
+} catch {
+  /* Windows: a detached sweep the release started may still hold the folder (EPERM); it is temp */
+}
 console.log(failures ? `\n${failures} failed` : '\nall good')
 process.exit(failures ? 1 : 0)

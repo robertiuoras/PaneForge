@@ -11,7 +11,7 @@
 //
 //   node scripts/close-done-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -34,7 +34,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { doneEnough, CLOSE_DONE_QUIET_MS } = require(out)
+const { doneEnough, closeRefused, closeByOf, CLOSE_DONE_QUIET_MS } = require(out)
 
 let checks = 0
 const ok = (cond, what) => {
@@ -64,8 +64,25 @@ is(doneEnough({ ...done, ask: { title: 'Which?' } }, QUIET, NOW), false, 'never 
 is(doneEnough({ ...done, drafting: true }, QUIET, NOW), false, 'never a pane whose prompt failed before submission')
 is(doneEnough({ ...done, job: 'npm' }, QUIET, NOW), false, 'never while a command is running in front of the tty')
 is(doneEnough({ ...done, backJob: 'npm' }, QUIET, NOW), false, 'never while the agent left something running in the background')
+is(doneEnough({ ...done, serving: 'node' }, QUIET, NOW), false, 'never while something it runs is listening on a port - a dev server is quiet on purpose')
 is(doneEnough({ ...done, status: 'exited' }, QUIET, NOW), false, 'an ended pane has nothing to close')
 is(doneEnough({ ...done, asleep: NOW - 1000 }, QUIET, NOW), false, 'and a SLEEPING pane is being kept, not finished')
+// By status alone: log review 2026-10-01 found two Codex panes closed while `working`
+// (s16-munpf9fk 09-30 08:05Z, s2-munmghtf 08:47Z) with no turn clock the rule could read.
+is(doneEnough({ ...done, status: 'working' }, QUIET, NOW), false, 'never a pane whose status says working, however quiet it reads')
+
+// ------------------------------------------------ who may close a working pane
+for (const by of ['user', 'phone', 'remote', 'pf', 'handoff'])
+  is(closeRefused(by, 'working'), undefined, `${by}: a close somebody named this pane in goes through mid-turn`)
+for (const by of ['review', 'close-when-done', 'idle-clock', 'exited-sweep', 'exit-close', 'cwd-gone', 'tidy-dupes', 'unnamed'])
+  ok(typeof closeRefused(by, 'working') === 'string', `${by}: the app's own close of a working pane is refused`)
+is(closeRefused('idle-clock', 'idle'), undefined, '...and only mid-turn')
+is(closeByOf(true, 'pf'), 'user', 'the window is a person, whatever it says')
+is(closeByOf(false, 'user'), 'phone', "the window's own code in a phone's browser is a person on the phone")
+is(closeByOf(false, 'pf'), 'pf', 'pf says so')
+is(closeByOf(false, 'tidy-dupes'), 'tidy-dupes', '...and so does its duplicate sweep')
+is(closeByOf(false, 'review'), 'unnamed', "a caller from outside cannot claim one of the app's own names")
+is(closeByOf(false, undefined), 'unnamed', 'a script that names nobody is not a person')
 
 // ------------------------------------------------------------- the wiring
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
@@ -74,7 +91,11 @@ ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test
 // Told BEFORE the kill: `kill()` deletes the session, and the request naming who to tell
 // goes with it.
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
-ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
+ok(/this\.owesPrompt\(live\)/.test(body), 'an owed or uncertain prompt refuses the explicit close path')
+ok(/meta\.agent !== 'shell' && meta\.finished !== true/.test(body), 'startup paint without a completed native reply refuses the explicit close path')
+ok(body.indexOf('queuePrompt') < body.indexOf("this.kill(meta.id, 'close-when-done')"), 'the opener is told before the pane is killed, and the close names itself')
+ok(body.indexOf('this.onCloseWhenDone?.(meta.id)') < body.indexOf("this.kill(meta.id, 'close-when-done')"), 'agent arms use report-first close before shell kill path')
+ok(/if \(meta.agent !== 'shell'\) \{[\s\S]*?onCloseWhenDone\?\.\(meta.id\)[\s\S]*?return/.test(body), 'agent arms cannot fall through to unreported closure')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
 const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
@@ -95,6 +116,90 @@ const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
 ok(/'sessions:closeWhenDone'/.test(surface), "...on the one list both ends build from, or it would not compile")
 ok(/cmd === 'close-when-done'/.test(ctl), 'pf close-when-done arms it')
 ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it cannot tell which pane')
+
+// ------------------------------------------------- an automatic clear on its way in
+// 2026-10-01, Mac 0.8.232: two `--close-when-done` panes lane.mjs opened were killed while
+// their own autoclear was on its way in, and the handoff's open steps went with them.
+// s28-mupc5ct1: countdown armed 13:04:36.682Z, close-request 84ms later. s57-mupk43r8
+// ("Finish preserved work"): settle hold logged 14:03:24.438Z, close-request 179ms later,
+// three next steps not done. The sweep read `doneEnough` and nothing the app still owed the
+// pane. The real method bodies run here, `owesPrompt` included, so a copy cannot drift.
+{
+  const methodBody = (sig) => {
+    const at = sessions.indexOf(sig)
+    assert.ok(at >= 0, `real method exists: ${sig.trim()}`)
+    return sessions.slice(at, sessions.indexOf('\n  }\n', at) + 4)
+  }
+  const code = transformSync(
+    `class Fixture { ${methodBody('  private owesPrompt(live: Live)')} ${methodBody('  private sweepCloseWhenDone(')} }`,
+    { loader: 'ts' },
+  ).code
+  const Fixture = new Function('doneEnough', `${code}; return Fixture`)(doneEnough)
+  const kills = []
+  const told = []
+  const manager = new Fixture()
+  manager.autoClearPending = new Map()
+  manager.autoClearArmTimers = new Map()
+  manager.keptOpen = () => false
+  manager.openerOf = () => 'opener'
+  manager.queuePrompt = (id, text) => told.push([id, text])
+  manager.kill = (id) => kills.push(id)
+  // An agent pane is closed through the Review-first done-close sweep (index.ts
+  // `onCloseWhenDone` -> `sweepDoneClose`), which saves its report, tells the opener and
+  // closes it. Handing it there IS the close this sweep decides.
+  const handedToReview = []
+  manager.onCloseWhenDone = (id) => handedToReview.push(id)
+  const at = Date.now()
+  const pane = () => ({
+    meta: { id: 'pane', title: 'Finish preserved work', cwd: '/fixture', agent: 'claude', finished: true, status: 'idle', printed: at - 60_000 },
+    req: { closeWhenDone: true },
+    busyUntil: 0,
+  })
+  const sweep = (live) => manager.sweepCloseWhenDone(live, Date.now(), QUIET)
+
+  const queued = pane()
+  manager.autoClearPending.set('pane', { seconds: 15 })
+  sweep(queued)
+  is([...kills, ...handedToReview], [], 'a clear asked for during the turn keeps the pane open (s57-mupk43r8)')
+  manager.autoClearPending.clear()
+
+  const holding = pane()
+  manager.autoClearArmTimers.set('pane', 0)
+  sweep(holding)
+  is([...kills, ...handedToReview], [], '...and so does the settle hold in front of its countdown')
+  manager.autoClearArmTimers.clear()
+
+  const counting = pane()
+  counting.meta.autoClearAt = Date.now() + 15_000
+  sweep(counting)
+  is([...kills, ...handedToReview], [], '...and the countdown itself (s28-mupc5ct1, killed 84ms after it armed)')
+
+  const handover = pane()
+  handover.meta.handoverUntil = Date.now() + 30_000
+  sweep(handover)
+  is([...kills, ...handedToReview], [], '...and the handover between `/clear` and the resume prompt')
+
+  const owed = pane()
+  owed.meta.owedPrompt = true
+  sweep(owed)
+  is([...kills, ...handedToReview], [], '...and a queued prompt that has not landed yet')
+  is(told, [], 'the opener is told nothing while the pane is still owed a prompt')
+
+  // Quiet but no completed reply on record (startup paint): not done either.
+  const unfinished = pane()
+  unfinished.meta.finished = undefined
+  sweep(unfinished)
+  is([...kills, ...handedToReview], [], '...and a Claude pane whose reply has not completed')
+
+  // The resume turn ran and finished: nothing owed, quiet again. Now it is done.
+  const resumed = pane()
+  sweep(resumed)
+  is(handedToReview, ['pane'], 'once the resume turn has finished, the pane is handed to the Review-first close as asked')
+  is(kills, [], '...which closes it after saving its report, not this sweep directly')
+  is(told.length, 0, '...and the opener is told once, by that close (finishedDigest), not twice')
+}
+ok(/manager\.onCloseWhenDone = \(id\) => \{[\s\S]{0,200}?sweepDoneClose\(/.test(main), 'onCloseWhenDone runs the done-close sweep for that one pane')
+ok(/function doneCloseDeps\(\)[\s\S]{0,200}?openerOf: \(id\) => manager\.openerOf\(id\),\s*finished: \(opener, note\) => finishedDigest\.add\(opener, note\)/.test(main), '...whose deps tell the opener through its digest')
 
 rmSync(work, { recursive: true, force: true })
 console.log(`close-done: ${checks} checks passed`)

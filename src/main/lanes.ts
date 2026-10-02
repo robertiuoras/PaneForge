@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process' // sync-on-purpose: ensureLane
 import { gitRun, isRead } from './gitRun'
 import { createServer } from 'node:net'
 import { hideCopyFolder } from './hideCopy'
+import { codexProjectHeader, codexProjectKey } from '../shared/codexTrust'
 import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -49,7 +50,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
  * key), and two digits on one card with nothing to say which is which is the confusion this
  * replaced. It is also the alphabet scripts/lane.mjs has always used for the same folders.
  */
-const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
+export const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
 
 /**
  * Dev-server port a lane starts from when the project never names one.
@@ -149,7 +150,7 @@ async function readMainRepo(cwd: string): Promise<string | null> {
 }
 
 /** Is this folder already a checkout of the same repo (ours to reuse)? */
-async function isWorktreeOf(candidate: string, repo: string): Promise<boolean> {
+export async function isWorktreeOf(candidate: string, repo: string): Promise<boolean> {
   if (!existsSync(candidate)) return false
   const root = await mainRepo(candidate)
   return Boolean(root && samePath(root, repo))
@@ -670,20 +671,28 @@ function seedClaudeProjectSettings(repo: string, lane: string): void {
       projects?: Record<string, Record<string, unknown>>
     }
     if (!data.projects) return
-    // Already seeded, or the lane has its own settings: leave it alone.
-    if (forms(lane).some((k) => data.projects![k])) return
-
     const from = forms(repo)
       .map((k) => data.projects![k])
       .find(Boolean)
     if (!from) return
 
-    const entry: Record<string, unknown> = {}
-    for (const k of KEEP) if (k in from) entry[k] = from[k]
-    // Prompt history is the largest field by far and only the recent end of it is
-    // any use; the whole thing per lane would bloat a file read on every launch.
-    if (Array.isArray(entry.history)) entry.history = (entry.history as unknown[]).slice(0, 50)
-    for (const k of forms(lane)) data.projects[k] = { ...entry }
+    const own = forms(lane).filter((k) => data.projects![k])
+    if (own.length) {
+      // Already seeded, or the lane has its own settings: those are left alone, except
+      // trust. Claude Code writes an untrusted default entry the first time it runs in a
+      // folder, and while it stands every pane in the lane stops on the prompt
+      // (research-lab-d, 2026-09-27). Trust is only turned on when the repo has it.
+      const untrusted = own.filter((k) => data.projects![k].hasTrustDialogAccepted !== true)
+      if (!untrusted.length || from.hasTrustDialogAccepted !== true) return
+      for (const k of untrusted) data.projects[k] = { ...data.projects[k], hasTrustDialogAccepted: true }
+    } else {
+      const entry: Record<string, unknown> = {}
+      for (const k of KEEP) if (k in from) entry[k] = from[k]
+      // Prompt history is the largest field by far and only the recent end of it is
+      // any use; the whole thing per lane would bloat a file read on every launch.
+      if (Array.isArray(entry.history)) entry.history = (entry.history as unknown[]).slice(0, 50)
+      for (const k of forms(lane)) data.projects[k] = { ...entry }
+    }
 
     // Write-then-rename: this file is Claude Code's own, and a torn write would
     // cost the user every setting in it.
@@ -713,21 +722,24 @@ function seedCodexTrust(repo: string, lane: string): void {
   const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
   const path = join(home, 'config.toml')
   if (!existsSync(path)) return
-  // Codex writes these keys lowercased, and a path holding a quote cannot be
-  // expressed in this quoting style at all - both are left alone rather than
-  // guessed at.
-  const key = (p: string): string => resolve(p).toLowerCase()
-  if (key(lane).includes("'") || key(repo).includes("'")) return
+  // Codex's own spelling of the key, which differs by OS: lowercased in single quotes on
+  // Windows, the path as given in double quotes elsewhere. Lowercasing everywhere (the
+  // old rule) never matched a Mac file, so a Mac lane never got its repo's approval.
+  const win = process.platform === 'win32'
+  const header = (p: string): string | null => {
+    const k = codexProjectKey(resolve(p), win)
+    return k ? codexProjectHeader(k, win) : null
+  }
+  if (!header(lane) || !header(repo)) return
 
   try {
     const text = readFileSync(path, 'utf8')
-    const header = (p: string): string => `[projects.'${key(p)}']`
-    if (text.includes(header(lane))) return
-    const at = text.indexOf(header(repo))
+    if (text.includes(header(lane)!)) return
+    const at = text.indexOf(header(repo)!)
     if (at < 0) return
 
     // The section runs to the next header or the end of the file.
-    const rest = text.slice(at + header(repo).length)
+    const rest = text.slice(at + header(repo)!.length)
     const end = rest.search(/\r?\n\[/)
     const body = (end < 0 ? rest : rest.slice(0, end)).replace(/\s+$/, '')
     const next = `${text.replace(/\s+$/, '')}\n\n${header(lane)}${body}\n`
@@ -756,7 +768,9 @@ export async function laneExtras(laneCwd: string, label: string): Promise<LaneEx
   const port = await freePort(Math.min(base + laneIndex(label) - 1, 65000))
   const moved = !samePath(repo, laneCwd)
   const sharedMemory = moved ? shareClaudeMemory(repo, laneCwd) : false
-  if (sharedMemory) seedClaudeProjectSettings(repo, laneCwd)
+  // Not gated on the memory share: a lane that kept its own transcripts folder still
+  // needs the repo's trust, or its panes stop on the trust prompt.
+  if (moved) seedClaudeProjectSettings(repo, laneCwd)
   // Not gated on the Claude share: a lane running Codex still opens on a trust
   // prompt for a repo the user already approved, whether or not Claude is even
   // installed on this machine.
@@ -817,7 +831,7 @@ function seedLocalConfig(repo: string, lane: string): void {
 }
 
 /** Everything a fresh checkout needs before an agent is dropped into it. */
-function seedLane(repo: string, lane: string): void {
+export function seedLane(repo: string, lane: string): void {
   seedEnvFiles(repo, lane)
   seedLocalConfig(repo, lane)
   cloneDeps(repo, lane)
@@ -903,8 +917,15 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       const existing = await git(repo, ['show-ref', '--verify', `refs/heads/${branch}`])
       const folder = await git(repo, ['cat-file', '-t', `${existing.ok ? branch : 'HEAD'}:${subfolder.replace(/\\/g, '/')}`])
       if (!folder.ok || folder.out !== 'tree') {
-        if (existing.ok) continue
-        throw new Error(`Client or project folder is missing from the lane's commit: ${subfolder}. Commit its current location first.`)
+        if (!existing.ok) throw new Error(notInCopy(cwd, name))
+        const current = await git(repo, ['cat-file', '-t', `HEAD:${subfolder.replace(/\\/g, '/')}`])
+        if (!current.ok || current.out !== 'tree') continue
+        // A removed copy can leave an old branch behind. Catch it up only by
+        // fast-forward, without touching an existing checkout or losing commits.
+        // Local fetch enforces both rules atomically (no force refspec), including
+        // refusal when another worktree has this branch checked out.
+        const caughtUp = await git(repo, ['fetch', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '.', `HEAD:refs/heads/${branch}`])
+        if (!caughtUp.ok) continue
       }
     }
     let made = await git(repo, ['worktree', 'add', '-b', branch, path])
@@ -914,11 +935,23 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
     }
     seedLane(repo, path)
     hideCopyFolder(path)
-    if (!existsSync(target)) throw new Error(`Client or project folder is missing from the new lane: ${target}. Commit its current location first.`)
+    if (!existsSync(target)) throw new Error(notInCopy(cwd, name))
     return { cwd: target, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
-  throw new Error(`No free lane containing this folder in ${name}. Finish an existing session or expand its lane pool.`)
+  // Read on a toast by somebody who has never used git: "No free lane ... lane pool" had
+  // Robert asking whether the lane was closed (2026-09-24). `test:reopenhold`.
+  const folderNeed = subfolder ? ` with ${basename(cwd)} in it` : ''
+  throw new Error(
+    `Another chat is already working in ${name}, and there is no spare copy of ${name}${folderNeed}. ` +
+      `Close the other ${name} chat, then open this again.`
+  )
+}
+
+/** A folder that exists only on this disk: git never had it, so no copy of the project can. */
+function notInCopy(cwd: string, name: string): string {
+  return `${basename(cwd)} is new and not saved in ${name} yet, so a second copy of ${name} would not have it. ` +
+    `Close the other ${name} chat, then open this again.`
 }
 
 /**

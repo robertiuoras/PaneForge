@@ -17,7 +17,7 @@ rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 const outfile = join(work, 'screenView.bundle.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/shared/screenView.ts'], bundle: true, format: 'cjs', platform: 'node', outfile })
-const { SCREEN_APP, moonlightCandidates, screenPeer, screenPlan, screenTitle } = createRequire(import.meta.url)(outfile)
+const { SCREEN_APP, moonlightCandidates, screenButton, screenPeer, screenPlan, screenTitle } = createRequire(import.meta.url)(outfile)
 
 const pc = { name: 'Gamer', address: '100.78.1.77', status: 'online' }
 const laptop = { name: 'Old laptop', address: '100.78.1.9', status: 'off' }
@@ -45,7 +45,7 @@ assert.equal(noPeer.reason, 'no-peer')
 assert.match(noPeer.message, /paired/)
 
 // The title names the machine, never the protocol.
-assert.equal(screenTitle([pc]), "See Gamer's screen (opens Moonlight)")
+assert.equal(screenTitle([pc]), "Take control of Gamer's screen (opens Moonlight)")
 assert.doesNotMatch(screenTitle([]), /Sunshine|stream|peer/i)
 
 // Where Moonlight is looked for, per platform. Windows without LOCALAPPDATA is not a crash.
@@ -55,5 +55,14 @@ assert.equal(moonlightCandidates('win32', { LOCALAPPDATA: 'C:\\U\\g\\AppData\\Lo
   'C:\\U\\g\\AppData\\Local\\Programs\\Moonlight Game Streaming Project\\Moonlight.exe')
 assert.equal(moonlightCandidates('linux', {}).length, 2)
 
+// v1: the button opens the in-app view, so it needs a paired machine, not Moonlight.
+assert.deepEqual(screenButton([pc]), { ok: true, disabled: false, title: "See Gamer's screen" })
+const off = screenButton([laptop])
+assert.equal(off.ok, true, 'a paired machine that is off still draws the button')
+assert.equal(off.disabled, true, 'greyed out, so no pane opens onto nothing')
+assert.match(off.title, /Old laptop's screen - not connected/)
+assert.equal(screenButton([]).ok, false, 'nothing paired = no button')
+assert.doesNotMatch(screenButton([pc]).title, /Moonlight|stream|WebRTC/i)
+
 rmSync(work, { recursive: true, force: true })
-console.log('screen-view: ok (7 checks)')
+console.log('screen-view: ok (8 checks)')

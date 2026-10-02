@@ -38,6 +38,7 @@ import AppearanceTab from './AppearanceTab'
 import DiscordTab from './DiscordTab'
 import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
+import IncludedAccounts from './IncludedAccounts'
 import VaultDialog from './VaultDialog'
 import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
@@ -73,9 +74,9 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
   { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
   { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
-  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path' },
+  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path account subscription login plan switch' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
-  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },
+  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status profile look style switch waiting tokens link button template project elapsed idle' },
   { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
 ]
 
@@ -264,6 +265,10 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
       })
       if (!row) continue
       const mark = row.closest<HTMLElement>('.sw-row, .setting') ?? row
+      // A match inside a closed fold (Discord's "Advanced") is opened, or the mark lands
+      // on something nobody can see.
+      const fold = mark.closest('details')
+      if (fold && !fold.open) fold.open = true
       mark.classList.add('found')
       if (!top) top = mark
     }
@@ -442,14 +447,14 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.soundOnIdle}
                   onChange={(v) => onChange({ soundOnIdle: v })}
-                  label="Chime when a session finishes its turn"
-                  hint="Plays even while PaneForge is focused - a pane you are not reading can still finish. Which sound it makes, and the sound for the other two alerts, is on the Sounds tab."
+                  label="Play a sound when a session stops or waits for you"
+                  hint="Off unless you turn it on. Covers a finished turn, a turn gone silent, a question and the terminal bell. Which sound each one makes is on the Sounds tab."
                 />
                 <Switch
                   checked={config.telegramAsk}
                   onChange={(v) => onChange({ telegramAsk: v })}
-                  label="Send a pane's question, or an error that stopped it, to Telegram"
-                  hint="Both stop the run and leave the pane looking finished: a question waits for somebody to press a row, and an error like a usage limit or an expired login is not retried by anything. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent. Message only: answering is still a press here or on the phone."
+                  label="Send an error that stopped a pane to Telegram"
+                  hint="An error like an expired login or a used-up credit balance stops the run and nothing retries it. A usage limit is not sent here: once it resets, the chats it stopped are continued and one TaskDriver phone notification says how many carried on. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
                 />
                 <Switch
                   checked={config.bellAlert}
@@ -569,12 +574,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
                     })
                   }
-                  label="Move a finished pane to a paired device when this machine is full"
-                  hint="When memory or load says this machine is under pressure, or it runs more panes than the number below, a pane that has finished its turn moves to a device that is online and has the same project: a plain terminal, or a Claude or Codex conversation that can be picked up again over there. It waits for the turn to end, shows a countdown you can stop, and never moves the pane you are looking at, one asking you a question, one kept on this machine, or one whose request is about this Mac - its files, its screen, its browser. Off: nothing moves, and idle panes are paused here instead."
+                  label="Move unfinished work to a paired device when this machine is full"
+                  hint="Ongoing work can move when its project is available on the other device. It waits for the current turn, background work and subagents, then shows a countdown you can stop. Finished or stopped conversations stay here and close into Review when safe. Questions, unsent prompts, local files and work using this screen stay here."
                 />
                 {config.autoHandoff?.enabled !== false && (
                   <div className="setting">
-                    <label>Shell panes this machine runs itself</label>
+                    <label>Panes this machine runs itself</label>
                     <input
                       className="search"
                       type="number"
@@ -593,11 +598,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       }
                     />
                     <p className="hint">
-                      The automatic shell budget. Past this many shell panes on this machine,
-                      eligible idle shells can move to a paired device and come back as
-                      mirrors. Agent panes are deliberately excluded, including panes that
-                      are mid-turn. 0 turns the budget off. With nothing paired and online it
-                      does nothing at all.
+                      Above this many panes, portable unfinished work can move to a paired
+                      device after its turn and background work finish. Completed work stays
+                      here. 0 turns the budget off; without an online paired device nothing moves.
                     </p>
                   </div>
                 )}
@@ -649,8 +652,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         }
                       })
                     }
-                    label="...and move a quiet shell over there even when there is still room"
-                    hint={`This clock only considers plain shell panes. After ${IDLE_OFFLOAD_MINUTES} quiet minutes, an eligible shell can move to a paired device even when memory is fine. Agent conversations stay here automatically, so this clock never creates an unconfirmed remote copy. Shells still refuse when focused, busy, asking a question, remote, or the last pane, and return as mirrors after a successful move.`}
+                    label="...and move quiet unfinished work even when there is still room"
+                    hint={`After ${IDLE_OFFLOAD_MINUTES} quiet minutes, a portable conversation with recorded unfinished work can move to a paired device. Finished conversations stay here. Questions, background jobs, subagents and the pane you are using prevent a move.`}
                   />
                 )}
                 <Switch
@@ -726,7 +729,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
                 />
                 <Switch
-                  checked={(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0}
+                  checked={(config.reclaim?.idleSleepMinutes ?? 0) > 0}
                   onChange={(v) =>
                     onChange({
                       reclaim: {
@@ -737,32 +740,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       }
                     })
                   }
-                  label="Put a pane nobody has used to sleep"
-                  hint={`On, and on by default. A pane nobody has typed into for ${config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES} minutes has its agent stopped and KEEPS everything else: the card stays where it is, wearing the screen it had, and a press starts the CLI again in the same conversation. Measured on this desk: eight live agents, 1.27 GB, none of them doing anything. The refusals are the close clock's, exactly - never the pane you are in, never one you have not read yet, never one that is working, running a command or holding a question, never another device's, and never one you have said to keep open.`}
+                  label="Put quiet panes to sleep when this machine is low on memory"
+                  hint="Off: a finished pane closes into Review instead, and one that is not finished stays awake. Turn on to rest quiet panes when memory is short - a resting pane has its agent stopped and keeps its card, its screen and its conversation, and a press wakes it. Never the pane you are in, one that is working or running something, or one holding a question."
                 />
-                {(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0 && (
-                  <div className="setting">
-                    <label>Sleep after (minutes)</label>
-                    <input
-                      className="search"
-                      type="number"
-                      min={1}
-                      max={1440}
-                      step={1}
-                      value={config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES}
-                      onChange={(e) =>
-                        onChange({
-                          reclaim: {
-                            ...DEFAULT_RECLAIM,
-                            ...config.reclaim,
-                            enabled: true,
-                            idleSleepMinutes: Number(e.target.value)
-                          }
-                        })
-                      }
-                    />
-                  </div>
-                )}
                 <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
                   onChange={(v) =>
@@ -776,7 +756,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     })
                   }
                   label="Close a pane nobody has touched for a while"
-                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                  hint={`A pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes closes into Review, because an idle agent costs its ~190 MB the whole time it sits there: its reply stays readable in Review and Continue brings the conversation back. Never the pane you are in, one you have not read yet, one that is working or running something, or one holding a question. Off, a pane only closes when this machine is out of memory.`}
                 />
                 {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
                   <div className="setting">
@@ -814,6 +794,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   onChange={(v) => onChange({ autoCloseDone: v })}
                   label="Close a pane once its work is finished"
                   hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after three minutes of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
+                />
+                <Switch
+                  checked={config.modelAdvice !== false}
+                  onChange={(v) => onChange({ modelAdvice: v })}
+                  label="Suggest a lighter or stronger model for a new chat's first ask"
+                  hint="Only the very first thing you type into a fresh Claude Code chat, before anything has been asked of it. A quick lookup or a small edit gets offered a lower effort, or a cheaper model when the ask is really just a question; a hard, multi-file or repeated-failure ask gets offered a stronger one. It only ever suggests - nothing switches until you press Switch, and it never says anything mid-conversation, where a model change would resend the whole chat."
                 />
                 <Switch
                   checked={config.autoAnswer?.enabled === true}
@@ -948,6 +934,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
           {tab === 'agents' && (
             <>
+              <IncludedAccounts />
               <div className="setting">
                 <div className="setting-row">
                   <label>Agents on this machine</label>

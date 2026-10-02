@@ -105,4 +105,71 @@ check(
 )
 check('and the stamp is cleared, so it is one line per wake', /live\.wokeAt = 0/.test(sessions))
 
+// Execute the real callback against a mixed desk, including a filtered-out local pane.
+const { transformSync } = await import('esbuild')
+const callbackStart = app.indexOf('async (ids: string[], keep: boolean) => {', app.indexOf('const savePins ='))
+const callbackEnd = app.indexOf(', [sessions, flash])', callbackStart)
+const callback = transformSync(`const save = ${app.slice(callbackStart, callbackEnd)}`, { loader: 'ts', format: 'cjs' }).code
+let savedPins = ['existing']
+const remoteCalls = [], errors = []
+const savingStates = []
+let remoteOK = true
+let configGate
+const ref = { current: false }
+const desk = [{ id: 'visible' }, { id: 'filtered-out' }, { id: '@pc/one', remote: { name: 'PC' } }]
+const api = {
+  getConfig: async () => { if (configGate) await configGate; return { pinnedPanes: savedPins } },
+  setConfig: async patch => { savedPins = patch.pinnedPanes; return patch },
+  setRemoteKeepOpen: async (id, keep) => { remoteCalls.push([id, keep]); return remoteOK }
+}
+const save = new Function('api', 'sessions', 'savingPinsRef', 'setSavingPins', 'pinsWritten', 'setPinned', 'setConfigState', 'setCloseSoons', 'flash', callback + '; return save')(
+  api, desk, ref, value => savingStates.push(value), { current: '' }, () => {}, () => {}, () => {}, e => errors.push(e))
+await save(desk.map(s => s.id), true)
+assert.deepEqual(savedPins, ['existing', 'visible', 'filtered-out'])
+assert.deepEqual(remoteCalls, [['@pc/one', true]])
+await save(['visible'], false)
+assert.deepEqual(savedPins, ['existing', 'filtered-out'], 'unchecking one session preserves every other selection')
+await save(desk.map(s => s.id), false)
+assert.deepEqual(savedPins, ['existing'])
+remoteOK = false
+await save(['@pc/one'], true)
+assert.match(errors[0], /Could not save on PC/)
+assert.equal(ref.current, false, 'failed remote write releases the save lock')
+check('select-all persists hidden local panes, uses the remote owner, and reports failure', true)
+let resumeConfig
+configGate = new Promise(resolve => { resumeConfig = resolve })
+const pending = save(['visible'], true)
+assert.equal(savingStates.at(-1), true, 'controls disable while the saved preference is pending')
+await save(['filtered-out'], true)
+resumeConfig()
+await pending
+assert.deepEqual(savedPins, ['existing', 'visible'], 'a second press cannot race the pending selection')
+assert.equal(savingStates.at(-1), false, 'controls enable after the write finishes')
+
+// A renderer timer queued before the pin was saved cannot close the now-kept pane.
+const closeStart = index.indexOf("ipcMain.handle('sessions:closeIntoReview'")
+const closeEnd = index.indexOf("ipcMain.handle('sessions:clearFinished'", closeStart)
+const closeCode = transformSync(index.slice(closeStart, closeEnd), { loader: 'ts' }).code
+let closeHandler, keep = true, closed = 0, owedFlag = false, owedRows = 0
+const refused = []
+new Function('ipcMain', 'keptOpen', 'remote', 'closePane', 'manager', 'owedCount', 'logReclaim', closeCode)(
+  { handle(_name, fn) { closeHandler = fn } }, () => keep, { owns: () => true }, () => { closed++ },
+  { list: () => [{ id: 'pane', owedPrompt: owedFlag }] }, () => owedRows, (row) => refused.push(row))
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'saved keep-open wins over an already-dispatched close')
+keep = false
+// 2026-10-02 18:44Z: the countdown closed six crash-restored panes still owed their
+// "continue" (queued-prompts.log LOST x6). Owed work, by flag or by ledger row, refuses.
+owedFlag = true
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'a pane flagged as owed a prompt is not closed by the countdown')
+owedFlag = false
+owedRows = 1
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'a pane with an owed ledger row is not closed by the countdown')
+assert.deepEqual(refused.map((r) => r.reason), ['owed-prompt', 'owed-prompt'], 'each refusal is logged')
+owedRows = 0
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 1, 'unkept panes can still close normally')
+
 console.log(`pin restore: ${checks} checks passed`)

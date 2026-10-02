@@ -24,6 +24,7 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { which } from './which'
 
 /** Any lane hook at all, whoever installed it - our file name is a substring of the older
  * hand-wired one (`paneforge-lane-hook.mjs`) on purpose, so this finds both. */
@@ -74,20 +75,144 @@ function settingsPath(): string {
   return join(homedir(), '.claude', 'settings.json')
 }
 
-type Entry = { type: string; command: string; timeout?: number; statusMessage?: string }
+type Entry = { type: string; command: string; timeout?: number; statusMessage?: string; shell?: string }
 type Group = { matcher?: string; hooks?: Entry[] }
-type Settings = { hooks?: Record<string, Group[]> } & Record<string, unknown>
+export type Settings = { hooks?: Record<string, Group[]> } & Record<string, unknown>
+export type HookSpec = { event: string; matcher?: string; arg: string; timeout: number; statusMessage?: string }
 
-/** Every lane-hook command already registered, whatever installed it. */
-function registered(settings: Settings): string[] {
+/** Every hook command already registered, whatever installed it. */
+export function hookCommands(settings: Settings): string[] {
   const out: string[] = []
   for (const groups of Object.values(settings.hooks ?? {}))
-    for (const g of groups ?? []) for (const h of g.hooks ?? []) if (h.command?.includes(TAG)) out.push(h.command)
+    for (const g of groups ?? []) for (const h of g.hooks ?? []) if (typeof h.command === 'string') out.push(h.command)
   return out
 }
 
 /** Ours, wherever the app has since been moved to. */
-const isOurs = (command: string): boolean => command.includes(OURS)
+export const isOurs = (command: string): boolean => command.includes(OURS)
+
+/**
+ * How a hook command starts the shipped script.
+ *
+ * `node` when it is on PATH. Claude Code's native installer does not bring Node, so a
+ * machine without it runs the script on the app's own binary as Node
+ * (ELECTRON_RUN_AS_NODE=1). Windows is the awkward one: hook commands run in Git Bash, and
+ * in PowerShell when Git for Windows is not installed (https://code.claude.com/docs/en/hooks,
+ * `shell` field) - and Git is optional for Claude Code there. `VAR=1 cmd` is bash only, so
+ * the Windows fallback pins `shell: "powershell"`, which every Windows has. Proven on the
+ * PC 2026-09-23 with powershell.exe and pwsh.exe: stdin reaches the script, the env var is
+ * set, exit 2 survives, and a quote and a space in the path hold.
+ *
+ * Pure, so the test can ask for the Windows shape from a Mac.
+ */
+export type HookRunner = { line: (script: string, args: string[]) => string; shell?: 'powershell'; note: string }
+
+export function runnerFor(platform: string, hasNode: boolean, execPath: string): HookRunner {
+  const fwd = (p: string): string => p.replace(/\\/g, '/')
+  const bare = (a: string): string => (/^[A-Za-z0-9_=.:\/-]+$/.test(a) ? a : `"${a}"`)
+  if (hasNode)
+    return { line: (script, args) => [`node "${fwd(script)}"`, ...args.map((a) => bare(fwd(a)))].join(' '), note: 'node' }
+  if (platform === 'win32') {
+    const sq = (a: string): string => `'${fwd(a).replace(/'/g, "''")}'`
+    return {
+      // `| Write-Output` is what makes PowerShell WAIT: the app is a GUI-subsystem exe, and
+      // without a pipe PowerShell returns at once with $LASTEXITCODE unset - every exit 2
+      // became 0 (measured on the PC 2026-09-23, electron.exe under both PowerShells).
+      line: (script, args) => `$env:ELECTRON_RUN_AS_NODE='1'; & ${sq(execPath)} ${[script, ...args].map(sq).join(' ')} | Write-Output; exit $LASTEXITCODE`,
+      shell: 'powershell',
+      note: 'no node on PATH - hooks run on the app itself, in PowerShell'
+    }
+  }
+  return {
+    line: (script, args) => [`ELECTRON_RUN_AS_NODE=1 "${fwd(execPath)}" "${fwd(script)}"`, ...args.map((a) => bare(fwd(a)))].join(' '),
+    note: 'no node on PATH - hooks run on the app itself'
+  }
+}
+
+/** The runner for this machine, now. */
+export function hookRunner(): HookRunner {
+  const node = which('node')
+  return runnerFor(process.platform, node !== 'node', process.execPath)
+}
+
+/** settings.json as an object, or the line saying why it is left alone. */
+export function readSettings(label: string): { settings: Settings } | { refused: string } {
+  const file = settingsPath()
+  if (!existsSync(file)) return { settings: {} }
+  let settings: Settings
+  try {
+    settings = JSON.parse(readFileSync(file, 'utf8')) as Settings
+  } catch {
+    // Hand-edited into invalid JSON. Rewriting it would throw the rest away.
+    return { refused: `${label}: settings.json is not valid JSON - left alone` }
+  }
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings))
+    return { refused: `${label}: settings.json is not an object - left alone` }
+  return { settings }
+}
+
+/**
+ * Put `specs` in place for the script named `tag`, repointing our own older entries FOR
+ * THAT SCRIPT only - two installers share the `--installed-by` marker and a Stop group, and
+ * a filter on the marker alone had each one delete the other's entry on every start.
+ * Returns whether anything changed.
+ */
+export function placeHooks(settings: Settings, tag: string, specs: HookSpec[], commandFor: (spec: HookSpec) => string, shell?: string): boolean {
+  settings.hooks ??= {}
+  let changed = false
+  const mine = (h: Entry): boolean => isOurs(h.command ?? '') && (h.command ?? '').includes(tag)
+  for (const spec of specs) {
+    const command = commandFor(spec)
+    const same = (h: Entry): boolean => h.command === command && h.shell === shell
+    const groups = (settings.hooks[spec.event] ??= [])
+
+    // Drop our own previous entries wherever they sit, so a moved app repoints instead of
+    // stacking a second copy on every upgrade.
+    for (const g of groups) {
+      const before = g.hooks?.length ?? 0
+      if (g.hooks) g.hooks = g.hooks.filter((h) => !mine(h) || (same(h) && g.matcher === spec.matcher))
+      if ((g.hooks?.length ?? 0) !== before) changed = true
+    }
+
+    const already = groups.some((g) => (g.hooks ?? []).some((h) => same(h) && g.matcher === spec.matcher))
+    if (already) continue
+
+    const entry: Entry = { type: 'command', command, timeout: spec.timeout }
+    if (shell) entry.shell = shell
+    if (spec.statusMessage) entry.statusMessage = spec.statusMessage
+
+    // Join the group with the same matcher rather than making a second one - Claude Code
+    // runs both, but a settings file that grows a group per launch is unreadable.
+    const group = groups.find((g) => g.matcher === spec.matcher)
+    if (group) (group.hooks ??= []).push(entry)
+    else groups.push(spec.matcher ? { matcher: spec.matcher, hooks: [entry] } : { hooks: [entry] })
+    changed = true
+  }
+
+  // Empty groups left by the filter above are noise in a file the user reads.
+  for (const [event, groups] of Object.entries(settings.hooks))
+    settings.hooks[event] = (groups ?? []).filter((g) => (g.hooks?.length ?? 0) > 0)
+  return changed
+}
+
+/** Write then rename: a half-written settings.json disables every hook on the machine. */
+export function writeSettings(label: string, settings: Settings): string | null {
+  const file = settingsPath()
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    const tmp = `${file}.paneforge-tmp`
+    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8')
+    renameSync(tmp, file)
+    return null
+  } catch (e) {
+    return `${label}: could not write settings.json (${(e as Error).message})`
+  }
+}
+
+/** Every lane-hook command already registered, whatever installed it. */
+function registered(settings: Settings): string[] {
+  return hookCommands(settings).filter((c) => c.includes(TAG))
+}
 
 /**
  * Put the three hooks in place, or explain why not. Never throws: a bad settings file is
@@ -109,67 +234,19 @@ export function installLaneHooks(stable: boolean): string {
   const script = hookScript()
   if (!existsSync(script)) return `lane hooks: not installed - no ${TAG} at ${script}`
 
-  const file = settingsPath()
-  let settings: Settings = {}
-  if (existsSync(file)) {
-    try {
-      settings = JSON.parse(readFileSync(file, 'utf8')) as Settings
-    } catch {
-      // Hand-edited into invalid JSON. Rewriting it would throw the rest away.
-      return 'lane hooks: settings.json is not valid JSON - left alone'
-    }
-    if (typeof settings !== 'object' || settings === null) return 'lane hooks: settings.json is not an object - left alone'
-  }
+  const read = readSettings('lane hooks')
+  if ('refused' in read) return read.refused
+  const settings = read.settings
 
   // Someone else's registration owns this machine. Adding ours would double every claim
   // and every release; the existing one already does the job.
   const foreign = registered(settings).filter((c) => !isOurs(c))
   if (foreign.length) return `lane hooks: already wired elsewhere (${foreign.length}) - left alone`
 
-  settings.hooks ??= {}
-  let changed = false
-
-  for (const spec of SPECS) {
-    const command = `node "${script.replace(/\\/g, '/')}" ${spec.arg} ${OURS}`
-    const groups = (settings.hooks[spec.event] ??= [])
-
-    // Drop our own previous entries wherever they sit, so a moved app repoints instead of
-    // stacking a second copy on every upgrade.
-    for (const g of groups) {
-      const before = g.hooks?.length ?? 0
-      if (g.hooks) g.hooks = g.hooks.filter((h) => !isOurs(h.command ?? '') || h.command === command)
-      if ((g.hooks?.length ?? 0) !== before) changed = true
-    }
-
-    const already = groups.some((g) => (g.hooks ?? []).some((h) => h.command === command && g.matcher === spec.matcher))
-    if (already) continue
-
-    const entry: Entry = { type: 'command', command, timeout: spec.timeout }
-    if (spec.statusMessage) entry.statusMessage = spec.statusMessage
-
-    // Join the group with the same matcher rather than making a second one - Claude Code
-    // runs both, but a settings file that grows a group per launch is unreadable.
-    const group = groups.find((g) => g.matcher === spec.matcher)
-    if (group) (group.hooks ??= []).push(entry)
-    else groups.push(spec.matcher ? { matcher: spec.matcher, hooks: [entry] } : { hooks: [entry] })
-    changed = true
-  }
-
-  // Empty groups left by the filter above are noise in a file the user reads.
-  for (const [event, groups] of Object.entries(settings.hooks))
-    settings.hooks[event] = (groups ?? []).filter((g) => (g.hooks?.length ?? 0) > 0)
-
+  const runner = hookRunner()
+  const changed = placeHooks(settings, TAG, SPECS, (spec) => runner.line(script, [spec.arg, OURS]), runner.shell)
   if (!changed) return 'lane hooks: already installed'
-
-  try {
-    mkdirSync(dirname(file), { recursive: true })
-    // Write then rename: a half-written settings.json disables every hook on the machine,
-    // including the ones that have nothing to do with lanes.
-    const tmp = `${file}.paneforge-tmp`
-    writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8')
-    renameSync(tmp, file)
-  } catch (e) {
-    return `lane hooks: could not write settings.json (${(e as Error).message})`
-  }
-  return `lane hooks: installed -> ${script}`
+  const failed = writeSettings('lane hooks', settings)
+  if (failed) return failed
+  return `lane hooks: installed -> ${script} (${runner.note})`
 }

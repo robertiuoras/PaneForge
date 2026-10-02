@@ -132,7 +132,7 @@ ok(
 )
 // Waking must not write a terminal reset: the screen the pane went to sleep with is still
 // in the renderer's xterm buffer, and that is what "it should show layout perfectly" is.
-const wake = sessions.slice(sessions.indexOf('  wake(id: string)'), sessions.indexOf('   * A pane\'s folder no longer exists'))
+const wake = sessions.slice(sessions.indexOf('  wake(id: string, by'), sessions.indexOf('   * A pane\'s folder no longer exists'))
 ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
 ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'wake revalidates the saved conversation before spawning')
@@ -150,6 +150,55 @@ ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), '
 ok(/resumeCwd: s\.req\.resumeCwd/.test(sessions), 'snapshot persists the original folder that verifies the named conversation')
 ok(/resumeCwd \?\? from/.test(sessions), 'rehome preserves the original folder for a sleeping named conversation')
 ok(/noteSession\(id, fresh \? live\.meta\.cwd : resumeCwd, live\.meta\.agent/.test(wake), 'wake keeps the verified original folder bound to the named conversation, and a fresh wake binds its own folder')
+
+// One press reaching wake twice (pointer-down AND click, log review 2026-10-01: a
+// `wake-refused not-asleep` after a good wake at 04:45:36Z and 11:20:32Z) is a success logged
+// as a duplicate, never a refusal, and never a second process.
+{
+  const rows = []
+  const wakeClass = transformSync(`class WakeFixture { ${wake.slice(0, wake.lastIndexOf('/**'))} }`, { loader: 'ts' }).code
+  const WakeFixture = new Function('logReclaim', `${wakeClass}; return WakeFixture`)((row) => rows.push(row))
+  const wm = new WakeFixture()
+  const awake = { meta: { id: 'p', asleep: undefined, status: 'idle' }, proc: { pid: 7 }, req: {} }
+  wm.sessions = new Map([['p', awake]])
+  is(wm.wake('p', 'click'), awake.meta, 'waking a pane that is already awake succeeds with the pane')
+  is(rows.length, 1, 'and writes exactly one line')
+  is(rows[0].action, 'wake-duplicate', 'that line is a duplicate, not a refusal')
+  is(rows[0].by, 'click', '...and says who asked')
+  is(rows.some((r) => r.action === 'wake-refused'), false, 'a duplicate wake never logs wake-refused')
+  is(wm.wake('gone', 'pointer'), null, 'a missing pane is still refused')
+  is(rows.at(-1).refusal, 'pane-missing', '...with its reason')
+  is(rows.at(-1).by, 'pointer', '...and who asked')
+  awake.proc = undefined
+  is(wm.wake('p', 'click'), null, 'an awake pane with nothing running is still refused')
+  is(rows.at(-1).refusal, 'not-asleep', '...as not asleep')
+}
+// Two concurrent presses on one pane share one wake in main.
+{
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const from = index.indexOf('const wakesInFlight')
+  const handlerSrc = index.slice(from, index.indexOf("ipcMain.handle('sessions:switchAgent'"))
+  ok(from > 0 && handlerSrc.length > 100, 'found the wake handler')
+  const handlers = {}
+  let rehomes = 0
+  const wakes = []
+  const hm = {
+    rehome: async () => { rehomes++; await new Promise((r) => setTimeout(r, 20)) },
+    wake: (id, by) => { wakes.push([id, by]); return { id } }
+  }
+  const code = transformSync(handlerSrc, { loader: 'ts' }).code
+  new Function('ipcMain', 'remote', 'continuationOwnsSource', 'manager', 'laneFor', 'ledgerTakenFolders', 'holdOver', code)(
+    { handle: (name, fn) => { handlers[name] = fn } }, { owns: () => false }, () => false, hm, () => ({}), () => [], null)
+  const first = handlers['sessions:wake'](null, 'p', 'pointer')
+  const second = handlers['sessions:wake'](null, 'p', 'click')
+  is(first, second, 'a second wake while the first is under way shares its promise')
+  await first
+  is(rehomes, 1, 'one folder check for the two presses')
+  is(wakes.length, 1, 'one wake, so one process')
+  is(wakes[0][1], 'pointer', 'the first press is the one named')
+  await handlers['sessions:wake'](null, 'p', 'click')
+  is(wakes.length, 2, 'a press after the wake finished is a new wake, not a stale shared answer')
+}
 
 // ---------------------------------------------------------------------------
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep
@@ -204,9 +253,14 @@ const deps = {
   // The fixture runs the method body outside its module, so it has to supply them.
   ...listsFromTypes()
 }
-const method = transformSync(`class Fixture { ${sleepBody} }`, { loader: 'ts' }).code
+// sleep() reads `owedPrompt` through the same helper list() does, so the fixture carries it.
+const owesAt = sessions.indexOf('  private owesPrompt(live: Live)')
+const owesBody = sessions.slice(owesAt, sessions.indexOf('\n  }\n', owesAt) + 4)
+const method = transformSync(`class Fixture { ${owesBody} ${sleepBody} }`, { loader: 'ts' }).code
 const Fixture = new Function(...Object.keys(deps), `${method}; return Fixture`)(...Object.values(deps))
 const manager = new Fixture()
+manager.autoClearPending = new Map()
+manager.autoClearArmTimers = new Map()
 const live = {
   meta: { id: 'pane', agent: 'codex', cwd: '/fixture', status: 'idle' },
   req: {}, busyUntil: 0, buffer: { push: (text) => events.push(['buffer', text]) },
@@ -257,6 +311,41 @@ is(decision.resumeId, 'exact-conversation', 'decision identifies the conversatio
 is(decision.processPid, 1, 'decision identifies the process it will stop')
 is(decision.thresholdMs, 30_000, 'decision explains the shortened pressure threshold')
 is(reclaimEvents.at(-1).action, 'sleep', 'successful sleep has a separate completion record')
+// The idle time an idle sweep's sleep is logged under is measured at the DEADLINE, not
+// carried from the arm (s17-muexgy28, 2026-09-24: logged 45371ms against a 60000ms
+// threshold on a pane that was 60.0s quiet) - and a pane that printed during the count
+// is refused rather than slept under it.
+{
+  // A fresh pane each time: a sleep rewrites the meta it was handed. Its own kill count,
+  // because the checks below this block count the fixture pane's.
+  let kills = 0
+  const pane = (id, outputAgo, pid) => ({
+    meta: { id, agent: 'codex', cwd: '/fixture', status: 'idle', lastKeyboard: Date.now() - 300_000, lastOutput: Date.now() - outputAgo },
+    req: {}, busyUntil: 0, buffer: { push() {} }, proc: { pid, kill: () => kills++ }
+  })
+  manager.sessions.set('quiet', pane('quiet', 61_000, 2))
+  const before = 0
+  ok(manager.sleep('quiet', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 45_000, thresholdMs: 60_000 })?.asleep,
+    'a pane past its threshold at the deadline sleeps even though it was under it when armed')
+  const slept = reclaimEvents.filter((row) => row.pane === 'quiet' && row.action === 'sleep').at(-1)
+  ok(slept.idleMs >= 61_000 && slept.idleMs < 70_000, `the sleep is logged under the idle time at the deadline (${slept.idleMs})`)
+  is(slept.armedIdleMs, 45_000, '...with the armed reading kept beside it')
+  is(kills, before + 1, 'that sleep really ended the process')
+
+  manager.sessions.set('woke', pane('woke', 5_000, 3))
+  is(manager.sleep('woke', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 59_000, thresholdMs: 60_000 }), null,
+    'a pane that printed during the countdown is refused')
+  const refused = reclaimEvents.filter((row) => row.pane === 'woke').at(-1)
+  is(refused.refusal, 'under-idle-threshold', '...and the refusal says why')
+  ok(refused.idleMs < 10_000, '...under the idle time measured now')
+  is(kills, before + 1, 'the refused pane kept its process')
+
+  manager.sessions.set('edge', pane('edge', 59_600, 4))
+  ok(manager.sleep('edge', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 45_000, thresholdMs: 60_000 })?.asleep,
+    'a deadline timer landing a moment early is not a pane that woke up')
+  manager.sessions.set('hand', pane('hand', 1_000, 5))
+  ok(manager.sleep('hand', 'manual', { source: 'menu' })?.asleep, 'a press is never held to the sweep threshold')
+}
 is(reclaimEvents.filter(row => row.refusal === 'conversation-unverified').length, 1, 'repeated missing-conversation refusals write one diagnostic')
 // A refusal that names only itself cannot be diagnosed from the log: nineteen of them
 // over two days on this desk said `conversation-unverified` and nothing about which file
@@ -316,7 +405,7 @@ is(keptWords(true), 'kept', 'a sleeping one does not claim to be open')
 ok(!keptWords(true).includes('open'), 'the contradiction itself is the assertion')
 
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-ok(/\{keptWords\(Boolean\(s\.asleep\)\)\}/.test(app), 'the card asks keptWords rather than spelling it')
+ok(/className="session-keep-open"/.test(app), 'the card exposes a persistent keep-open checkbox for running and sleeping panes')
 is(
   /^\s+kept open$/m.test(app),
   false,
@@ -348,7 +437,7 @@ is(
   const chip = app.slice(app.indexOf('function CloseClock('), app.indexOf('const api = window.api'))
   assert.match(chip, /sleep \? 'sleeps' : 'closes'/, 'the chip has a word for a sleep countdown')
   assert.match(chip, /going to sleep/, '...and its hover says what a sleep keeps')
-  const row = app.slice(app.indexOf('{alarmAt(s.id) ?? s.closingAt ? ('), app.indexOf('onKeep={() => keepOpen([s.id])}'))
+  const row = app.slice(app.indexOf('at={s.doneClosingAt ?? alarmAt(s.id)'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
   assert.match(row, /sleep=\{alarmSleeps\(s\.id\)\}/, 'the row tells the chip whether the armed countdown is a sleep')
   const at = app.indexOf('if (soon.sleep) {', app.indexOf('// One timer per card'))
   const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))

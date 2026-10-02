@@ -26,6 +26,7 @@ import type {
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
+import type { DeskLink, DeskReport } from '../../shared/discordRpc'
 import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { profileName } from '../profile'
@@ -35,6 +36,7 @@ import { RemoteClient, joinId, splitId } from './client'
 import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
+import type { ReviewRecord } from '../../shared/reviews'
 
 export { joinId, splitId }
 
@@ -87,10 +89,14 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, person: this.person }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, screenView: true, person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
+    this.host.on('desk', () => this.emit('desk'))
+    this.host.on('screen', (peer: PeerIdentity, address: string, m: Msg) =>
+      this.emit('screen', { device: peer.id, name: peer.name, address, msg: m })
+    )
     this.host.onAsk = (peer, sas, address) => this.onAsked(peer, sas, address)
     this.discovery = new Discovery({ ...this.me(), port: getConfig().remote.port, hosting: false })
     this.discovery.on('found', () => this.changed())
@@ -124,6 +130,14 @@ export class Remote extends EventEmitter {
     // that now; this line clears the ones already saved, because the config outlives the
     // bug and nothing else would ever take it back out.
     c.peers = dropSelf(c.peers, c.id)
+    // Every pane a paired device has is mirrored by default (2026-09-23) - a peer saved
+    // before that carries `mirrorAll: false` from when connecting meant picking, and is
+    // switched over once. The flag, not the peers, records that it happened, so a peer
+    // turned back down by hand afterwards stays down.
+    if (!c.mirrorAllDefaulted) {
+      c.peers = c.peers.map((p) => ({ ...p, mirrorAll: true }))
+      c.mirrorAllDefaulted = true
+    }
     setConfig({ remote: c })
     if (c.host) this.host.start(c.port)
     this.discovery.update({ port: c.port, hosting: c.host && c.discoverable })
@@ -154,6 +168,31 @@ export class Remote extends EventEmitter {
    * refusal may not wear the shape of a close.
    */
   private closing = new Map<string, number>()
+
+  /** What this desk last told the others about itself (`tellDesk`). */
+  private deskReport: DeskReport | undefined
+
+  /**
+   * Tell every machine linked to this one - the ones it mirrors and the ones mirroring it -
+   * this desk's own numbers and whether it reaches Discord. Sent only when that changes;
+   * a link that comes up later is handed the last one.
+   */
+  tellDesk(report: DeskReport): void {
+    if (this.deskReport && JSON.stringify(report) === JSON.stringify(this.deskReport)) return
+    this.deskReport = report
+    for (const c of this.clients.values()) c.sendDesk(report)
+    this.host.tellDesk(report)
+  }
+
+  /** Every other machine linked to this one, either way round, and what each said about itself. */
+  deskLinks(): DeskLink[] {
+    const out: DeskLink[] = []
+    for (const c of this.clients.values()) {
+      if (c.status !== 'online') continue
+      out.push({ id: c.peer.id, name: c.identity()?.name || c.peer.name, report: c.peerDesk, panes: c.panes() })
+    }
+    return [...out, ...this.host.deskReports()]
+  }
 
   /** Every mirrored pane, from every connected device. */
   sessions(): Session[] {
@@ -213,6 +252,22 @@ export class Remote extends EventEmitter {
   }
 
   /**
+   * One screen here says which panes it is drawing. Each device is told about its own,
+   * so a mirror that is off screen stops counting as somebody looking over there.
+   */
+  visibleOn(viewer: string, ids: string[]): void {
+    const per = new Map<string, string[]>()
+    for (const id of ids) {
+      const cut = splitId(id)
+      if (!cut) continue
+      const list = per.get(cut.peer) ?? []
+      list.push(cut.local)
+      per.set(cut.peer, list)
+    }
+    for (const [peer, client] of this.clients) client.setVisible(viewer, per.get(peer) ?? [])
+  }
+
+  /**
    * Somebody arrived at this desk, or left it.
    *
    * Every pane this device is mirroring is a pane the OTHER machine is holding open for
@@ -268,11 +323,11 @@ export class Remote extends EventEmitter {
     return client.setKeepOpen(cut.local, keep)
   }
 
-  /** Forward a pane message to the device that owns it. Silent if it went away. */
-  send(id: string, msg: Msg): void {
+  /** Forward a pane message to the device that owns it. False when the link could not carry it. */
+  send(id: string, msg: Msg): boolean {
     const cut = splitId(id)
-    if (!cut) return
-    this.clients.get(cut.peer)?.send({ ...msg, id: cut.local })
+    if (!cut) return false
+    return this.clients.get(cut.peer)?.send({ ...msg, id: cut.local }) ?? false
   }
 
   /** Submit an app-dispatched prompt on the device that owns this mirrored pane. */
@@ -366,6 +421,29 @@ export class Remote extends EventEmitter {
    * that shared its shape would say the PC is idle every time the link is down. Same rule
    * as `peerRefs()` returning null in the lane code, for the same reason.
    */
+  /**
+   * One screen-view frame to a device, over whichever connection to it is up: the one this
+   * machine dialled, else the one it accepted. `offline` = neither; `old` = connected, but
+   * the build there has no screen view.
+   */
+  screenSend(device: string, m: Msg): 'sent' | 'offline' | 'old' {
+    const who = this.screenPeer(device)
+    if (!who) return 'offline'
+    if (who.peer.screenView !== true) return 'old'
+    const c = this.clients.get(device)
+    if (c?.identity()) c.sendScreen(m)
+    else this.host.sendTo(device, m)
+    return 'sent'
+  }
+
+  /** The live identity and address of a device on either connection, or null. */
+  screenPeer(device: string): { peer: PeerIdentity; address: string } | null {
+    const c = this.clients.get(device)
+    const mine = c?.identity()
+    if (c && mine) return { peer: mine, address: c.peer.address }
+    return this.host.guestIdentity(device)
+  }
+
   jobsOn(device: string): Promise<BackJob[]> {
     const client = this.clients.get(device)
     if (!client) return Promise.reject(new Error('That device is not connected'))
@@ -419,7 +497,10 @@ export class Remote extends EventEmitter {
           // no way to say that a PC pane was mid-turn or owed an answer. None of it costs
           // anything: it rides the `remote:changed` message that is already sent whenever
           // anything over there moves.
-          panes: (client?.panes() ?? []).map((s) => ({
+          // ...less any pane this desk has just asked it to close: the mirrored row goes
+          // the moment the frame is on the link (`closeOn`), and the listed one must go
+          // with it, or the close button on a listed row looks like it did nothing.
+          panes: (client?.panes() ?? []).filter((s) => !this.closing.has(`@${p.id}/${s.id}`)).map((s) => ({
             id: s.id,
             title: s.title,
             cwd: s.cwd,
@@ -442,8 +523,9 @@ export class Remote extends EventEmitter {
             job: s.job,
             backJob: s.backJob,
             backJobSince: s.backJobSince,
+            finished: s.finished,
             closingAt: s.closingAt,
-            closeKept: s.closeKept,
+            doneClosingAt: s.doneClosingAt,
             keepOpen: s.keepOpen
           })),
           sessions: client?.list().length ?? 0,
@@ -726,7 +808,7 @@ export class Remote extends EventEmitter {
     if (!client) return
     if (all) client.setMirrorAll(true)
     else client.setWatch(ids)
-    this.savePeer({ ...client.peer, watch: client.watched(), mirrorAll: all })
+    this.savePeer({ ...client.peer, watch: client.watched(), mirrorAll: client.mirrorsAll() })
     this.changed()
   }
 
@@ -828,7 +910,18 @@ export class Remote extends EventEmitter {
     client.on('typed', (sessionId: string, line: string, origin: string) => this.emit('typed', sessionId, line, origin))
     client.on('reset', (sessionId: string, snapshot?: string) => this.emit('reset', sessionId, snapshot))
     client.on('attention', (s: Session) => this.emit('attention', s))
+    client.on('reviews', (reviews: ReviewRecord[]) =>
+      this.emit('reviews', { peer: client.identity() ?? { id, name: client.peer.name, platform: 'unknown', version: '' }, reviews })
+    )
+    client.on('review', (review: ReviewRecord) =>
+      this.emit('review', { peer: client.identity() ?? { id, name: client.peer.name, platform: 'unknown', version: '' }, review })
+    )
     client.on('status', () => this.changed())
+    client.on('desk', () => this.emit('desk'))
+    if (this.deskReport) client.sendDesk(this.deskReport)
+    client.on('screen', (m: Msg) =>
+      this.emit('screen', { device: id, name: client.identity()?.name || client.peer.name, address: client.peer.address, msg: m })
+    )
   }
 
   private savePeer(peer: RemotePeer): void {

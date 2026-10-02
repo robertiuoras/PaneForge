@@ -17,7 +17,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -110,6 +110,24 @@ eq('a boxed answer is not a composer', readComposer(QUOTED, 1), null)
 eq('a caret outside the box is refused', readComposer(BARE, 6), null)
 eq('a caret past the rows is refused', readComposer(BARE, 99), null)
 
+// ...except where Claude Code itself parks it. Past ~200k of context it draws a right-aligned
+// `new task? /clear to save 204.2k tokens` row under its footer and leaves the caret on the
+// empty row under THAT (2.1.286, pane s42 on 1 Oct: five rows below the closing rule). The
+// box was unreadable for 77 minutes, so an unsent-draft flag that only an empty-box read
+// could clear held a finished pane open until Robert came back.
+const HINT = PAD('new task? /clear to save 204.2k tokens'.padStart(50))
+const PARKED = [...BARE, '  ⏵⏵ bypass permissions on (shift+tab to cycle)', HINT, '']
+got = readComposer(PARKED, PARKED.length - 1)
+eq('a caret parked under the footer reads the box above it', got?.text, 'tax return for last year, where did I file it\nand what did it come to')
+eq('and says where the box starts', got?.top, 3)
+eq('an empty box above a parked caret is an empty box', readComposer([RULE, PAD(`❯${NB}`), RULE, '  ? for shortcuts', HINT, ''], 5)?.text, '')
+// Only footer rows (indented, or blank) may sit between the box and the caret, and the
+// caret's own row must be empty: a shell prompt under a dead CLI's last screen, or reply
+// text, is something else on screen now.
+eq('a shell prompt under an old footer is refused', readComposer([...BARE, 'robert@mac PaneForge % '], 7), null)
+eq('reply text under the box is refused', readComposer([...BARE, 'and then it printed this', ''], 8), null)
+eq('a caret far below the box is refused', readComposer([...BARE, ...Array(9).fill('  .'), ''], 16), null)
+
 // -------------------------------------------------------------- through a terminal ---
 // The half that matters: bytes, not rows.
 let Terminal
@@ -165,7 +183,77 @@ const emptyOut = await composerOf(emptyRaw, cols, rows)
 check('an untouched box still answers', emptyOut !== null)
 eq('with nothing typed', emptyOut?.text, '')
 
+// The real bytes: s42's last 48 KB before 11:56pm Thu (1 Oct), one frame boundary to the
+// end, letters outside escape sequences replaced with x so no words of that session are
+// kept - widths, rules, caret moves and frames are the CLI's own. 134x53, caret at col 2
+// under the hint row. The composer is empty; this read null for the whole idle window.
+const parked = readFileSync(join(root, 'scripts/fixtures/claude-hint-parked-caret.bin'), 'utf8')
+const parkedOut = await composerOf(parked, 134, 53, 'claude')
+check('s42 parked caret: the box is found', parkedOut !== null)
+eq('s42 parked caret: and it is empty', parkedOut?.text, '')
+
 // No bytes at all is a pane that has printed nothing - nothing to read, and saying so.
 eq('an empty stream is refused', await composerOf('', cols, rows), null)
+
+// Native Codex 0.159: alternate screen, bold marker, dim hint, caret before the hint.
+// The literal alone must never erase a genuine draft, including one with Home pressed.
+const hint = 'Ask Codex to do anything'
+const codexPaint = (text, style, caret = 2) =>
+  `${ESC}[?1049h${ESC}[2J${ESC}[56;1H${ESC}[48;2;213;231;208m${ESC}[1m›${ESC}[22m ${style}${text}${ESC}[0m${ESC}[58;1H  GPT-6.1-Sol · 50% left${ESC}[56;${caret + 1}H`
+const readCodex = raw => composerOf(raw, 73, 59, 'codex')
+eq('native dim Codex hint with caret before it is an empty composer',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`)))?.text, '')
+eq('the same words typed normally remain a draft even with the caret at the start',
+  (await readCodex(codexPaint(hint, '')))?.text, hint)
+eq('dim same-string text with a caret after it is preserved conservatively',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`, hint.length + 2)))?.text, hint)
+eq('partially dim same-string text is not treated as a placeholder',
+  (await readCodex(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)))?.text, hint)
+eq('other dim text at the start remains a draft',
+  (await readCodex(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)))?.text, 'Ask Codex to do anything else')
+const repaintedHint = codexPaint(hint, `${ESC}[2m`) + codexPaint(hint, '')
+eq('regular draft repaint replaces the earlier identical dim hint', (await readCodex(repaintedHint))?.text, hint)
+
+// Exercise the renderer's actual reader: Codex now keeps its native composer in
+// the alternate screen. A blanket alternate-screen refusal hid unsent drafts.
+const promptFile = join(work, 'prompt.bundle.cjs')
+buildSync({ absWorkingDir: root, entryPoints: ['src/shared/promptBox.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: promptFile })
+const { composerText } = require_(promptFile)
+const paneSource = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const start = paneSource.indexOf('paneComposer.set(sessionId, () => {')
+const end = paneSource.indexOf('\n    paneRepair.set', start)
+assert.ok(start > 0 && end > start, 'renderer composer reader is present')
+const register = new Function('t', 'agent', 'composerText', 'paneComposer', 'sessionId', paneSource.slice(start, end))
+const terminal = new Terminal({ cols, rows, allowProposedApi: true })
+await new Promise(resolve => terminal.write(`${ESC}[?1049h${ESC}[5;1H› keep this unsent draft${ESC}[7;1H  gpt-6.1-sol · 50% left${ESC}[5;25H`, resolve))
+const readers = new Map()
+register(terminal, 'codex', composerText, readers, 'native')
+eq('native alternate-screen Codex draft is readable', readers.get('native')(), 'keep this unsent draft')
+eq('reading preserves the native screen', terminal.buffer.active.type, 'alternate')
+register(terminal, 'claude', composerText, readers, 'other')
+eq('other alternate-screen applications are still refused', readers.get('other')(), null)
+terminal.dispose()
+
+// sessions:draft prefers this live renderer reader over main's replay reader. Exercise
+// the same native hint fixtures through its actual registration, not a second parser.
+const liveCodex = new Terminal({ cols: 73, rows: 59, allowProposedApi: true })
+register(liveCodex, 'codex', composerText, readers, 'hint')
+const liveRead = async raw => {
+  await new Promise(resolve => liveCodex.write(raw, resolve))
+  return readers.get('hint')()
+}
+eq('live screen reads the native dim hint as an empty composer',
+  await liveRead(codexPaint(hint, `${ESC}[2m`)), '')
+eq('live screen preserves identical normally typed words with Home pressed',
+  await liveRead(codexPaint(hint, '')), hint)
+eq('live screen preserves dim same-string text with the caret after it',
+  await liveRead(codexPaint(hint, `${ESC}[2m`, hint.length + 2)), hint)
+eq('live screen preserves partially dim same-string text',
+  await liveRead(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)), hint)
+eq('live screen preserves other dim text with the caret at the start',
+  await liveRead(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)), 'Ask Codex to do anything else')
+eq('live screen reads a regular repaint of the former hint as a real draft',
+  await liveRead(repaintedHint), hint)
+liveCodex.dispose()
 
 console.log(`composer read: ${checks} checks passed`)

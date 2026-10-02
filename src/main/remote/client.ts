@@ -23,6 +23,7 @@ import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
+import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import {
   HANDOFF_ASK_MS,
   HANDOFF_CHUNK,
@@ -33,6 +34,7 @@ import {
 import type { Project, RemotePeer, Session, StartSessionRequest } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
+import type { ReviewRecord } from '../../shared/reviews'
 
 /** Same cap the local session manager keeps, for the same reason. */
 const BUFFER_LIMIT = 400_000
@@ -92,6 +94,10 @@ export class RemoteClient extends EventEmitter {
    * it - a row can then say nothing rather than inventing an empty desk.
    */
   peerPerson: boolean | undefined = undefined
+  /** what that machine last said about its own panes and its Discord (`shared/discordRpc.ts`) */
+  peerDesk: DeskReport | undefined = undefined
+  /** what this desk last said about itself, re-sent whenever the link comes back */
+  private desk: DeskReport | undefined = undefined
 
   /** Every pane that device has, whether or not this one is mirroring it. */
   private available: Session[] = []
@@ -104,7 +110,7 @@ export class RemoteClient extends EventEmitter {
    * changes: an idle mirrored pane repaints never, so without a stored frame the owner
    * would keep whatever presence it was told the first time - see `restatePresence`.
    */
-  private lent = new Map<string, { localId: string; cols: number; rows: number; viewer?: string }>()
+  private lent = new Map<string, { localId: string; cols: number; rows: number; viewer?: string; person?: boolean }>()
 
   private conn: Conn | null = null
   private socket: Socket | null = null
@@ -146,6 +152,18 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Whether every pane that device has is mirrored, now and as it opens more.
+   *
+   * ON unless this device chose otherwise. A peer that never said (`undefined`) mirrors
+   * everything: a pane over there is then already a card here, and pressing it shows its
+   * screen with no wait for a mirror to attach. Only a peer that picked panes by hand
+   * (`setWatch`, which writes `false`) mirrors just its pick.
+   */
+  mirrorsAll(): boolean {
+    return this.peer.mirrorAll !== false
+  }
+
+  /**
    * Choose what to mirror. Ids are the OTHER device's, as `panes()` reports them.
    *
    * Streams follow the pick both ways: a newly watched pane is attached (its scrollback
@@ -160,7 +178,7 @@ export class RemoteClient extends EventEmitter {
       this.conn?.send({ t: 'detach', id })
     }
     this.watching = next
-    if (this.peer.mirrorAll) this.peer = { ...this.peer, mirrorAll: false }
+    if (this.mirrorsAll()) this.peer = { ...this.peer, mirrorAll: false }
     this.applyWatch()
   }
 
@@ -175,7 +193,7 @@ export class RemoteClient extends EventEmitter {
   }
 
   private applyWatch(): void {
-    if (this.peer.mirrorAll) for (const s of this.available) this.watching.add(s.id)
+    if (this.mirrorsAll()) for (const s of this.available) this.watching.add(s.id)
     const live = new Set(this.available.map((s) => s.id))
     for (const id of [...this.watching]) if (!live.has(id)) this.watching.delete(id)
     for (const id of this.watching) this.attach(id)
@@ -256,6 +274,30 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Which of the mirrored panes each screen here is actually DRAWING, by viewer key.
+   *
+   * A screen that has never said is absent, and absent means everything it borrowed is
+   * on it - the reading an older window or a phone that says nothing gets.
+   */
+  private shown = new Map<string, Set<string>>()
+  /** Whether a person is at this desk, as last stated - see `restatePresence`. */
+  private person: boolean | undefined = undefined
+
+  /**
+   * What the far end is told about who is behind a borrow: somebody, when a person is at
+   * this desk AND the screen holding it is drawing that pane. With every pane of a device
+   * mirrored, each hidden mirror still holds a borrow over there, and a borrow with a
+   * person behind it keeps that pane off the owner's idle clock - eight hidden mirrors
+   * would have held eight PC panes open for as long as the Mac was awake.
+   */
+  private personBehind(localId: string, viewer?: string): boolean | undefined {
+    if (this.person === false) return false
+    const drawn = this.shown.get(viewer ?? '')
+    if (drawn && !drawn.has(localId)) return false
+    return this.person
+  }
+
+  /**
    * Ask the host to draw one of its panes at OUR grid, as a borrow it can undo.
    *
    * Only for a pane we are watching: a resize is the one message that changes something
@@ -264,8 +306,29 @@ export class RemoteClient extends EventEmitter {
    */
   resizeOn(localId: string, cols: number, rows: number, viewer?: string, person?: boolean): void {
     if (!this.watching.has(localId)) return
-    this.lent.set(`${localId} ${viewer ?? ''}`, { localId, cols, rows, viewer })
-    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer, person })
+    if (person !== undefined) this.person = person
+    const behind = this.personBehind(localId, viewer)
+    this.lent.set(`${localId} ${viewer ?? ''}`, { localId, cols, rows, viewer, person: behind })
+    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer, person: behind })
+  }
+
+  /**
+   * One screen here says which of its panes are on it. Only a borrow whose answer CHANGED
+   * is re-stated, so a window repeating itself every few seconds sends nothing.
+   */
+  setVisible(viewer: string, localIds: string[]): void {
+    this.shown.set(viewer, new Set(localIds))
+    this.restate()
+  }
+
+  private restate(): void {
+    for (const l of this.lent.values()) {
+      if (!this.watching.has(l.localId)) continue
+      const behind = this.personBehind(l.localId, l.viewer)
+      if (behind === l.person) continue
+      l.person = behind
+      this.conn?.send({ t: 'resize', id: l.localId, cols: l.cols, rows: l.rows, borrowed: true, viewer: l.viewer, person: behind })
+    }
   }
 
   /**
@@ -278,10 +341,8 @@ export class RemoteClient extends EventEmitter {
    * An older host ignores the extra field, which leaves exactly what shipped before it.
    */
   restatePresence(person: boolean): void {
-    for (const l of this.lent.values()) {
-      if (!this.watching.has(l.localId)) continue
-      this.conn?.send({ t: 'resize', id: l.localId, cols: l.cols, rows: l.rows, borrowed: true, viewer: l.viewer, person })
-    }
+    this.person = person
+    this.restate()
   }
 
   /**
@@ -293,6 +354,12 @@ export class RemoteClient extends EventEmitter {
    */
   sendPresence(person: boolean): void {
     this.conn?.send({ t: 'presence', person })
+  }
+
+  /** Tell that machine this desk's own numbers and whether it reaches Discord. */
+  sendDesk(report: DeskReport): void {
+    this.desk = report
+    this.conn?.send({ t: 'desk', report })
   }
 
   /**
@@ -332,7 +399,9 @@ export class RemoteClient extends EventEmitter {
   }
 
   projects(): Promise<Project[]> {
-    return this.ask<Project[]>({ t: 'projects' })
+    // 30 s, not the 15 s default: the PC answered in 9.8 s and 12.1 s and once not within
+    // 15 s (2026-10-01), and a list that times out used to refuse `pf open --on` outright.
+    return this.ask<Project[]>({ t: 'projects' }, 30_000)
   }
 
   agents(): Promise<AgentInfo[]> {
@@ -511,6 +580,7 @@ export class RemoteClient extends EventEmitter {
     this.peerPerson = conn.peer.person
     if (conn.peer.id && conn.peer.id !== this.peer.id) this.emit('identified', conn.peer)
     conn.on('msg', (m: Msg) => this.receive(m))
+    if (this.desk) conn.send({ t: 'desk', report: this.desk })
     conn.on('gone', (why: string) => {
       for (const p of this.pending.values()) p.no(new Error('Connection lost'))
       this.pending.clear()
@@ -569,7 +639,9 @@ export class RemoteClient extends EventEmitter {
       case 'buffer': {
         const id = String(m.id ?? '')
         this.buffers.set(id, new OutBuffer(BUFFER_LIMIT))
-        this.buffers.get(id)!.push(String(m.data ?? '').slice(-BUFFER_LIMIT))
+        // The owner can prepend mode restoration to a full-sized tail. Let OutBuffer
+        // parse that prefix before clipping, or native scrolling is lost on attach.
+        this.buffers.get(id)!.push(String(m.data ?? ''))
         // A reconnect replaces the scrollback wholesale, so the pane has to redraw
         // from it rather than append to what it already had.
         this.emit('reset', joinId(this.peer.id, id))
@@ -581,8 +653,19 @@ export class RemoteClient extends EventEmitter {
         this.peerPerson = typeof m.person === 'boolean' ? m.person : undefined
         this.emit('status')
         return
+      case 'desk':
+        this.peerDesk = readDeskReport(m.report)
+        this.emit('desk')
+        return
       case 'attention':
         this.emit('attention', this.tag(m.session as Session))
+        return
+      case 'reviews':
+        this.emit('reviews', Array.isArray(m.list) ? m.list as ReviewRecord[] : [])
+        if (typeof m.cursor === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(m.cursor)) this.conn?.send({ t: 'reviews', cursor: m.cursor })
+        return
+      case 'review':
+        this.emit('review', m.review as ReviewRecord)
         return
       case 'started':
         this.settle(m, m.session)
@@ -634,8 +717,24 @@ export class RemoteClient extends EventEmitter {
         return
       }
       default:
+        if (m.t.startsWith('screen:')) this.emit('screen', m)
         return
     }
+  }
+
+  /**
+   * The screen view's frames go out on this connection when it is up. Returns the other
+   * end's identity so the caller can tell an older build (no `screenView`) from a yes.
+   */
+  sendScreen(m: Msg): PeerIdentity | null {
+    if (this.status !== 'online' || !this.conn?.ready) return null
+    this.conn.send(m)
+    return this.conn.peer
+  }
+
+  /** Who is on the other end right now, or null when not connected. */
+  identity(): PeerIdentity | null {
+    return this.status === 'online' && this.conn?.ready ? this.conn.peer : null
   }
 
   private settle(m: Msg, value: unknown): void {
@@ -682,6 +781,7 @@ export class RemoteClient extends EventEmitter {
     this.since = 0
     this.peerVersion = ''
     this.peerPerson = undefined
+    this.peerDesk = undefined
     this.available = []
     // `watching` deliberately survives: it is what this device chose to mirror, and a
     // reconnect should bring those panes back rather than make the choice again.

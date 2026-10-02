@@ -46,6 +46,7 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, briefAnchor, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+  isCounterRepaint, contentStampAfter,
   expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
@@ -179,6 +180,80 @@ console.log('a busy pane WAITS, it is not refused')
   ok('the floor never turns into a refusal', armDecision(null) === 'arm')
 }
 
+console.log('a ticking counter is not output the quiet floor waits on')
+{
+  // 2026-10-02 3:44-4:05am, pane s72: idle, finished, its handoff written, and PaneForge never
+  // typed /clear - 115 lines of `holding 9606ms: the pane printed 394ms ago`. The idle footer
+  // carried a BACKGROUND agent row (`◯ general-purpose  Waiting on PC load repro job  47m 52s
+  // · ↓ 153.0k tokens`) and Claude Code repaints its timer every second, so `lastOutput` was
+  // never 10s old. The chunks below are copied out of that pane's own pty log
+  // (history/s72-mupoiasa.log): the renderer sends only the CELLS THAT CHANGED, so one tick is a
+  // cursor hop, one digit and a window-title glyph that flips between two moon phases.
+  const ESC = '\x1b'
+  const grey = `${ESC}[38;2;153;153;153m`
+  const tick = (digit, moon = '◑') =>
+    `${ESC}[2C${ESC}[8A${ESC}[?25h${ESC}]0;${moon} Taskdriver handoff continuation\x07${ESC}[?25l${ESC}[2D${ESC}[8B\r` +
+    `${ESC}[101C${ESC}[1A${grey}${digit}${ESC}[39m\r\r\n`
+  const minute = `${ESC}[2C${ESC}[8A${ESC}[?25h${ESC}]0;◐ Taskdriver handoff continuation\x07${ESC}[?25l${ESC}[2D${ESC}[8B\r` +
+    `${ESC}[96C${ESC}[1A${grey}48m 0${ESC}[39m\r\r\n`
+  // What a real pass at the pane looks like: the agent row drawn from scratch, a reply, and
+  // the working line a Stop hook leaves.
+  const agentRow = `${grey}  ◯ general-purpose${ESC}[22GWaiting on PC load repro job${ESC}[97G47m 52s · ↓ 153.0k tokens${ESC}[39m\r\r\n`
+  const reply = `${ESC}[38;2;153;153;153m  ⎿ ${ESC}[39m The handoff is written and the probe job is still running on the PC.\r\n`
+  const hookRow = `${ESC}[38;2;215;119;87m*${ESC}[39m Considering… ${grey}(running stop hooks… 0/4 · 3s · ↓ 1.1k tokens)${ESC}[39m\r\n`
+
+  ok('one second of the agent row timer is a counter repaint', isCounterRepaint(tick('3')))
+  ok('...whichever way the title glyph is facing', isCounterRepaint(tick('4', '◐')))
+  ok('...and the minute rolling over, "48m 0"', isCounterRepaint(minute))
+  ok('the row being drawn from scratch is NOT (it has words)', !isCounterRepaint(agentRow))
+  ok('a reply is not', !isCounterRepaint(reply))
+  ok('the working line a Stop hook paints is not', !isCounterRepaint(hookRow))
+  ok('a chunk that paints nothing readable is not either - unknown stays output', !isCounterRepaint(`${ESC}[?25l${ESC}[2D`) && !isCounterRepaint(''))
+  ok('a count with words around it is not ("42 files changed")', !isCounterRepaint('42 files changed\r\n'))
+  ok('a long run of digits is not a tick - a tick is a few hundred bytes', !isCounterRepaint('1'.repeat(5000)))
+
+  // The pane model: exactly `contentStampAfter`, fed what sessions.ts feeds it.
+  const run = (events, idle = true) => {
+    let stamp = 0
+    for (const [at, chunk] of events) stamp = contentStampAfter({ stamp, now: at, idle, chunk })
+    return stamp
+  }
+  const ticks = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => [(from + i) * 1000, tick(String((from + i) % 10))])
+
+  // THE DEFECT. The reply lands at 0s, nothing real after it, a tick every second to 30s.
+  const stuck = run([[0, reply], ...ticks(1, 30)])
+  ok('30s of nothing but ticks: the last content is the reply', stuck === 0)
+  ok('...so the quiet floor lets go', quietEnoughToArm(30_000 - stuck))
+  ok('...and the expiry fires instead of settling for ever',
+    expiryDecision({ exists: true, metaAt: 5, armedAt: 5, now: 6, drop: null, quietMs: 30_000 - stuck }) === 'fire')
+  ok('the floor opens at the floor, not before', !quietEnoughToArm(ARM_QUIET_MS - 1 - stuck) && quietEnoughToArm(ARM_QUIET_MS - stuck))
+  // Same events on a pane that is WORKING: every chunk is output, as it always was.
+  const working = run([[0, reply], ...ticks(1, 30)], false)
+  ok('a working pane stamps every chunk, as before', working === 30_000 && !quietEnoughToArm(0))
+
+  // THE PROTECTION KEPT: a reply still streaming holds the clear whatever the footer says.
+  const streaming = run([[0, reply], ...ticks(1, 27), [28_000, 'Checking the second thing now, and the fix is in.\r\n'], ...ticks(29, 30)])
+  ok('real text 2s ago holds the clear', !quietEnoughToArm(30_000 - streaming) && streaming === 28_000)
+  ok('...and the expiry settles instead of firing',
+    expiryDecision({ exists: true, metaAt: 5, armedAt: 5, now: 6, drop: null, quietMs: 30_000 - streaming }) === 'settling')
+  ok('...and lets go once only ticks have followed it for the floor',
+    quietEnoughToArm(28_000 + ARM_QUIET_MS - streaming) && !quietEnoughToArm(28_000 + ARM_QUIET_MS - 1 - streaming))
+  // The 2026-08-30 / 2026-09-10 gap: a blocking Stop hook makes the model write a SECOND
+  // reply while the footer reads finished. Its first frame has words in it.
+  const second = run([[0, reply], ...ticks(1, 19), [20_000, hookRow], [21_000, reply]])
+  ok('a second reply after a Stop hook is output', second === 21_000 && !quietEnoughToArm(30_000 - second))
+  // Anything the pane prints that is not a tick stamps, including the redraw after a resize.
+  ok('a redraw of the agent row stamps', run([[0, reply], ...ticks(1, 5), [6000, agentRow]]) === 6000)
+
+  // The wiring: one stamp, written from the pty's own data event, read by all three gates.
+  const sess = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  ok('the pty data event stamps `contentAt` through contentStampAfter', /live\.contentAt = contentStampAfter\(\{[^}]*chunk: data/.test(sess))
+  ok('the arm path reads it', /const quiet = Date\.now\(\) - s\.contentAt\b/.test(sess))
+  ok('the expiry reads it', /quietMs: live \? Date\.now\(\) - live\.contentAt\b/.test(sess))
+  ok('the lead before the clear reads it', /const lateQuiet = Date\.now\(\) - current\.contentAt\b/.test(sess))
+  ok('and no autoclear gate still reads the raw stamp', !/quietEnoughToArm\([^)]*lastOutput/.test(sess) && !/const (quiet|lateQuiet) = Date\.now\(\) - [\w.]*meta\.lastOutput/.test(sess))
+}
+
 console.log('a history-recalled draft is protected even when the legacy shadow is empty')
 {
   // Up-arrow makes the terminal's line editor hold a previous prompt. PaneForge cannot
@@ -215,6 +290,9 @@ console.log('nothing but the button stands a countdown down')
   ok('and it has words', dropWords('cancelled') === 'you stopped it')
   const toast = readFileSync(join(root, 'src/renderer/src/components/AutoClearToast.tsx'), 'utf8')
   ok('the card still carries that button', /Keep this session/.test(toast))
+  // Robert 2026-09-27: the handoff's next steps under the countdown were "too cluttered".
+  // A step is a paragraph of commands; the pane's name is what the card needs to say.
+  ok('the card lists no handoff steps', !/autoClearSteps|<ul|<li/.test(toast))
 }
 
 console.log('a countdown stays silent')
@@ -537,7 +615,8 @@ console.log('the resume prompt is forged, so it names the handoff and what done 
   ok('the handoff path is the anchor', brief.includes('/handoffs/session.md'))
   ok('the hook words survive', brief.includes('Continue the handoff'))
   ok('every open step becomes a done line', brief.includes('- Ship the offload switch.') && brief.includes('- Run npm run test:settingsearch.'))
-  ok('no work beyond the handoff is invited', brief.includes('add no work it does not name'))
+  ok('no feature beyond the handoff is invited', brief.includes('start no new feature it does not name'))
+  ok('a defect found on the way is fixed, not parked', brief.includes('fix it this turn') && !brief.includes('add no work'))
 
   const noPath = resumeBrief(ask, null)
   ok('an unknown handoff draws no anchor', !noPath.includes('Start from:'))

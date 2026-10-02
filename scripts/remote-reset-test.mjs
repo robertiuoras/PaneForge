@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { Terminal } = require('@xterm/headless')
 const source = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
-const start = source.indexOf('const receiveReset = (')
+const start = source.indexOf('let widenForReset: (() => void) | null = null')
 const end = source.indexOf('\n    const writeData =', start)
 assert.ok(start > 0 && end > start)
 const callback = transformSync(source.slice(start, end), { loader: 'ts' }).code
@@ -37,10 +37,12 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   let initialReplay, sawOutput = false, awaitingInitialReplay = false;
   const mirrorRef = { current: true };
   let wipeSnap = null, wipeTimer;
+  const dropWipeSnap = () => { clearTimeout(wipeTimer); wipeSnap = null };
   const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, setScrolledUp = () => {}, pinned = { current: true }, scrollIntent = { current: 0 }, seedMarks = () => {};
   const keptRows = () => { throw new Error('read stale screen during snapshot'); };
   const screenNow = () => { throw new Error('armed stale wipe during snapshot'); };
   const armWipeCheck = () => {};
+  const needRestoreFix = { current: false }, armRestoreFix = () => {};
   // The staged write (shared/replayWidth.ts) is proved by replay-width-test; here a reset is a plain write.
   const writeStaged = (b, done) => t.write(b, done);
   ${factory}

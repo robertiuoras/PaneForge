@@ -109,7 +109,12 @@ const table = [
   ['Implement the change we discussed', 'medium'],
   ['Write a test for the new reader and hook it into the suite', 'medium'],
   ['Move the countdown into its own component', 'medium'],
+  ['Quick: list the sessions.', 'low'],
+  ['Rename the label?', 'low'],
   ['Why does this intermittent crash still happen after two fixes?', 'high'],
+  ['Fix the bugs?', 'high'],
+  ['Bugfix?', 'high'],
+  ['Why has this failed?', 'high'],
   ['diagnose the flaky test', 'high'],
   ['find the root cause of the deadlock', 'high'],
   ['the pane is still not working after your change', 'high'],
@@ -356,6 +361,16 @@ t('the same line says which model ran the turn', () => {
   assert.equal(lastTurnContext(''), undefined)
 })
 
+t('a /model switch mid-turn reads before the next turn starts', () => {
+  // Real shape, codex-cli 0.156.1 (pane 6, 2026-09-23): the turn began on luna/low, then
+  // `/model` wrote two thread_settings_applied lines - astra/low, then astra/medium - and
+  // no turn_context follows until the NEXT turn. The card read luna for the whole turn.
+  const switched = readFileSync(join(here, 'fixtures', 'codex-rollout-model-switch.jsonl'), 'utf8')
+  assert.deepEqual(lastTurnContext(switched), { model: 'gpt-6-astra', effort: 'medium' })
+  const beforeSwitch = switched.split('\n')[0]
+  assert.deepEqual(lastTurnContext(beforeSwitch), { model: 'gpt-6-luna', effort: 'low' })
+})
+
 t('the older field name reads too', () => {
   assert.equal(
     lastTurnEffort('{"type":"turn_context","payload":{"reasoning_effort":"xhigh"}}'),
@@ -417,9 +432,11 @@ t('the launch flag is a pair, and nothing when no level is asked for', () => {
 t('only a Codex pane is launched with the level', () => {
   const codex = { id: 'codex', bin: 'codex', args: [] }
   const claude = { id: 'claude', bin: 'claude', args: [] }
-  assert.deepEqual(buildArgs(codex, { effort: 'medium' }), ['-c', 'model_reasoning_effort="medium"'])
+  // Every Codex pane also skips the update chooser (agent-env-test pins why).
+  const noUpdate = ['-c', 'check_for_update_on_startup=false']
+  assert.deepEqual(buildArgs(codex, { effort: 'medium' }), [...noUpdate, '-c', 'model_reasoning_effort="medium"'])
   assert.deepEqual(buildArgs(claude, { effort: 'medium' }), ['--fallback-model', 'sonnet,opus'])
-  assert.deepEqual(buildArgs(codex, {}), [])
+  assert.deepEqual(buildArgs(codex, {}), noUpdate)
 })
 
 console.log(`\neffort: ${pass} checks passed`)

@@ -69,6 +69,9 @@ project('assistant', { 'CLAUDE.md': '# CLAUDE.md\n\nAirtasker co-pilot lives her
 project('taskdriver', {
   'package.json': JSON.stringify({ name: 'taskdriver', homepage: 'https://app.taskdriver.ai' })
 })
+// Instructions moved from CLAUDE.md to AGENTS.md in ~30 repos on 2026-09-23; a domain named
+// only there must still route.
+project('signals', { 'AGENTS.md': '# AGENTS.md\n\nLive at https://brightpath.io\n' })
 project('Toolstash-b')
 project('PaneForge-w3')
 project('crypto')
@@ -88,6 +91,7 @@ const top = (text) => {
 is(top('Add visit tracking to toolstash.xyz/paneforge'), 'Toolstash', 'domain beats a folder name in the same sentence')
 is(top('fix the paneforge lane healer stashing my work'), 'PaneForge', 'a plain folder name routes')
 is(top('deploy app.taskdriver.ai and check the agents tab'), 'taskdriver', 'a subdomain routes to its project')
+is(top('the signup form on brightpath.io is broken'), 'signals', 'a domain named only in AGENTS.md routes')
 
 // ---- lane checkouts are the same project ---------------------------------------------
 

@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process'
 import * as pty from '@lydell/node-pty'
-import { which } from './which'
+import { forgetWhich, which } from './which'
 import { prereqDocs, prereqFor, prereqInstall } from '../shared/agents'
 import { spawnQuiet } from './spawnQuiet'
 
@@ -144,6 +144,10 @@ export function stopInstalls(): void {
  * so the app sees it without a restart.
  */
 export function refreshPath(): void {
+  // Every caller asks `which` right after this, and it keeps a "not found" for 60s - so
+  // the program that was just installed read as missing whenever anything had looked for
+  // it in the last minute (the Welcome cards look on show), and a good install failed.
+  forgetWhich()
   if (process.platform !== 'win32') {
     // Common install targets that a GUI-launched app misses.
     for (const dir of ['/opt/homebrew/bin', '/usr/local/bin', `${process.env.HOME}/.local/bin`]) {

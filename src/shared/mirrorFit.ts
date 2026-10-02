@@ -151,3 +151,96 @@ export function borrowGrid(i: {
     rows: Math.max(MIN_ROWS, Math.floor(i.fitRows * k))
   }
 }
+
+// THIRD (2026-10-02): the font is CHOSEN, not walked, and the ask is the room itself.
+//
+// Both rules above convert one measurement into another by the FONT RATIO, and that is only
+// true of a renderer whose cell is proportional to its font. xterm's WebGL renderer rounds
+// the cell to whole DEVICE pixels, so on a 1.25 screen 12px and 11px both draw a 6.4px cell
+// while 13px draws 7.2px - and its DOM renderer, at the same font, draws 7.03px. Measured in
+// a dev copy (PC, 909px card, the owner holding 121x37): the walk settled at 12 though 121
+// columns fit at 13; the lend asks wobbled 117x43, 123x41, 117x43, 123x39 ... (six resizes
+// of the owner's pty in four seconds) and stopped two rows short; and a renderer swap under
+// an unchanged font made the cell 7.03px where the fit had assumed 6.4px, so two columns
+// hung off the right edge behind a 75px empty band - Robert's screenshot, 2026-10-02.
+//
+// So the room at a font is read off the cell the renderer will REALLY draw at that font
+// (the caller measures it once per font, renderer and screen), in the fit addon's own
+// arithmetic, and the font is the largest whose room holds the grid. No ratio, no walk.
+
+/** A cell as the renderer draws it, CSS px. */
+export interface Cell {
+  w: number
+  h: number
+}
+
+/** The box the grid is drawn in: the fit addon's `availableWidth`/`availableHeight`. */
+export interface Box {
+  w: number
+  h: number
+}
+
+/**
+ * Whole cells in the box - the fit addon's own arithmetic (`proposeDimensions`), so the
+ * answer is the grid a local pane of this size would be given.
+ */
+export function roomFor(box: Box, cell: Cell): { cols: number; rows: number } {
+  return {
+    cols: Math.max(2, Math.floor(box.w / cell.w)),
+    rows: Math.max(1, Math.floor(box.h / cell.h))
+  }
+}
+
+/**
+ * The largest font in [MIN_FONT, maxFont] at which the host's grid fits, or MIN_FONT when
+ * none does (scaling takes over from there). null when the room cannot be read at all.
+ *
+ * Searched from the user's own font DOWN, so the answer never depends on the font the pane
+ * happens to be at - a mirror that reaches 121x37 from a shrunken font lands where one that
+ * started at full size does.
+ */
+export function bestFont(i: {
+  hostCols: number
+  hostRows: number
+  maxFont: number
+  roomAt: (font: number) => { cols: number; rows: number } | null
+}): number | null {
+  const cols = Math.max(MIN_COLS, i.hostCols)
+  const rows = Math.max(MIN_ROWS, i.hostRows)
+  for (let font = Math.max(MIN_FONT, Math.floor(i.maxFont)); font > MIN_FONT; font--) {
+    const room = i.roomAt(font)
+    if (!room) return null
+    if (room.cols >= cols && room.rows >= rows) return font
+  }
+  return MIN_FONT
+}
+
+/**
+ * Where the drawn grid sits in its box: the scale (below 1 only when even MIN_FONT does not
+ * fit) and the offset that centres whatever is left over.
+ *
+ * The box is the USABLE one - the fit addon's, with the terminal's own padding and the
+ * scrollbar already taken off. Centring in the host's whole width put the slack the
+ * scrollbar owns on the left as well: 909px of host, 886px of screen, `translate(12px)`
+ * for 6px of real slack. Under two cells nothing moves: a grid is whole cells, so a pane
+ * that took everything it could leaves up to one over on each axis, and that is the pane
+ * being full, not slack.
+ */
+export function placeGrid(i: { box: Box; cols: number; rows: number; cell: Cell }): {
+  scale: number
+  x: number
+  y: number
+} {
+  const drawnW = i.cols * i.cell.w
+  const drawnH = i.rows * i.cell.h
+  if (!(drawnW > 0) || !(drawnH > 0) || !(i.box.w > 0) || !(i.box.h > 0)) return { scale: 1, x: 0, y: 0 }
+  const fit = Math.min(1, i.box.w / drawnW, i.box.h / drawnH)
+  const scale = fit < 0.999 ? Math.max(0.05, fit) : 1
+  const slackX = i.box.w - drawnW * scale
+  const slackY = i.box.h - drawnH * scale
+  return {
+    scale,
+    x: slackX >= 2 * i.cell.w * scale ? Math.floor(slackX / 2) : 0,
+    y: slackY >= 2 * i.cell.h * scale ? Math.floor(slackY / 2) : 0
+  }
+}

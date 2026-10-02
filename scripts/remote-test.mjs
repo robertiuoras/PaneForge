@@ -17,6 +17,8 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname } from 'node:path'
 import { createServer } from 'node:net'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+import os from 'node:os'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = mkdtempSync(join(tmpdir(), 'pf-remote-'))
@@ -49,6 +51,7 @@ function bundle() {
   writeFileSync(
     entry,
     [
+      `export { localAddresses, broadcastAddresses } from ${JSON.stringify(join(root, 'src/main/remote/discover.ts').replace(/\\/g, '/'))}`,
       `export { RemoteHost } from ${JSON.stringify(join(root, 'src/main/remote/host.ts').replace(/\\/g, '/'))}`,
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
@@ -74,7 +77,7 @@ function bundle() {
 
 /** A stand-in for the session manager: two panes, one of which can be made to talk. */
 function backend() {
-  const listeners = { data: [], typed: [], sessions: [], attention: [] }
+  const listeners = { data: [], typed: [], sessions: [], attention: [], review: [] }
   const sessions = [
     { id: 's1', title: 'assistant', cwd: '/w/assistant', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, cols: 100, rows: 28 },
     { id: 's2', title: 'jarvis', cwd: '/w/jarvis', agent: 'codex', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }
@@ -90,6 +93,12 @@ function backend() {
   const submitted = []
   const kept = new Set()
   const closeDone = []
+  const reviews = Array.from({ length: 21 }, (_, index) => ({
+    id: `done_${index + 1}`, sessionId: 's1', nativeSessionId: 'chat_1', kind: 'result', proof: 'measured',
+    report: 'completed', prompt: 'do it', evidence: ['synthetic proof'], links: [], title: 'jarvis',
+    provider: 'claude', cwd: '/w/assistant', reportPath: '/private/review.html',
+    createdAt: '2026-09-29T00:00:00.000Z', attention: true
+  }))
   // What a guest asked this desk to hand BACK, and what this desk answers with. The
   // answer is settable because the interesting cases are the ones that are not a plain
   // yes: a pane mid-turn (queued over there), a refusal, and a backend too old to know
@@ -127,6 +136,9 @@ function backend() {
     emitAttention(s) {
       for (const cb of listeners.attention) cb(s)
     },
+    emitReview(review) {
+      for (const cb of listeners.review) cb(review)
+    },
     api: {
       list: () => sessions,
       buffer: (id) => buffers[id] ?? '',
@@ -139,8 +151,8 @@ function backend() {
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
       sendPrompt: (id, text) => submitted.push([id, text]),
-      resize: (id, cols, rows, borrowed, viewer) =>
-        resized.push([id, cols, rows, borrowed === true, viewer]),
+      resize: (id, cols, rows, borrowed, viewer, _mirror, person) =>
+        resized.push([id, cols, rows, borrowed === true, viewer, person]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
       redraw: () => {},
       setBusy: () => {},
@@ -172,7 +184,17 @@ function backend() {
       onData: (cb) => (listeners.data.push(cb), () => {}),
       onTyped: (cb) => (listeners.typed.push(cb), () => {}),
       onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
-      onAttention: (cb) => (listeners.attention.push(cb), () => {})
+      onAttention: (cb) => (listeners.attention.push(cb), () => {}),
+      listReviews: (cursor) => {
+        const previous = cursor === undefined ? -1 : reviews.findIndex((review) => review.id === cursor)
+        if (cursor !== undefined && previous < 0) return { list: [] }
+        const list = reviews.slice(previous + 1, previous + 21)
+        return { list, cursor: previous + 1 + list.length < reviews.length ? list[list.length - 1].id : undefined }
+      },
+      onReview: (cb) => {
+        listeners.review.push(cb)
+        return () => {}
+      }
     }
   }
 }
@@ -191,8 +213,45 @@ async function until(fn, ms = 8000) {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
+  const originalInterfaces = os.networkInterfaces
+  try {
+    os.networkInterfaces = () => { throw new Error('ERR_SYSTEM_ERROR: adapter changing') }
+    syncBuiltinESMExports()
+    ok('adapter enumeration failure leaves local addresses unavailable', mod.localAddresses().length === 0)
+    ok('adapter enumeration failure keeps global discovery broadcast', JSON.stringify(mod.broadcastAddresses()) === '["255.255.255.255"]')
+    os.networkInterfaces = () => ({ test: [
+      { family: 'IPv4', internal: false, address: '192.168.1.8', netmask: '255.255.255.0' },
+      { family: 'IPv4', internal: false, address: '100.78.1.77', netmask: '255.255.255.255' }
+    ] })
+    syncBuiltinESMExports()
+    ok('address enumeration recovers on the next refresh with Tailnet first', mod.localAddresses().join(',') === '100.78.1.77,192.168.1.8')
+    ok('subnet discovery recovers on the next refresh', mod.broadcastAddresses().includes('192.168.1.255'))
+  } finally {
+    os.networkInterfaces = originalInterfaces
+    syncBuiltinESMExports()
+  }
   const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES, isSelfPeer, dropSelf, liveWatch } =
     mod
+
+  // An owner's capped snapshot has a short mode prefix BEFORE its full 400 KB tail.
+  // Exercise the actual receive path: pre-slicing it loses native scrolling on attach.
+  {
+    const mirror = new RemoteClient(
+      { id: 'MODES', name: 'Mode fixture', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+      () => ({ id: 'LOCAL', name: 'Local fixture', platform: 'darwin', version: 'test' })
+    )
+    const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+    const prefix = '\x1b[?1049;1003;1006;2004h'
+    mirror.receive({ t: 'buffer', id: 'native', data: prefix + '.'.repeat(400_000) })
+    const snapshot = mirror.buffer('native')
+    await new Promise(resolve => term.write(snapshot, resolve))
+    ok('clipped remote attach retains the native screen', term.buffer.active.type === 'alternate')
+    ok('clipped remote attach retains mouse reporting', term.modes.mouseTrackingMode === 'any')
+    ok('clipped remote attach retains bracketed paste', term.modes.bracketedPasteMode)
+    ok('clipped remote attach retains SGR mouse encoding', snapshot.startsWith(prefix))
+    term.dispose()
+  }
 
   // ------------------------------------------------------------------ pairing with self
   // The bug this test exists for: a device paired with its own id mirrors every one of its
@@ -311,11 +370,19 @@ async function main() {
   client.on('reset', () => resets++)
   client.on('data', (id, data) => { seen.push([id, data]); ordered.push(['data', data]) })
   client.on('typed', (id, line, origin) => { prompts.push([id, line, origin]); ordered.push(['typed', line]) })
+  const reviewCatchup = []
+  let reviewLive = null
+  client.on('reviews', (reviews) => { reviewCatchup.push(...reviews) })
+  client.on('review', (review) => { reviewLive = review })
   client.connect()
 
   ok('the right code connects', await until(() => client.status === 'online'), client.error)
   ok('legacy peer cannot receive agent conversations without an advertised capability', !client.canResumeHandoff('claude') && !client.canResumeHandoff('codex'))
   ok('the host lists the guest', await until(() => host.list().length === 1))
+  ok('a reconnect catch-up receives every bounded review page', await until(() => reviewCatchup.length === 21), JSON.stringify(reviewCatchup))
+  ok('catch-up retains page order', reviewCatchup[0]?.id === 'done_1' && reviewCatchup[20]?.id === 'done_21', JSON.stringify(reviewCatchup.map((review) => review.id)))
+  be.emitReview({ ...reviewCatchup[0], id: 'done_2', report: 'completed later' })
+  ok('a new owner review crosses the authenticated link', await until(() => reviewLive?.id === 'done_2'), JSON.stringify(reviewLive))
   ok('the guest is named', host.list()[0]?.name === 'Laptop', JSON.stringify(host.list()[0]))
 
   // ------------------------------------------------- is anybody at that machine
@@ -333,13 +400,35 @@ async function main() {
   const guestOf = () => [...(host.guests ?? [])][0]?.conn?.peer
   ok('a guest desk going empty reaches the host', await until(() => guestOf()?.person === false), JSON.stringify(guestOf()))
 
-  // Connecting is permission to watch, not a decision to watch everything.
+  // Connecting IS watching, unless this device has chosen otherwise: a pane over there is
+  // a card here the moment the link is up, so pressing it shows its screen with no wait
+  // for a mirror to attach. Robert, 2026-09-23: "i dont think we need watch button on
+  // remote sessison its just extra step and takes longer to view right?". A peer saved
+  // with `mirrorAll: false` (one that picked panes by hand) still mirrors nothing until
+  // it is picked.
   ok('both panes are offered', await until(() => client.panes().length === 2))
-  ok('nothing is mirrored until it is picked', client.list().length === 0, JSON.stringify(client.list()))
-  ok('and nothing is attached either', await until(() => (host.list()[0]?.watching ?? 0) === 0))
-  ok('so no scrollback was fetched for an unwatched pane', client.buffer('s1') === '')
+  ok('a peer that never chose mirrors everything', await until(() => client.list().length === 2), JSON.stringify(client.list()))
+  ok('and both are attached over there', await until(() => (host.list()[0]?.watching ?? 0) === 2))
+  {
+    const chosen = new RemoteClient({ ...peer, id: 'HOSTID', mirrorAll: false }, () => ({ id: 'GUEST2', name: 'Phone', platform: 'ios', version: '0' }))
+    ok('a peer that chose its panes mirrors nothing until picked', chosen.list().length === 0 && chosen.mirrorsAll() === false)
+  }
 
   client.setWatch(['s1'])
+  ok('picking narrows the mirror to the pick', await until(() => client.list().length === 1), JSON.stringify(client.list()))
+  ok('and detaches the rest over there', await until(() => (host.list()[0]?.watching ?? 0) === 1))
+  ok('so no scrollback is kept for an unwatched pane', client.buffer('s2') === '')
+  // What the old press paid before the screen could be shown: an attach round trip plus
+  // the scrollback fetch. Printed, not asserted - it is the number the default above buys
+  // back (on a loopback socket; a tailnet adds its own round trip on top).
+  {
+    client.setWatch([])
+    await until(() => (host.list()[0]?.watching ?? 0) === 0 && client.buffer('s1') === '')
+    const t0 = performance.now()
+    client.setWatch(['s1'])
+    await until(() => client.buffer('s1') === 'SECRET-SCROLLBACK-s1')
+    console.log(`  note attach-on-press cost ${Math.round(performance.now() - t0)}ms on loopback before its screen could be shown`)
+  }
   ok('a picked pane is mirrored', await until(() => client.list().length === 1), JSON.stringify(client.list()))
   const mirrored = client.list()
   ok('ids are namespaced by device', mirrored[0].id === '@HOSTID/s1', mirrored[0].id)
@@ -423,6 +512,32 @@ async function main() {
     [...keys].every((k) => /\/(window|phone)$/.test(String(k))),
     JSON.stringify([...keys])
   )
+  // A mirror that is not on screen is not somebody looking. With every pane of a device
+  // mirrored, each one holds a borrow on the far end, and a borrow with a person behind it
+  // holds that pane off the far end's idle clock - so eight hidden mirrors would have kept
+  // eight PC panes open for as long as the Mac was awake. The screen says which of its
+  // panes are drawn; a borrow for one that is not is re-stated with nobody at it, and
+  // stated with somebody there again when it comes back on screen.
+  client.setVisible('window', ['s2'])
+  ok(
+    'a mirrored pane hidden on this screen is re-stated with nobody looking',
+    await until(() => be.resized.some(([id, , , , v, person]) => id === 's1' && /\/window$/.test(String(v)) && person === false)),
+    JSON.stringify(be.resized.filter(([id]) => id === 's1'))
+  )
+  ok(
+    'the phone, which said nothing about what it shows, is left as it was',
+    !be.resized.some(([id, , , , v, person]) => id === 's1' && /\/phone$/.test(String(v)) && person === false),
+    JSON.stringify(be.resized.filter(([id]) => id === 's1'))
+  )
+  const restated = be.resized.length
+  client.setVisible('window', ['s1', 's2'])
+  ok(
+    'and back on screen it is somebody looking again',
+    await until(() => be.resized.slice(restated).some(([id, , , , v, person]) => id === 's1' && /\/window$/.test(String(v)) && person !== false)),
+    JSON.stringify(be.resized.slice(restated))
+  )
+  client.setVisible('window', ['s1', 's2'])
+  ok('saying the same thing twice sends nothing', be.resized.length === restated + 1, String(be.resized.length - restated))
   // The phone goes back to its list while the window is still mirroring the pane. Only the
   // phone's borrow ends: returning the whole connection's here is what left the desk
   // holding a grid nobody asked for.
@@ -556,6 +671,41 @@ async function main() {
   be.sessions.pop()
   be.emitSessions()
   ok('a closed pane leaves the mirror', await until(() => client.list().length === 1))
+
+  // ---------------------------------------------------------------- screen view
+  // The in-app screen view signals over this same channel, in BOTH directions: the viewer
+  // may be either end of the TCP connection. Every `screen:*` kind is relayed untouched.
+  const screenAtHost = []
+  const screenAtClient = []
+  host.on('screen', (who, address, m) => screenAtHost.push([who.id, address, m]))
+  client.on('screen', (m) => screenAtClient.push(m))
+  ok('a peer that never said screenView is an older build', client.identity()?.screenView !== true && host.guestIdentity('GUEST')?.peer.screenView !== true)
+  const kinds = ['screen:offer', 'screen:answer', 'screen:ice', 'screen:locked', 'screen:refused', 'screen:stop']
+  for (const t of kinds) client.sendScreen({ t, view: 'v1', sdp: t === 'screen:offer' ? 'v=0 offer' : undefined })
+  ok('every screen kind reaches the host, in order', await until(() => screenAtHost.length === kinds.length), JSON.stringify(screenAtHost))
+  ok('host side knows who sent it and from where', screenAtHost[0]?.[0] === 'GUEST' && screenAtHost[0]?.[1] === '127.0.0.1', JSON.stringify(screenAtHost[0]))
+  ok('the offer arrives intact', screenAtHost.map((x) => x[2].t).join() === kinds.join() && screenAtHost[0][2].sdp === 'v=0 offer')
+  ok('the host can send one to that guest by device id', host.sendTo('GUEST', { t: 'screen:answer', view: 'v1', sdp: 'v=0 answer' })?.id === 'GUEST')
+  ok('and the guest hears it', await until(() => screenAtClient.length === 1) && screenAtClient[0].sdp === 'v=0 answer', JSON.stringify(screenAtClient))
+  ok('an unknown device is not sent anything', host.sendTo('NOBODY', { t: 'screen:stop', view: 'v1' }) === null)
+  client.sendScreen({ t: 'bogus', view: 'v1' })
+  await new Promise((r) => setTimeout(r, 100))
+  ok('and does not surface as a screen frame', screenAtHost.length === kinds.length)
+
+  // A build that has the view says so in its handshake, both ways round.
+  const svPort = await freePort()
+  const svHost = new RemoteHost(be.api, () => ({ ...identity, id: 'SVHOST', screenView: true }), () => code)
+  svHost.start(svPort)
+  const svClient = new RemoteClient(
+    { id: 'SVHOST', name: 'Desk PC', address: '127.0.0.1', port: svPort, code, auto: true },
+    () => ({ id: 'SVGUEST', name: 'Laptop', platform: 'darwin', version: '0', screenView: true })
+  )
+  svClient.connect()
+  ok('a screen-capable host is read as one', await until(() => svClient.identity()?.screenView === true), JSON.stringify(svClient.identity()))
+  ok('and a screen-capable guest too', await until(() => svHost.guestIdentity('SVGUEST')?.peer.screenView === true))
+  svClient.disconnect()
+  svHost.stop()
+  ok('a disconnected client sends nothing', svClient.sendScreen({ t: 'screen:stop', view: 'v1' }) === null)
 
   // ---------------------------------------------------------------- encryption
   // Everything above went over a real socket. If any of it were readable, a terminal

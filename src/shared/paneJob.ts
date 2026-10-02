@@ -79,7 +79,8 @@ export function programName(raw: string | null | undefined): string {
  */
 export function paneJob(
   foreground: string | null | undefined,
-  runner: string | null | undefined
+  runner: string | null | undefined,
+  tableJob?: { name: string; turnTracked?: true }
 ): string | null {
   const fg = programName(foreground)
   const run = programName(runner)
@@ -91,7 +92,39 @@ export function paneJob(
   // A shell inside a shell is not a job somebody started - and on Windows the console
   // process list carries the host itself.
   if (SHELLS.has(fg.toLowerCase())) return null
+  // A Codex TUI launched inside a shell stays alive between turns. Its footer, not
+  // the lifetime of its node wrapper, owns busy. Keep other foreground jobs visible.
+  if (tableJob?.turnTracked && (fg.toLowerCase() === tableJob.name.toLowerCase() ||
+    (fg.toLowerCase() === 'codex' && tableJob.name.toLowerCase() === 'node'))) return null
   return fg
+}
+
+/** Recognise the interactive Codex launcher, never a prompt mentioning its name. */
+function interactiveCodex(cmd: string): boolean {
+  const args = cmd.match(/"[^"]*"|'[^']*'|\S+/g)?.map((s) => s.replace(/^["']|["']$/g, '')) ?? []
+  const head = programName(args.shift()).toLowerCase()
+  const bin = head === 'node' ? programName(args.shift()).toLowerCase() : head
+  if (bin !== 'codex' && !(head === 'node' && bin === 'codex.js')) return false
+  // Only known interactive shapes. Unknown options/subcommands remain ordinary jobs.
+  const values = new Set(['-c', '--config', '-m', '--model', '-p', '--profile', '-s', '--sandbox',
+    '-a', '--ask-for-approval', '-C', '--cd', '--enable', '--disable', '--add-dir',
+    '--remote', '--remote-auth-token-env', '--local-provider'])
+  const flags = new Set(['--full-auto', '--dangerously-bypass-approvals-and-sandbox', '--oss',
+    '--no-alt-screen', '--search', '--strict-config'])
+  while (args.length) {
+    const arg = args.shift()!
+    if (values.has(arg)) {
+      if (!args.length) return false
+      args.shift()
+    } else if (arg.startsWith('--') && values.has(arg.split('=')[0]) && arg.includes('=')) {
+      continue
+    } else if (flags.has(arg)) {
+      continue
+    } else {
+      return (arg === 'resume' || arg === 'fork') && !args.some((a) => ['-h', '--help'].includes(a))
+    }
+  }
+  return true
 }
 
 /** One row of a process table, as `main/backJobs.ts` already reads it on both platforms. */
@@ -132,16 +165,21 @@ export function jobFromTable(
   procs: TableProc[],
   ptyPid: number,
   runner: string | null | undefined
-): { name: string; elapsed?: number } | null {
+): { name: string; elapsed?: number; turnTracked?: true } | null {
   const run = programName(runner)
   if (!run || !SHELLS.has(run.toLowerCase())) return null
   if (!Number.isInteger(ptyPid) || ptyPid <= 0) return null
-  let best: { name: string; elapsed?: number } | null = null
+  let best: { name: string; elapsed?: number; turnTracked?: true } | null = null
   for (const p of procs) {
     if (p.ppid !== ptyPid) continue
     const name = commandName(p.cmd)
     if (!name || SHELLS.has(name.toLowerCase())) continue
-    if (!best || (p.elapsed ?? 0) > (best.elapsed ?? 0)) best = { name, elapsed: p.elapsed }
+    const turnTracked = interactiveCodex(p.cmd) ? true : undefined
+    // An independent shell job still counts while the interactive chat is idle.
+    if (!best || (best.turnTracked && !turnTracked) ||
+      (Boolean(best.turnTracked) === Boolean(turnTracked) && (p.elapsed ?? 0) > (best.elapsed ?? 0))) {
+      best = { name, elapsed: p.elapsed, ...(turnTracked ? { turnTracked } : {}) }
+    }
   }
   return best
 }

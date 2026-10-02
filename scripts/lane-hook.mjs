@@ -25,8 +25,9 @@
 // including the ones with nothing to do with any of this. Nothing below throws.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -131,7 +132,7 @@ function writeRegistry(r) {
 // ------------------------------------------------------------------ engine
 
 function lane(repo, ...args) {
-  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], {
+  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], { windowsHide: true,
     encoding: 'utf8',
     // `release` can end in a real release (merge, tag, two pushes), so it gets room.
     timeout: args[0] === 'release' ? 180_000 : 25_000
@@ -242,6 +243,109 @@ const session = input.session_id ?? input.sessionId ?? ''
 const cwd = input.cwd ?? process.cwd()
 if (!session) process.exit(0)
 
+/**
+ * The letter of the EXISTING lane copy a chat is standing in, for a repo that never gets
+ * lanes (NEVER); null for the main checkout, a subfolder of it, or any folder that is no copy.
+ */
+function copyLetterOf(repo, dir) {
+  if (!repo || !NEVER.includes(basename(repo))) return null
+  const t = resolve(dir)
+  if (t === repo || t.startsWith(repo + sep) || !t.startsWith(repo + '-')) return null
+  const letter = t.slice(repo.length + 1).split(sep)[0]
+  return letter && existsSync(`${repo}-${letter}`) ? letter : null
+}
+
+/**
+ * Hand a finished chat's holds back: mark them ended in-line (quick, so the next chat in the
+ * pane can inherit them), then release in a detached process.
+ *
+ * Detached, never awaited: a release merges lanes, typechecks master, tags and pushes,
+ * and running that inline is what made /clear hang - measured 2026-08-01, v0.4.11 was
+ * cut INSIDE this hook and the next session's first prompt waited ~55s for it. Nothing
+ * reads the output, lane.mjs's own release lock keeps two attempts apart, and the
+ * running app retries every minute if this process dies early.
+ */
+function giveBack(repo) {
+  // Mark the holds ended FIRST, in-line and quick: the detached release below races the
+  // next session's first claim (no ledger lock), and a hold it fails to drop must still
+  // read as a finished chat, so the pane's new chat is handed it (`claim`, PF_PANE).
+  lane(repo, 'park', '--session', session, '--ended')
+  try {
+    // windowsHide is NOT enough on Win11 with Windows Terminal as default terminal:
+    // a detached console spawn is delegated to a VISIBLE Terminal window regardless
+    // of CREATE_NO_WINDOW (measured 2026-08-01 - every /clear popped one per repo,
+    // stealing focus from a fullscreen game). wscript run-hidden.vbs runs it truly
+    // windowless; conhost --headless was tried first and silently never ran the child.
+    const args = [ENGINE, 'release', '--session', session, '--repo', repo]
+    const win = process.platform === 'win32'
+    const vbs = fileURLToPath(new URL('run-hidden.vbs', import.meta.url))
+    spawn(
+      win ? 'wscript.exe' : process.execPath,
+      win ? ['//B', '//Nologo', vbs, process.execPath, ...args] : args,
+      { detached: true, stdio: 'ignore', windowsHide: true }
+    ).unref()
+  } catch {
+    /* the app's retry timer releases instead */
+  }
+}
+
+/**
+ * Bookkeeping for a chat inside a lane COPY of a NEVER repo (`claude-memory-b`): record a
+ * hold on exactly that copy so the engine sees a live chat there. The app opens panes in
+ * these copies and the engine manages the repo's ledger like any other, so a copy nobody
+ * holds reads as abandoned - its WIP commit gets "marked done", master gets merged into it
+ * mid-edit, its lane gets drained the moment the tree is clean (claude-memory-b, 2026-10-02).
+ *
+ * Says nothing, makes no worktree and gives the chat no other folder. The repo is NOT put in
+ * the registry's `repos` (that is what turns the write guard on, and the guard must never
+ * refuse a memory write from any chat); only the session is, so Stop parks the hold and
+ * SessionEnd gives it back like any lane hold.
+ */
+function holdCopy(repo, letter, visitor) {
+  const dir = resolve(`${repo}-${letter}`)
+  const s = lane(repo, 'status', '--session', session, '--held')
+  let row
+  try {
+    row = JSON.parse(s.out).lanes.find((l) => l.lane === letter)
+  } catch {
+    return
+  }
+  if (s.code !== 0 || !row?.exists || resolve(row.dir) !== dir) return
+  // `claim --prefer` for a copy somebody else holds is NOT a no-op: it hands the asker a
+  // different lane, which can mean building a new copy. So a copy held by another chat, or
+  // conflicted (never handed out), is left exactly as it is. The one hold that is
+  // inherited is the same pane's earlier chat after a /clear (what `claim` carries).
+  const pane = process.env.PF_PANE
+  const mine = row.heldBy === session || (Boolean(pane) && row.pane === pane && Boolean(row.ended))
+  if (!mine && (row.heldBy || row.conflicted)) return
+  const r = lane(
+    repo,
+    'claim',
+    '--session',
+    session,
+    '--cwd',
+    cwd,
+    '--prefer',
+    letter,
+    ...(visitor ? ['--visitor'] : [])
+  )
+  let info
+  try {
+    info = JSON.parse(r.out)
+  } catch {
+    return
+  }
+  // Lost a race and was given some other new lane: give it straight back. A chat that
+  // already held a lane before this prompt keeps it (`fresh` is false then).
+  if (r.code !== 0 || (info.fresh && info.lane !== letter)) {
+    if (r.code === 0) giveBack(repo)
+    return
+  }
+  const reg = readRegistry()
+  reg.sessions[session] = [...new Set([...(reg.sessions[session] ?? []), repo])]
+  writeRegistry(reg)
+}
+
 // ------------------------------------------------------------------ prompt
 
 if (event === 'prompt') {
@@ -252,7 +356,9 @@ if (event === 'prompt') {
   // elsewhere that really does go and edit another repo is still caught: the PreToolUse
   // guard claims a lane on its first write there, which is when the assignment matters.
   const repo = repoOf(cwd)
-  if (!participates(repo)) process.exit(0)
+  const full = participates(repo)
+  const copy = full ? null : copyLetterOf(repo, cwd)
+  if (!full && !copy) process.exit(0)
 
   // A chat started inside a checkout keeps that one: it may already have uncommitted work
   // there, and sending it to an empty lane would hide that work from it.
@@ -280,6 +386,11 @@ if (event === 'prompt') {
       : isCodexSessionPath(tp)
         ? false
         : Boolean(home) && home !== slugOf(repo) && !home.startsWith(slugOf(repo) + '-')
+
+  if (copy) {
+    holdCopy(repo, copy, visitor)
+    process.exit(0)
+  }
 
   const r = lane(
     repo,
@@ -326,7 +437,6 @@ if (event === 'prompt') {
   let roster = []
   let others = []
   let stuck = null
-  let orphan = null
   try {
     // Held lanes only (`status --held`): only held lanes are printed, so only held lanes
     // are measured. Carried on the claim's own answer, so no second engine start.
@@ -372,21 +482,11 @@ if (event === 'prompt') {
         `Run: node ${ENGINE} resolve --repo ${repo} --session ${session} - it opens the merge in ${mineNow.dir}, ` +
         `then resolve, git commit, and node ${ENGINE} ready --repo ${repo} --session ${session}.`
     }
-    // A conflict whose own chat has gone quiet is what stalls a release indefinitely - it
-    // is nobody's job, so nobody does it. Any chat may take it over, so every chat that
-    // turns up here is told which one, and the exact command.
-    const abandoned = s.lanes.filter((l) => l.conflict?.adoptable && !l.mine && !l.conflict.resolver)
-    if (abandoned.length) {
-      orphan = abandoned
-        .map(
-          (l) =>
-            `Lane ${l.lane} has been conflicting with ${s.branch} for ${Math.round((Date.now() - l.conflict.since) / 3600000)}h ` +
-            `and its chat has stopped answering, so its finished work is in no release. ` +
-            `You can finish it from here: node ${ENGINE} resolve --repo ${repo} --session ${session} --lane ${l.lane} ` +
-            `(opens the merge in ${l.dir}), resolve, commit, then node ${ENGINE} ready --repo ${repo} --session ${session} --lane ${l.lane}.`
-        )
-        .join('\n')
-    }
+    // A conflict whose own chat has gone quiet used to be told to every chat that turned
+    // up in this repo ("You can finish it from here"), and the app typed the same job into
+    // any idle pane - so client and toolstash chats were handed another repo's merge. Only
+    // the lane's own chat is told now (`stuck` above); a quiet one gets ONE card for a
+    // person instead (lane.mjs clashCards).
   } catch {
     /* status is a nicety - never block the claim on it */
   }
@@ -395,7 +495,7 @@ if (event === 'prompt') {
   // every prompt; every other project gets silence unless there is something to act on -
   // a worktree it must work in, another chat in here, or a stuck lane. A line about lanes
   // on every prompt in every repo on the machine is how a useful line stops being read.
-  const quiet = !info.own && info.lane === 'main' && !others.length && !stuck && !orphan
+  const quiet = !info.own && info.lane === 'main' && !others.length && !stuck
   if (quiet) process.exit(0)
 
   const name = repo.split(/[\\/]/).pop()
@@ -438,7 +538,24 @@ if (event === 'prompt') {
       ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
       : `No chat holds a ${name} lane right now.`
   )
-  console.log([...lines, stuck, orphan].filter(Boolean).join('\n'))
+  const text = [...lines, stuck].filter(Boolean).join('\n')
+  // The same ~1,900 chars were injected on every prompt of a lane chat, task notifications
+  // included (agent setup audit 2026-09-26). Print when the text changes, or again after
+  // 30 minutes so a compacted chat gets it back; otherwise stay silent.
+  const seenFile = join(tmpdir(), `pf-lane-hook-${createHash('sha1').update(session + repo).digest('hex').slice(0, 16)}`)
+  const hash = createHash('sha1').update(text).digest('hex')
+  try {
+    const [h, at] = readFileSync(seenFile, 'utf8').split(' ')
+    if (h === hash && Date.now() - Number(at) < 30 * 60000) process.exit(0)
+  } catch {
+    /* first prompt of this chat */
+  }
+  try {
+    writeFileSync(seenFile, `${hash} ${Date.now()}`)
+  } catch {
+    /* a failed write only means the table prints again */
+  }
+  console.log(text)
   process.exit(0)
 }
 
@@ -532,6 +649,20 @@ if (event === 'pretool') {
   if (!repo) process.exit(0)
   const r = lane(repo, 'guard', '--session', session, '--path', String(path))
   if (r.code === 2 && r.out) deny(r.out)
+  if (r.code !== 0) deny(r.err || 'The lane guard could not establish ownership.')
+  // A first write may claim a repo without a prompt claim. Register that real
+  // ownership too, so SessionEnd stamps it ended before the detached release.
+  if (!(reg.sessions[session] ?? []).includes(repo)) {
+    const held = lane(repo, 'status', '--session', session, '--held')
+    try {
+      const info = JSON.parse(held.out)
+      if (held.code === 0 && info.lanes.some((l) => l.heldBy === session || l.conflict?.resolver === session)) {
+        reg.repos[repo] = { release: info.mode, own: info.own, seen: Date.now() }
+        reg.sessions[session] = [...new Set([...(reg.sessions[session] ?? []), repo])]
+        writeRegistry(reg)
+      }
+    } catch { /* an unknown status does not register somebody else's claim */ }
+  }
   process.exit(0)
 }
 
@@ -557,32 +688,11 @@ if (event === 'stop') {
 if (event === 'end') {
   const reg = readRegistry()
   // Only the repos this chat actually claimed in. A session that touched one project must
-  // not run a release check in every project on the machine on its way out.
-  //
-  // Detached, never awaited: a release merges lanes, typechecks master, tags and pushes,
-  // and running that inline is what made /clear hang — measured 2026-08-01, v0.4.11 was
-  // cut INSIDE this hook and the next session's first prompt waited ~55s for it. Nothing
-  // reads the output, lane.mjs's own release lock keeps two attempts apart, and the
-  // running app retries every minute if this process dies early.
+  // not run a release check in every project on the machine on its way out (`giveBack`
+  // marks the holds ended and releases detached, for the reasons written there).
   for (const repo of reg.sessions[session] ?? []) {
     if (!existsSync(repo)) continue
-    try {
-      // windowsHide is NOT enough on Win11 with Windows Terminal as default terminal:
-      // a detached console spawn is delegated to a VISIBLE Terminal window regardless
-      // of CREATE_NO_WINDOW (measured 2026-08-01 - every /clear popped one per repo,
-      // stealing focus from a fullscreen game). wscript run-hidden.vbs runs it truly
-      // windowless; conhost --headless was tried first and silently never ran the child.
-      const args = [ENGINE, 'release', '--session', session, '--repo', repo]
-      const win = process.platform === 'win32'
-      const vbs = fileURLToPath(new URL('run-hidden.vbs', import.meta.url))
-      spawn(
-        win ? 'wscript.exe' : process.execPath,
-        win ? ['//B', '//Nologo', vbs, process.execPath, ...args] : args,
-        { detached: true, stdio: 'ignore', windowsHide: true }
-      ).unref()
-    } catch {
-      /* the app's retry timer releases instead */
-    }
+    giveBack(repo)
   }
   delete reg.sessions[session]
   writeRegistry(reg)

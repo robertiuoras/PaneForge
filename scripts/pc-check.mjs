@@ -12,12 +12,16 @@
  * environment, a `--session` flag before `--repo` was shipped to the PC as the command
  * itself, and one ssh reset killed a run that simply needed a retry. This does all of that.
  *
- * Names: `typecheck` and `test` are npm scripts; anything else is `test:<name>`.
+ * Names: `typecheck` and `test` are npm scripts; anything else is `test:<name>`, or, for a
+ * suite `scripts/test-all.mjs` knows with no npm alias (nativetranscript, 2026-10-02: the
+ * chain died on `Missing script` after every real suite had passed, and read as a failure),
+ * `node scripts/test-all.mjs <name>`.
  * Output: failing lines, every "N/N checks passed"-style total, and rbuild's exit line.
  * Exit code is the PC's.
  */
 import { spawnSync } from 'node:child_process'
-import { homedir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -27,8 +31,14 @@ if (!names.length) {
   console.error('usage: node scripts/pc-check.mjs <typecheck|test|all|suite...>')
   process.exit(2)
 }
-const scripts = names.flatMap((n) => (n === 'all' ? ['typecheck', 'test'] : [n === 'typecheck' || n === 'test' ? n : `test:${n}`]))
-const argv = scripts.flatMap((s, i) => (i ? ['&&', 'npm', 'run', s] : ['npm', 'run', s]))
+const aliases = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts ?? {}
+const commands = names.flatMap((n) =>
+  n === 'all' ? [['npm', 'run', 'typecheck'], ['npm', 'run', 'test']]
+  : n === 'typecheck' || n === 'test' ? [['npm', 'run', n]]
+  : aliases[`test:${n}`] ? [['npm', 'run', `test:${n}`]]
+  : [['node', 'scripts/test-all.mjs', n]]
+)
+const argv = commands.flatMap((c, i) => (i ? ['&&', ...c] : c))
 
 // rbuild refuses without a native session id; any stable id for this run is enough to key
 // its GuardDeck admission, and a pane always has one of these.
@@ -37,8 +47,26 @@ env.CLAUDE_SESSION_ID ||= env.CODEX_THREAD_ID || env.PF_SESSION_ID || env.PF_PAN
 
 const SSH_DROPPED = 3 // rbuild: "cannot reach <host>"
 let run
-for (let attempt = 1; attempt <= 3; attempt++) {
-  run = spawnSync(process.execPath, [join(homedir(), '.claude', 'rbuild.mjs'), '--repo', root, '--', ...argv], {
+// ON the PC there is no rbuild (it is the Mac's ssh client: `Cannot find module
+// ...\.claude\rbuild.mjs`, exit 1, 2026-10-02) - the PC's own GuardDeck queue admits the job
+// instead, the route PC chats use by hand. `wait --log` streams the job's output and exits
+// with its code (75 = still queued when the wait ran out).
+if (process.platform === 'win32') {
+  const queue = join(homedir(), 'Desktop', 'Projects', 'guarddeck', 'compute', 'cli.mjs')
+  const id = `pc-check-${process.pid}-${Date.now()}`
+  const request = join(tmpdir(), `${id}.json`)
+  writeFileSync(request, JSON.stringify({
+    id, session: env.CLAUDE_SESSION_ID, cwd: root, command: argv.join(' '), memoryMB: 8192, timeoutSeconds: 7200
+  }))
+  const submitted = spawnSync(process.execPath, [queue, 'submit', request], { encoding: 'utf8' })
+  run = submitted.status === 0
+    ? spawnSync(process.execPath, [queue, 'wait', id, '7200', '--log'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    : submitted
+}
+if (!run) for (let attempt = 1; attempt <= 3; attempt++) {
+  // rbuild's 30 min default killed test:lanes part way twice (2026-10-02, 42 files, lane-heal
+  // alone takes 7 min on the PC); 7200 is rbuild's ceiling.
+  run = spawnSync(process.execPath, [join(homedir(), '.claude', 'rbuild.mjs'), '--repo', root, '--timeout-seconds', '7200', '--', ...argv], {
     env,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024
@@ -50,7 +78,14 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 
 const out = `${run.stdout ?? ''}${run.stderr ?? ''}`.split('\n')
 const keep = out.filter((l) =>
-  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|checks? ok|rbuild: exit|cannot reach/i.test(l)
+  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|all ok|checks? ok|Missing script|rbuild: exit|rbuild: timed_out|cannot reach/i.test(l)
 )
-console.log((keep.length ? keep : out.slice(-20)).join('\n'))
+// rbuild's own exit line alone says nothing: `npm error Missing script: "test:x"` matched no
+// pattern and a run printed only `rbuild: exit 1` (2026-09-23). Then the tail is the answer.
+const said = keep.some((l) => !/rbuild: exit/.test(l))
+console.log((said ? keep : out.slice(-20)).join('\n'))
+// A red run whose last words match none of those patterns (rbuild's time limit, a test that
+// dies silently) printed only the suites that passed and exit 1 (test:lanes, 2026-10-02).
+// Red runs show the tail too.
+if (said && run.status !== 0) console.log(`--- last 30 lines ---\n${out.slice(-30).join('\n')}`)
 process.exit(run.status ?? 1)

@@ -34,7 +34,7 @@ check(/origin/.test(typed), 'and it carries who typed it')
 // The remote host's backend write is a person typing on a paired machine's mirror: this
 // desk never saw the keystrokes, so it needs telling exactly as a phone's line does.
 check(
-  /write: \(id, data\) => manager\.write\(id, data, 'phone'\)/.test(main),
+  /write: \(id, data, terminalReply\) => manager\.write\(id, data, 'phone', terminalReply\)/.test(main),
   'a line typed on a paired machine is not filed as this desk typing'
 )
 

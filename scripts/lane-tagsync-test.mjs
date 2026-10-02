@@ -155,6 +155,10 @@ ok('and does NOT have its tag - this is the whole setup', git(beta, 'tag') === '
   )
 }
 
-rmSync(work, { recursive: true, force: true })
+try {
+  rmSync(work, { recursive: true, force: true })
+} catch {
+  /* Windows: a detached sweep the release started may still hold the folder (EPERM); it is temp */
+}
 console.log(failures ? `\n${failures} failed` : '\nall good')
 process.exit(failures ? 1 : 0)

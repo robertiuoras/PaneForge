@@ -2,11 +2,14 @@
 // The child is intentionally disposable: it observes, records, kills, and lets a fresh
 // app process take over instead of trying to repair a thread that cannot answer a timer.
 
+import { freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
-import { BEAT_MS } from '../shared/mainWatch'
+import { BEAT_MS, forkStoppedReason, readVitals, type Vitals, type VitalsMark } from '../shared/mainWatch'
 import { logProblem } from './crash'
 import { profileName } from './profile'
+import { rendererAnsweredAt } from './renderWatch'
+import { mainPerformanceBeat, startMainPerformance } from './mainPerformance'
 
 const REFORK_MS = 10_000
 const MAX_REFORKS_PER_HOUR = 5
@@ -17,6 +20,12 @@ let reforks: number[] = []
 let stopped = false
 let retry: NodeJS.Timeout | null = null
 let unavailable = false
+// Per-fork: a "stopped" line describes the fork that just died, not the watchdog's whole
+// lifetime, so these reset every time a new helper is started.
+let forkedAt = 0
+let beatsSent = 0
+let prevMark: VitalsMark | null = null
+let latestVitals: Vitals | null = null
 
 function queueRefork(reason: string): void {
   if (stopped || retry) return
@@ -42,6 +51,10 @@ function fork(): void {
     logProblem('main watchdog', 'utility process is unavailable; watchdog disabled')
     return
   }
+  forkedAt = Date.now()
+  beatsSent = 0
+  prevMark = null
+  latestVitals = null
   try {
     child = utilityProcess.fork(join(__dirname, 'watchdog-child.js'), [], {
       serviceName: 'paneforge-watchdog',
@@ -79,17 +92,38 @@ function fork(): void {
   }
   watched.on('error', (type, location) => failedChild(`${type} at ${location}`))
   watched.on('exit', (code) => {
-    failedChild(`stopped (${code})`)
+    failedChild(
+      forkStoppedReason(
+        `stopped (${code})`,
+        forkedAt,
+        Date.now(),
+        beatsSent,
+        latestVitals,
+        Math.round(freemem() / 1048576),
+        Math.round(totalmem() / 1048576)
+      )
+    )
   })
 }
 
 export function startMainWatch(): void {
-  if (process.env.PF_NO_WATCHDOG === '1' || child || stopped) return
+  if (beatTimer || child || stopped) return
+  startMainPerformance(join(app.getPath('userData'), 'main-performance.log'), app.getVersion())
   // A deliberate app quit is not a frozen main process. Stop its child before heartbeat
   // timers end, so a slow normal shutdown never becomes a relaunch.
   app.once('will-quit', stopMainWatch)
-  fork()
-  beatTimer = setInterval(() => child?.postMessage({ t: 'beat', now: Date.now() }), BEAT_MS)
+  if (process.env.PF_NO_WATCHDOG !== '1') fork()
+  beatTimer = setInterval(() => {
+    const now = Date.now()
+    const mem = process.memoryUsage()
+    const cpu = process.cpuUsage()
+    const { vitals, mark } = readVitals(prevMark, now, mem, cpu.user + cpu.system, rendererAnsweredAt())
+    prevMark = mark
+    latestVitals = vitals
+    mainPerformanceBeat(now, vitals)
+    beatsSent++
+    child?.postMessage({ t: 'beat', now, vitals })
+  }, BEAT_MS)
   beatTimer.unref()
   // An unpackaged-only drill proves the child can recover a main thread that cannot run
   // timers. It is deliberately absent from packaged builds.

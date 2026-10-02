@@ -25,6 +25,11 @@ export interface WakePane {
 export interface WakePlanOpts {
   pressure: 'normal' | 'warn' | 'critical'
   maxPerSweep?: number
+  /**
+   * Agents the memory budget still fits - `Verdict.roomFor`, the reading that decides
+   * whether the idle sweep's shortened clock is on. Absent: no budget limit.
+   */
+  room?: number
 }
 
 const DEFAULT_MAX_PER_SWEEP = 2
@@ -58,7 +63,21 @@ export function wakePlan(panes: WakePane[], opts: WakePlanOpts, now = 0): string
       return at(a) - at(b)
     })
 
-  return candidates.slice(0, max).map((p) => p.id)
+  // The kernel reading alone flapped: it says `normal` while the budget is full, so a pane
+  // slept for room was woken into the last slot, the verdict went back to `tight`, and the
+  // idle sweep slept it again a minute later (s27-muezyz7e: four sleeps and four wakes in
+  // twenty minutes, 2026-09-24). Each wake uses a slot, and a `pressure` sleeper also needs
+  // one SPARE after it, so waking it cannot be what makes the desk full again. A `queued`
+  // pane only needs its own slot: it was opened to do work, not parked.
+  let left = opts.room ?? Number.POSITIVE_INFINITY
+  const out: string[] = []
+  for (const p of candidates) {
+    if (out.length >= max) break
+    if (left < (p.asleepReason === 'pressure' ? 2 : 1)) continue
+    out.push(p.id)
+    left--
+  }
+  return out
 }
 
 /**

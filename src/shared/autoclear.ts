@@ -11,6 +11,7 @@
 // file - so every one of the five clears logged on 2026-08-23 (03:23, 03:33, 06:13, 07:13,
 // 08:07) silently did nothing and could never retry. Hence the two rules below.
 
+import { stripAnsi } from './ansi'
 import { forgePrompt } from './promptForge'
 import { BUILTIN_AGENTS } from './agents'
 
@@ -273,7 +274,14 @@ export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): stri
   return forgePrompt({
     task: ask.prompt,
     ...(handoffPath ? { anchors: [handoffPath] } : {}),
-    scope: ['the steps that handoff already lists - add no work it does not name'],
+    // Scope bounds new FEATURES, not defects. "add no work it does not name" read as "leave
+    // what you find broken", and a continuation handed a two-line fix back to Robert under
+    // that line (2026-09-25, the `try --close` leak). His rule: a defect found on the way is
+    // fixed the same turn.
+    scope: [
+      'the steps that handoff already lists - start no new feature it does not name',
+      'a defect you find on the way is not new work: fix it this turn and report it (unasked)'
+    ],
     // The steps ARE the definition of done here: the handoff was written by the session
     // that did the work, and these are the lines it said were still open.
     done: ask.steps.length ? ask.steps : ['every Next step in that handoff is finished, or is named as blocked']
@@ -481,11 +489,56 @@ export function quietEnoughToArm(quietMs: number): boolean {
   return quietMs >= ARM_QUIET_MS
 }
 
+// A tick is ~250 bytes; two or three glued together by a stalled main thread are still < 1KB.
+const COUNTER_REPAINT_MAX = 4096
+const COUNTER_ONLY = /^(?=.*\d)[\d.,hmskM$%]+$/
+
+/**
+ * Whether a chunk off the pty is only a COUNTER moving, with nothing new said.
+ *
+ * `ARM_QUIET_MS` reads "the pane has not printed for 10s", and an idle Claude Code pane
+ * that is still carrying a background agent prints once a second for as long as that agent
+ * lives: its footer row (`◯ general-purpose  <task>  47m 52s · ↓ 153.0k tokens`) is a live
+ * timer. 2026-10-02 3:44-4:05am, pane s72 was finished and asked to clear, and the gate
+ * read `printed 394ms ago` 115 times in a row - the clear never came, and a countdown card
+ * that said otherwise kept being posted. The floor exists to catch a SECOND REPLY (a
+ * blocking Stop hook, a footer gone stale under load); a timer ticking is not that.
+ *
+ * Claude Code paints only the cells that changed, so a tick on the wire is a few cursor
+ * hops, the window-title glyph flipping, and the digit that moved - copied out of that
+ * pane's log: `ESC[101C ESC[1A <grey> 3 ESC[39m` and, on the minute, `48m 0`. After
+ * `stripAnsi` the whole thing is digits and the unit letters a duration or a token count
+ * is written in. Anything else - a word, a punctuation mark, a spinner row - is output.
+ *
+ * Deliberately narrow, so an unknown shape stays output (the old behaviour): at least one
+ * digit, nothing readable but `0-9 . , h m s k M $ %`, and small enough to be a tick. The
+ * size bound is also the cost bound - this runs on idle panes' data events only, and a
+ * few KB of escape codes is the most it ever strips.
+ */
+export function isCounterRepaint(chunk: string): boolean {
+  if (chunk.length > COUNTER_REPAINT_MAX) return false
+  return COUNTER_ONLY.test(stripAnsi(chunk).replace(/\s+/g, ''))
+}
+
+/**
+ * The pane's "last said something" stamp after a chunk of its output.
+ *
+ * `meta.lastOutput` is every byte, and a dozen other readings (stall alert, attention,
+ * reclaim, the prompt queue) are right to keep it that way. The autoclear quiet floor reads
+ * THIS one instead: the same stamp, minus the ticks of a footer counter on a pane that is
+ * not mid-turn. A working pane stamps every chunk - exactly as before - and so does anything
+ * that is not provably a tick, which is what keeps the second-reply protection whole.
+ */
+export function contentStampAfter(p: { stamp: number; now: number; idle: boolean; chunk: string }): number {
+  return p.idle && isCounterRepaint(p.chunk) ? p.stamp : p.now
+}
+
 export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' {
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or
   // abandoned within the turn, so the ask is still good afterwards. Refusing would throw
-  // away a clear that is genuinely due; clearing would eat the draft.
+  // away a clear that is genuinely due; clearing would eat the draft. A pane left idle with
+  // its box emptied has no turn end to wait for, so the idle sweep asks again (`sweepIdle`).
   return why === 'working' || why === 'drafting' ? 'queue' : 'refuse'
 }
 

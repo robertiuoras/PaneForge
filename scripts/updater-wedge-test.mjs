@@ -35,7 +35,10 @@ writeFileSync(
 const dir=__dirname
 fs.writeFileSync(p.join(dir,'app-update.yml'),'provider: github\\n')
 process.resourcesPath=dir
-module.exports={app:{isPackaged:true,getVersion:()=>'0.3.6',getPath:()=>dir},__dir:dir}
+const closes={n:0,onClose:null}
+module.exports={app:{isPackaged:true,getVersion:()=>'0.3.6',getPath:()=>dir},
+  session:{fromPartition:(name,opts)=>({closeAllConnections:async()=>{closes.n++;closes.last=name+':'+JSON.stringify(opts);if(closes.onClose)closes.onClose()}})},
+  __closes:closes,__dir:dir}
 `
 )
 
@@ -46,13 +49,17 @@ module.exports={app:{isPackaged:true,getVersion:()=>'0.3.6',getPath:()=>dir},__d
 writeFileSync(
   join(work, 'updater-stub.cjs'),
   `const handlers={},calls=[]
-let feed=null,hang=false
+let feed=null,hang=false,pending=null,rejectPending=null,issued=[]
+// electron-updater 6 keeps its own promise pending until the request ends and hands the SAME
+// one to a check made meanwhile ("already in progress"). \`__kill()\` is the dead request
+// failing, as it does once its connections are closed.
 module.exports={autoUpdater:{autoDownload:false,autoInstallOnAppQuit:false,allowPrerelease:false,logger:null,
-  checkForUpdates:()=>{calls.push('check');if(hang)return new Promise(()=>{});return Promise.resolve(feed?{updateInfo:{version:feed}}:null)},
+  checkForUpdates:()=>{calls.push('check');if(hang){if(!pending){pending=new Promise((_,rej)=>{rejectPending=rej});pending.catch(()=>{});issued.push(pending)}return pending}return Promise.resolve(feed?{updateInfo:{version:feed}}:null)},
   downloadUpdate:async()=>{calls.push('download')},
   quitAndInstall:()=>calls.push('install'),
   setFeedURL:()=>{},
-  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls,__feed:(v)=>{feed=v},__hang:(v)=>{hang=v}}
+  on:(e,cb)=>{handlers[e]=cb}},__handlers:handlers,__calls:calls,__feed:(v)=>{feed=v},__hang:(v)=>{hang=v;if(!v)pending=null},__issued:issued,
+  __kill:()=>{if(rejectPending){rejectPending(new Error('net::ERR_FAILED'));rejectPending=null;pending=null}}}
 `
 )
 
@@ -182,7 +189,7 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   ok(/slept checking/.test(logged().slice(mark))&&!/wedged/.test(logged().slice(mark)),'...and is written down as a sleep, not a wedge')
   ok(!/wedged idle/.test(logged().slice(mark)),'...once, not again by the race that fires on the same wake')
   const afterSleep=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8'))
-  ok(afterSleep.wedges===wedgesBefore&&afterSleep.sleeps>=1,'a sleep is counted apart from the wedges ('+afterSleep.sleeps+' sleep, '+afterSleep.wedges+' wedges)')
+  ok(afterSleep.wedges===wedgesBefore&&Array.isArray(afterSleep.sleptAt)&&afterSleep.sleptAt.length>=1&&Date.now()-afterSleep.sleptAt[0]<60000&&afterSleep.sleeps===undefined,'a sleep is counted apart from the wedges, dated ('+afterSleep.sleptAt.length+' sleep, '+afterSleep.wedges+' wedges)')
   stub.__hang(false)
   // The poll fired inside the wake defers rather than starting a check that dies with it.
   u.setAutoCheck(true)
@@ -194,6 +201,49 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   await sleep(160)
   b=at(); await u.checkForUpdates()
   ok(at()===b+1,'and a check after the settle runs clean')
+
+  // 2026-10-01: a drop must END the request, and a dropped request's answer is ignored by
+  // identity. 02:57 'already in progress' handed the new check the dead promise; 03:05 its
+  // net::ERR_TIMED_OUT landed 325s after the drop, past the window, and wrote 'state none'.
+  await sleep(450)
+  stub.__hang(true)
+  const closed0=el.__closes.n,issued0=stub.__issued.length
+  void u.checkForUpdates()
+  await sleep(260)
+  ok(u.getUpdateState().phase!=='checking','a second hung check is dropped')
+  ok(el.__closes.n>closed0&&/electron-updater:.*"cache":false/.test(el.__closes.last||''),'a drop closes the updater session connections ('+(el.__closes.n-closed0)+' call)')
+  // The dead request is still pending (nothing closed it yet): a new check gets it back.
+  // After the connections close it fails and the next check is a fresh request.
+  stub.__kill()
+  await sleep(20)
+  void u.checkForUpdates()
+  await sleep(0)
+  ok(stub.__issued.length===issued0+2,'the check after a drop is a fresh request, not the dead one ('+(stub.__issued.length-issued0)+' issued)')
+  await sleep(260)
+  stub.__hang(false)
+  // Outside the 400ms window: the dropped request's end, by identity.
+  stub.__hang(true)
+  void u.checkForUpdates()
+  await sleep(260)
+  await sleep(450)
+  mark=logged().length
+  h['error'](new Error('net::ERR_TIMED_OUT'))
+  await sleep(40)
+  ok(/late answer[^\\n]*dropped at/.test(logged().slice(mark)),'an error from a dropped request after the window is a late answer naming the drop')
+  ok(!/state (error|none)/.test(logged().slice(mark))&&u.getUpdateState().phase!=='error','...and never a state change')
+  stub.__hang(false)
+  // A genuine check's own error is still reported: while a check of ours is running the
+  // identity rule stands aside, so the failure goes through the ordinary handling.
+  h['update-not-available']()
+  stub.__hang(true)
+  void u.checkForUpdates()
+  await sleep(0)
+  mark=logged().length
+  h['error'](new Error('net::ERR_TIMED_OUT'))
+  await sleep(10)
+  ok(!/late answer/.test(logged().slice(mark))&&/state |mac/.test(logged().slice(mark)),'an error from a check that is running is still reported, not a late answer')
+  stub.__hang(false)
+  h['update-not-available']()
 
   // The reported symptom itself: a percentage that stops moving. 33% is 30 MiB of the
   // 95.8 MB v0.4.62 zip - the exact number this Mac sat on.

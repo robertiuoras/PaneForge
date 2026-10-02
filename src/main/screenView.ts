@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appendLog } from './logWrite'
-import { moonlightCandidates, screenPlan, screenTitle, type ScreenPeer, type ScreenPlan } from '../shared/screenView'
+import { moonlightCandidates, screenButton, screenPlan, screenTitle, type ScreenPeer, type ScreenPlan } from '../shared/screenView'
 
 const MAX_BYTES = 512 * 1024
 
@@ -32,6 +32,9 @@ function log(line: string): void {
   appendLog(screenLogPath(), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: MAX_BYTES })
 }
 
+/** The in-app view (main/screenStream.ts) writes to the same log. */
+export const screenLog = log
+
 /** The first Moonlight that exists on this machine, or null: the button is not drawn then. */
 export function viewerPath(): string | null {
   return moonlightCandidates(process.platform, process.env).find((p) => existsSync(p)) ?? null
@@ -39,13 +42,21 @@ export function viewerPath(): string | null {
 
 let child: ChildProcess | null = null
 
-/** What the sidebar asks before drawing the button. */
-export function screenCan(peers: ScreenPeer[]): { ok: boolean; title: string } {
+/**
+ * What the sidebar asks before drawing the button, and what a screen pane asks before
+ * drawing `Take control`: the button opens the in-app view; `control` is Moonlight.
+ */
+export function screenCan(peers: ScreenPeer[]): {
+  ok: boolean
+  disabled: boolean
+  title: string
+  control: { ok: boolean; title: string }
+} {
   const plan = screenPlan(viewerPath(), peers)
-  return { ok: plan.ok, title: plan.ok ? screenTitle(peers) : plan.message }
+  return { ...screenButton(peers), control: { ok: plan.ok, title: plan.ok ? screenTitle(peers) : plan.message } }
 }
 
-/** Start the viewer. Returns the plan so the caller can toast a refusal in its words. */
+/** Start Moonlight (`Take control`). Returns the plan so the caller can toast a refusal. */
 export function openScreen(peers: ScreenPeer[]): ScreenPlan {
   const viewer = viewerPath()
   const plan = screenPlan(viewer, peers)

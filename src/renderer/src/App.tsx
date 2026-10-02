@@ -4,6 +4,7 @@ import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
+import { composerWipe } from '@shared/draft'
 import type {
   Agent,
   Config,
@@ -22,7 +23,7 @@ import type {
 import AgentPicker from './components/AgentPicker'
 import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
-import CommandPalette, { type Command } from './components/CommandPalette'
+import CommandPalette, { type Chat, type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
 import DiffDialog from './components/DiffDialog'
 import { PaneMenu } from './components/PaneMenu'
@@ -30,15 +31,14 @@ import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
+import SessionCopies from './components/SessionCopies'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import OffloadSoon from './components/OffloadSoon'
+import ModelAdvice from './components/ModelAdvice'
 import QuitGuard from './components/QuitGuard'
 import StopServer from './components/StopServer'
-import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
-import LoginCard from './components/LoginCard'
-import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
 import ToolsDialog from './components/ToolsDialog'
 import PullsDialog from './components/PullsDialog'
@@ -50,11 +50,12 @@ import { unreadCount } from '@shared/activity'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
+import Workers from './components/Workers'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
-import { fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
-import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
+import { finishedTurn, fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
+import { deskGroups, deskRows as buildDeskRows, listedByNumber, type DeskRow } from '@shared/desk'
 import {
   ToolsIcon,
   UsersIcon,
@@ -80,6 +81,7 @@ import { isPhoneClient, viewerName } from './client'
 import { reconnectNow, useLink } from './linkStore'
 import { linkIconWords, linkLost, linkNote, linkWords } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
+import ScreenPane, { paneZoom } from './components/ScreenPane'
 import TerminalPane, {
   paneCopyMenu,
   paneCopyMode,
@@ -107,13 +109,13 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
+import { reusedLine } from '../../shared/offloadFirst'
 import {
   CLOSE_COUNTDOWN_MS,
   MIN_COUNTDOWN_MS,
   countdownEnd,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
-  keepHoldMs,
   paneWord,
   type ActedPane,
   type MascotConfig,
@@ -122,6 +124,7 @@ import {
 import type { RunningDev } from '../../shared/devList'
 import {
   DEFAULT_RECLAIM,
+  IDLE_CLOSE_MINUTES,
   idleClosePlan,
   idleSleepPlan,
   pressureSleepMs,
@@ -129,6 +132,7 @@ import {
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
+  chipCloseAt,
   quietSince,
   readStamp,
   reclaimPlan,
@@ -140,11 +144,16 @@ import {
 import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
+  automaticQueueable,
+  sweepBlockers,
+  sweepLine,
+  sweepLogDue,
   SLEEPS_SOON_LEAD_MS,
+  TURNS_BEFORE_MOVE,
+  turnsPlan,
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
-  queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
   endsOnArrival,
   staysHere,
@@ -153,14 +162,15 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState, type FleetState } from '../../shared/fleet'
-import { canSleep, keptWords, sleepRefusal } from '../../shared/sleep'
+import { canSleep, sleepRefusal } from '../../shared/sleep'
 import { asleepChip } from '../../shared/sleepWords'
 import type { SleepReason } from '../../shared/types'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
 import { stepsWord } from '../../shared/handoffSteps'
-import { describePlace } from '@shared/place'
+import { describePlace, placeOf } from '@shared/place'
+import { whenWords } from '@shared/elapsed'
 import { applyTheme, terminalTheme } from './theme'
 import { keyLabel, modKey, isMac } from './platform'
 import MicIcon from './components/MicIcon'
@@ -278,11 +288,26 @@ function AsleepChip({
       title="Asleep: this pane's agent was stopped and its memory given back. Press to start it again in the same conversation - the screen is still here."
       onClick={(e) => {
         e.stopPropagation()
-        void api.wakeSession(id)
+        void api.wakeSession(id, 'chip')
       }}
     >
       {asleepChip(reason, at, now)}
     </button>
+  )
+}
+
+/**
+ * The chip a pane whose process has ended wears. Most of them close within seconds
+ * (`shared/exitClose.ts`); the one that stays on purpose is an agent that never got going,
+ * and "exited 1" does not say that.
+ */
+function ExitedChip({ s }: { s: { exitCode?: number; startFailed?: boolean } }): React.ReactElement {
+  return s.startFailed ? (
+    <span className="chip dead" title="It stopped before it was ready. What it printed is still in the pane.">
+      couldn't start {s.exitCode ?? ''}
+    </span>
+  ) : (
+    <span className="chip dead">exited {s.exitCode ?? ''}</span>
   )
 }
 
@@ -328,6 +353,9 @@ function reclaimPaneOf(
     // A Claude background agent still running inside the CLI dies with a close or a sleep
     // exactly as a background shell does. See `Session.subagent`.
     backJob: backJob ?? s.subagent ?? null,
+    // ...and a server any of it is running, which is quiet on purpose. Read in main off
+    // the process table, so a hidden window still knows. See `ReclaimPane.serving`.
+    serving: s.serving ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -375,12 +403,10 @@ function reclaimPaneOf(
 function CloseClock({
   at,
   onKeep,
-  kept,
   sleep
 }: {
   at: number
   onKeep?: () => void
-  kept?: boolean
   /**
    * The armed countdown is a SLEEP, not a close. Same chip, different word: the card
    * beside it said `Putting ... to sleep` while this read `closes 0:09` (2026-09-11), two
@@ -391,32 +417,24 @@ function CloseClock({
   const now = useNow()
   const left = Math.max(0, Math.ceil((at - now) / 1000))
   const mins = Math.floor(left / 60)
-  // Minutes and seconds only where the seconds are worth reading. A pane somebody has just
-  // pressed "keep it open" on is an hour away, and `60:01` ticking down on a card for an
-  // hour is a clock demanding attention it does not need.
+  // Minutes and seconds only where the seconds are worth reading: `25:01` ticking down on
+  // a card for twenty-five minutes is a clock demanding attention it does not need.
   // `now`, not `0:00`. The sweep that does the closing runs on a MINUTE timer, so a pane
   // that is due sits at its deadline for up to a minute before anything happens - measured
   // live at 10+ seconds of `closes 0:00`, which reads as a clock that has jammed. Due is
   // the honest word for it.
   const words =
     left === 0 ? 'now' : mins >= 10 ? `${mins}m` : `${mins}:${String(left % 60).padStart(2, '0')}`
-  // A HELD pane is the opposite fact wearing the same chip: somebody pressed "keep it
-  // open", the publish took the later of the hold and the idle deadline, and the card
-  // then told them the pane had been quiet and was being closed. The number is still
-  // worth drawing - it is when the hold runs out - but not under that sentence.
-  const why = kept
-    ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
-    : sleep
-      ? `This pane has been quiet, so it is going to sleep in ${words}. Its card, its screen and its conversation all stay - a press wakes it. Press to keep it awake for an hour.`
-      : onKeep
-        ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
-        : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
+  const why = sleep
+    ? `This machine is low on memory, so this quiet pane is going to sleep in ${words}. Its card and conversation stay - a press wakes it. Press to keep it awake.`
+    : onKeep
+      ? `Quiet, so it closes into Review in ${words}. Review keeps its reply, and Continue brings the conversation back. Press to keep it open until you close it.`
+      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
-  // Never the red last-minute alert for a hold: nothing is about to happen to that pane.
-  const cls = 'chip closing' + (!kept && left <= 60 ? ' soon' : '') + (kept ? ' kept' : '')
-  const word = kept ? 'kept' : sleep ? 'sleeps' : 'closes'
+  const cls = 'chip closing' + (left <= 60 ? ' soon' : '')
+  const word = sleep ? 'sleeps' : 'closes'
   if (!onKeep) return <span className={cls} title={why}>{`${word} ${words}`}</span>
   return (
     <button
@@ -454,6 +472,13 @@ const VISIBILITY_REFRESH_MS = 30_000
  * becomes furniture - which is the whole complaint the strip it replaces collected.
  */
 const CAPACITY_NOTE_MS = 12_000
+/**
+ * How long a pane just put to sleep stays off the sleep clock. The broadcast saying it is
+ * asleep lands after main's answer does, and the sweep reads the session list.
+ */
+const SLEPT_SETTLE_MS = 30_000
+/** A countdown's pane that is not there any more: see `skipGone`. */
+const CLOSED_ELSEWHERE = 'something else closed it before the countdown ended - see the close-request line'
 /**
  * The least time between two memory cards.
  *
@@ -638,6 +663,12 @@ export default function App(): JSX.Element {
 
   const [activeId, setActiveId] = useState<string | null>(null)
   /**
+   * Ctrl+N for a number past this desk's own panes: the pane on the other machine that
+   * `deskRows` gave that number. A ref because the key handler above is wired before
+   * `openListed` exists, and the answer must be the same numbering the list draws.
+   */
+  const listedKeyRef = useRef<(n: number) => boolean>(() => false)
+  /**
    * What the desk draws: every pane but a shell sitting at its prompt (`idleShell`), which
    * still exists - its number switches to it, and then it is the active pane and drawn.
    */
@@ -728,7 +759,6 @@ export default function App(): JSX.Element {
    * the switch is, and the chip has to go the moment it is pressed.
    */
   const [pinned, setPinned] = useState<Record<string, true>>({})
-  const [selectKeepOpen, setSelectKeepOpen] = useState(false)
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
   /**
@@ -784,12 +814,24 @@ export default function App(): JSX.Element {
   }, [])
   /** The "split one long ask into panes" dialog. Opened from a press, never on its own. */
   const [splitting, setSplitting] = useState(false)
+  /**
+   * The words the split dialog opens with, when a pane's expand card sent it there - the
+   * ask is already typed, and making somebody paste it a second time is the one step that
+   * turns "Open as separate panes" into a button nobody presses. Empty from the palette.
+   */
+  const [splitInitial, setSplitInitial] = useState<string | undefined>(undefined)
+  // Stable, because every pane is handed it and a new function per render would defeat the
+  // pane's memo (`samePaneProps`) on every render of this component.
+  const openSplitWith = useCallback((text: string) => {
+    setSplitInitial(text)
+    setSplitting(true)
+  }, [])
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [review, setReview] = useState(false)
   // Drawn only when this machine has Moonlight and a paired peer to look at; re-asked
   // whenever the peer list changes, which is the only thing that changes the answer.
-  const [screenBtn, setScreenBtn] = useState<{ ok: boolean; title: string } | null>(null)
+  const [screenBtn, setScreenBtn] = useState<Awaited<ReturnType<typeof api.screenCan>> | null>(null)
   // What the app has done on its own, and when the list was last looked at. Both live in
   // main (see main/activity.ts): a reload, a renderer rebuilt after a wedge and a restart
   // all lose renderer memory, and "what happened to my pane" is asked after exactly those.
@@ -797,10 +839,6 @@ export default function App(): JSX.Element {
   const [activitySeen, setActivitySeen] = useState(0)
   /** The bell's rectangle while the list is open, absent when it is shut. */
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
-  /* A job somewhere cannot get past a login. The list is main's, the choice is a
-     person's: nothing opens a browser until the card is pressed. */
-  const [logins, setLogins] = useState<LoginRequest[]>([])
-  const [loginOpen, setLoginOpen] = useState<string | null>(null)
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
   const [devices, setDevices] = useState(false)
@@ -1071,10 +1109,7 @@ export default function App(): JSX.Element {
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
     // The prompt disclosure and its summary retain keyboard navigation after a jump.
     if (el?.closest('.prompt-index')) return
-    // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
-    // it must not hand the caret straight back to the pane, or every letter is typed twice
-    // - once on the other computer and once at the local prompt.
-    if (document.querySelector('.overlay, .act-fly, .select-menu, .login-screen.typing')) return
+    if (document.querySelector('.overlay, .act-fly, .select-menu')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -1196,12 +1231,12 @@ export default function App(): JSX.Element {
   // render would clear and repaint every pane's canvas on every keystroke.
   const termColors = useMemo(() => terminalTheme(config?.theme), [config?.theme])
 
-  // The screen button's answer changes only when the peer list does.
+  // The screen button's answer changes only when the peer or guest list does.
   useEffect(() => {
     let live = true
     api.screenCan().then((r) => { if (live) setScreenBtn(r) }).catch(() => { if (live) setScreenBtn(null) })
     return () => { live = false }
-  }, [remote?.peers.length, remote?.peers.map((p) => p.status).join()])
+  }, [remote?.peers.length, remote?.peers.map((p) => p.status).join(), remote?.guests.map((g) => g.id).join()])
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -1235,7 +1270,7 @@ export default function App(): JSX.Element {
   // session was simply absent from New Session, with nothing to explain why.
   useEffect(() => {
     api.listProjects().then(setProjects)
-  }, [config?.root, picking])
+  }, [config?.root, config?.archivedClientPaths, picking])
 
   // Re-probed whenever the custom list changes, and on every open of the picker, so
   // a CLI installed while the app was running shows up without a restart.
@@ -1311,7 +1346,7 @@ export default function App(): JSX.Element {
   // flash cannot tell you. Read through a ref so toggling the setting does not
   // resubscribe (and so the listener is attached exactly once).
   const soundOn = useRef(true)
-  soundOn.current = config?.soundOnIdle ?? true
+  soundOn.current = config?.soundOnIdle ?? false
   // Which sound each alert makes, read through a ref for the same reason: the listeners
   // below are attached once, and a picker change must reach the NEXT alert without
   // resubscribing to every session event.
@@ -1717,33 +1752,7 @@ export default function App(): JSX.Element {
   const capacityShown = useRef('')
   const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onStopSoon((soon) => setStopSoon(soon ?? null)), [])
-  /* Sign-in requests. Asked for once at startup as well as subscribed to, because a job
-     that asked while the window was reloading would otherwise wait for the next one. */
-  useEffect(() => {
-    void api.loginRequests().then(setLogins)
-    return api.onLogins(setLogins)
-  }, [])
-  /* A request that has gone - dismissed, or finished - must not leave the view open on
-     nothing, and one that failed while open puts its reason on screen rather than a
-     blank rectangle. */
-  useEffect(() => {
-    if (loginOpen && !logins.some((r) => r.id === loginOpen)) setLoginOpen(null)
-    // A pane that asked for the picture itself gets it without anybody clicking the card:
-    // `pf login` is the session saying "open the sign-in again", so the window opens it.
-    const raise = raiseLogin(logins, loginOpen)
-    if (raise) {
-      setLoginOpen(raise)
-      void api.openLogin(raise).then((r) => {
-        if (!r.ok && r.error) flash(r.error)
-      })
-    }
-  }, [logins, loginOpen])
   useEffect(() => api.onCapacity(setCapacity), [])
-  /* One class, so the CSS owns the geometry: the pane column is padded, not covered. */
-  useEffect(() => {
-    document.documentElement.classList.toggle('login-open', Boolean(loginOpen))
-    return () => document.documentElement.classList.remove('login-open')
-  }, [loginOpen])
 
   /**
    * Since when nobody has been at this machine, or null while somebody is.
@@ -1891,9 +1900,15 @@ export default function App(): JSX.Element {
           `${failed.length} of ${rows.length} folders could not be opened. ` +
             failed.map((r) => `${r.cwd.split(/[\\/]/).pop()}: ${r.why}`).join('; ')
         )
+      // A client row that went to the chat already open there says so: it is the one press
+      // that otherwise did nothing visible but close the dialog (`reusedLine`).
+      const reused = rows.filter((r) => (r.session as { startAction?: string } | undefined)?.startAction === 'send')
+      if (reused.length && !failed.length) flash(reusedLine(reused[0].session?.title ?? ''))
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
-      const noted = started.filter((s) => s.laneNote)
+      // Not a reused chat: its `laneNote` was said when it opened, and flashing it again here
+      // replaced the `reusedLine` above with old news.
+      const noted = started.filter((s) => s.laneNote && !reused.some((r) => r.session?.id === s.id))
       if (noted.length === 1) {
         const s = noted[0]
         flash(s.lane ? `${s.cwd.split(/[\\/]/).pop()} - ${s.laneNote}` : (s.laneNote as string))
@@ -1994,7 +2009,8 @@ export default function App(): JSX.Element {
     (id: string) => {
       const s = sessions.find((x) => x.id === id)
       if (!s) return
-      if (!config?.confirmClose || s.status === 'exited') return api.killSession(id)
+      // A screen view has nothing to lose - no agent, no conversation - so no question.
+      if (!config?.confirmClose || s.status === 'exited' || s.screen) return api.killSession(id, 'user')
       setAsk({
         title: `Close ${s.title}?`,
         body: `${s.agent} is still running in ${s.cwd}. Closing ends it - the conversation stays in history.`,
@@ -2002,7 +2018,7 @@ export default function App(): JSX.Element {
         danger: true,
         onConfirm: () => {
           setAsk(null)
-          api.killSession(id)
+          api.killSession(id, 'user')
         }
       })
     },
@@ -2023,7 +2039,7 @@ export default function App(): JSX.Element {
       danger: true,
       onConfirm: () => {
         setAsk(null)
-        for (const s of sessions) api.killSession(s.id)
+        for (const s of sessions) api.killSession(s.id, 'user')
       }
     })
   }, [sessions])
@@ -2117,27 +2133,10 @@ export default function App(): JSX.Element {
       const shell = s.agent === 'shell'
       const cmd = shell ? 'clear' : '/clear'
       // Empty the prompt box first, or a half-typed line ends up with /clear stuck on
-      // the end of it and the whole mess submitted. Which key does that is not the same
-      // in both, and sending both is worse than either: Escape empties PowerShell's line
-      // but leaves Claude Code's box alone, Ctrl-U empties Claude Code's box (offered
-      // back on Ctrl-Y) but arrives at a PowerShell prompt as a literal character that
-      // turns the command into one it cannot find. One key each, both measured.
-      //
-      // One Ctrl-U is not enough, though, and that was the bug: measured against a real
-      // Claude Code REPL, it empties a ONE-LINE box and leaves every earlier line of a
-      // shift+Enter draft exactly where it was. "/clear" then landed on the end of line
-      // one and the whole draft went to the model as a prompt - the run kept its context
-      // and burned a turn saying so. The wipe is a loop now: Ctrl-K takes whatever the
-      // cursor is sitting in front of, Ctrl-U the head behind it, Backspace joins the
-      // emptied line to the one above. One round per line walks a draft of any shape
-      // back to nothing, and a round that runs past the top is three no-ops on an empty
-      // box - so overshooting is free and undershooting is the bug.
-      const draft = paneDraft.get(s.id)
-      // A draft the reconstruction has lost track of gets the flat budget rather than a
-      // count derived from text already known to be wrong.
-      const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
-      const rounds = Math.min(24, Math.max(4, lines + 2))
-      const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
+      // the end of it and the whole mess submitted. Escape for a shell, the Ctrl-K /
+      // Ctrl-U / Backspace loop for an agent - `composerWipe` in shared/draft.ts says why
+      // each, and why the loop runs once per line of the draft.
+      const wipe = shell ? '\x1b' : composerWipe(paneDraft.get(s.id))
       // The pane keeps its screen off the keystrokes it relays, and these are not
       // keystrokes - so it is told directly, before a byte goes out. Without this the
       // button cleared the pane and took the conversation off the screen with it, which is
@@ -2579,6 +2578,14 @@ export default function App(): JSX.Element {
    */
   const handoffBlocked = useRef<Record<string, number>>({})
   const handoffSweeping = useRef(false)
+  // The last `sweep:` line written to handoff.log and when - see `sweepLogDue`.
+  const sweepNoted = useRef<{ text: string; at: number } | null>(null)
+  const noteSweep = useCallback((text: string): void => {
+    const at = Date.now()
+    if (!sweepLogDue(sweepNoted.current, text, at)) return
+    sweepNoted.current = { text, at }
+    api.logHandoff(text)
+  }, [])
 
   /**
    * Which folders' code could reach another machine, keyed by folder.
@@ -2648,28 +2655,30 @@ export default function App(): JSX.Element {
     // runs - one predicate, so the two rungs cannot disagree about a pane. See
     // `AutoPane.sleepsSoon`.
     const cfg = configRef.current?.reclaim ?? DEFAULT_RECLAIM
-    const sleepingSoon = new Set(
-      idleSleepPlan(
-        sessionsRef.current.map((s) =>
-          reclaimPaneOf(
-            s,
-            activeRef.current,
-            focusLeftAt.current[s.id],
-            pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
-          )
-        ),
-        cfg,
-        deskNow(Date.now(), awayRef.current),
-        personRef.current,
-        sleepPressureRef.current,
-        SLEEPS_SOON_LEAD_MS
-      ).map((p) => p.id)
+    const reclaimPanes = sessionsRef.current.map((s) =>
+      reclaimPaneOf(
+        s,
+        activeRef.current,
+        focusLeftAt.current[s.id],
+        pinnedRef.current[s.id],
+        usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+      )
     )
+    const deskClock = deskNow(Date.now(), awayRef.current)
+    // ...and the panes the CLOSE clock is about to take into Review. With room nothing
+    // sleeps any more (2026-09-25), so without these a quiet pane a minute from closing
+    // was still a pane the budget rung would carry to the other machine first.
+    const sleepingSoon = new Set([
+      ...idleSleepPlan(reclaimPanes, cfg, deskClock, personRef.current, sleepPressureRef.current, SLEEPS_SOON_LEAD_MS),
+      ...idleClosePlan(reclaimPanes, cfg, deskClock, personRef.current, SLEEPS_SOON_LEAD_MS)
+    ].map((p) => p.id))
     return sessionsRef.current.map((s) => ({
         id: s.id,
         agent: s.agent,
         state: fleetState(s),
+        finished: s.finished,
+        handoffOpen: s.handoffOpen,
+        handoffVerified: s.handoffVerified,
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
         // Looking at a pane is using it, for a move exactly as for a close.
@@ -2680,7 +2689,7 @@ export default function App(): JSX.Element {
         handingOff: !!s.handingOff,
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
-        asking: !!s.ask || !!s.bell,
+        asking: !!s.ask || !!s.bell || !!s.drafting,
         // The app itself owes this pane a prompt - see `AutoPane.owedPrompt`.
         owedPrompt: !!s.owedPrompt,
         // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
@@ -2697,7 +2706,14 @@ export default function App(): JSX.Element {
         // What it is actually costing. `undefined` when the sampler has no answer - it
         // does not read the process table behind a hidden window - and `expensive` reads
         // that as small, so an unmeasured pane is never moved for a number nobody took.
-        memMb: usageRef.current?.panes[s.id]?.rssMb,
+        // ...plus the dev server it started that is no longer in its tree (`next dev` on
+        // ppid 1 once npm exited) - `PaneUsage.devMb`. Four of those held ~1.3 GB on
+        // 2026-09-23 while every pane read ~200 MB, so the pane that owned the 642 MB one
+        // must be the first moved, and the move carries the server.
+        memMb:
+          usageRef.current?.panes[s.id] === undefined
+            ? undefined
+            : usageRef.current.panes[s.id].rssMb + (usageRef.current.panes[s.id].devMb ?? 0),
         cpuPct: usageRef.current?.panes[s.id]?.cpuPct ?? undefined,
         // A shell pane's live command (`shared/paneJob.ts`): a dev server that has just
         // started holds nothing yet and is still the pane worth moving.
@@ -2721,7 +2737,9 @@ export default function App(): JSX.Element {
         ask: s.gist,
         cwd: s.cwd,
         // The sleep rung has this one. See `AutoPane.sleepsSoon`.
-        sleepsSoon: sleepingSoon.has(s.id)
+        sleepsSoon: sleepingSoon.has(s.id),
+        // Turns finished on this desk, for the turn-count rung. See `AutoPane.turnsHere`.
+        turnsHere: s.turnsHere
       }))
   }, [])
   handoffPanesRef.current = handoffPanes
@@ -2740,7 +2758,9 @@ export default function App(): JSX.Element {
       panes: AutoPane[],
       make: (candidates: OffloadCandidate[], now: number) => AutoHandoff[],
       why: string,
-      cooldownMinutes: number
+      cooldownMinutes: number,
+      // Said when the sweep ends without arming anything, for the `sweep:` line.
+      empty?: (verdict: string, candidates: OffloadCandidate[]) => void
     ) => {
       if (handoffSweeping.current) return
       handoffSweeping.current = true
@@ -2758,7 +2778,10 @@ export default function App(): JSX.Element {
         try {
           const state = await api.remoteState()
           const online = state.peers.filter((p) => p.status === 'online')
-          if (!online.length) return
+          if (!online.length) {
+            empty?.('no other machine online', [])
+            return
+          }
           const candidates = await Promise.all(
             online.map(async (p) => ({
               device: p.id,
@@ -2770,7 +2793,10 @@ export default function App(): JSX.Element {
             }))
           )
           const plan = make(candidates, Date.now())
-          if (!plan.length) return
+          if (!plan.length) {
+            empty?.('no plan', candidates)
+            return
+          }
           // Nothing moves silently. The loop that used to run the moves here is `doMove`
           // now, behind the same countdown a close gets: named pane, named machine, and
           // `Keep it here` on it.
@@ -2793,9 +2819,12 @@ export default function App(): JSX.Element {
     // `ok` too - and it is then the only sweep that will, since both of the others are
     // readings about a machine in trouble.
     const over = Math.max(0, capacity.over ?? 0)
-    if (!over && capacity.level === 'ok') return
     const now = Date.now()
     const panes = handoffPanes()
+    // Every silent return below says why in handoff.log (`sweep:` lines, deduplicated).
+    const say = (verdict: string, peers?: OffloadCandidate[]): void =>
+      noteSweep(sweepLine(verdict, capacity.level, over, sweepBlockers(panes, cfg, handoffBlocked.current, now, over, peers)))
+    if (!over && capacity.level === 'ok') return say('desk is fine, nothing to give back')
     // The same eligibility the plan applies, asked here first so the peers are not called
     // over the link to find out there was nothing to move. Two shapes, because the budget
     // rule drops the idle wait and the on-screen refusal and takes busy panes as well.
@@ -2805,21 +2834,22 @@ export default function App(): JSX.Element {
       // Both rungs below refuse it, so asking the peers about it is a round trip over the
       // link for an empty plan. See `AutoPane.sleepsSoon`.
       if (p.sleepsSoon) return false
-      if (over) return handoffQueueable(p)
+      if (over) return automaticQueueable(p)
       return (
         !p.visible &&
         handoffMovable(p) &&
         now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000
       )
     })
-    if (!worthAsking) return
+    if (!worthAsking) return say('nothing eligible')
     runHandoffs(
       panes,
       (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
       over ? `budget: ${over} pane(s) past ${cfg.keepLocal}` : `capacity: ${capacity.level}`,
-      cfg.cooldownMinutes
+      cfg.cooldownMinutes,
+      (verdict, peers) => say(verdict, peers)
     )
-  }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])
+  }, [capacity, handoffPanes, runHandoffs, noteSweep, config?.autoHandoff])
 
   // Twice: on a reading changing, and on a clock. A desk that is full and quiet emits no
   // session events at all - which is exactly the desk this exists for, and the one a
@@ -2832,6 +2862,52 @@ export default function App(): JSX.Element {
     // interval re-armed on every change is an interval that never fires. The reading
     // (`capacity`) re-arms it, and everything else is read fresh through `sessionsRef`.
   }, [sweepHandoff])
+
+  /**
+   * The turn-count rung, on the one event a busy desk produces: a turn ending.
+   *
+   * Neither sweep above could fire on the desk of 2026-09-23 (eight panes all working, four
+   * dev servers, 139M unused): the budget rung wants a pane quiet two minutes, the pressure
+   * rung wants one off screen and idle ten. `turnsPlan` wants a pane that has finished
+   * `TURNS_BEFORE_MOVE` turns here while the desk reads `warn`, and this effect runs it the
+   * moment any pane's count goes up - read off `Session.turnsHere`, compared against the
+   * last count seen, so a desk printing bytes runs no plan. The countdown it arms is the
+   * same card as every other move, `Keep it here` and all.
+   */
+  const turnsSeen = useRef<Record<string, number>>({})
+  useEffect(() => {
+    const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+    let ended = false
+    const seen = turnsSeen.current
+    const live = new Set<string>()
+    for (const s of sessions) {
+      live.add(s.id)
+      const n = s.turnsHere ?? 0
+      if (n > (seen[s.id] ?? 0)) ended = true
+      seen[s.id] = n
+    }
+    for (const id of Object.keys(seen)) if (!live.has(id)) delete seen[id]
+    if (!ended || !capacity || !cfg.enabled || capacity.level === 'ok') return
+    const panes = handoffPanes()
+    const now = Date.now()
+    // Same pre-check as the sweeps above: the peers are only asked when a pane could go.
+    const worthAsking = panes.some(
+      (p) =>
+        (p.turnsHere ?? 0) >= TURNS_BEFORE_MOVE &&
+        !p.focused &&
+        !p.remote &&
+        !p.handingOff &&
+        automaticQueueable(p) &&
+        !((handoffBlocked.current[p.id] ?? 0) > now)
+    )
+    if (!worthAsking) return
+    runHandoffs(
+      panes,
+      (candidates, at) => turnsPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
+      `turns: ${TURNS_BEFORE_MOVE} finished here at ${capacity.level}`,
+      cfg.cooldownMinutes
+    )
+  }, [sessions, capacity, config?.autoHandoff, handoffPanes, runHandoffs])
 
   /**
    * The same move on a clock, and the only sweep that can fire on a single-window desk.
@@ -2899,6 +2975,8 @@ export default function App(): JSX.Element {
         // A Claude background agent still running - closing the pane ends it. See
         // `Session.subagent`.
         backJob: s.subagent ?? null,
+        // A server this pane runs dies with it. See `ReclaimPane.serving`.
+        serving: s.serving ?? null,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
@@ -3080,6 +3158,23 @@ export default function App(): JSX.Element {
     flash(`Layout: ${LAYOUT_LABEL[next]}`)
   }, [layout, grid, patchConfig, flash])
 
+  /**
+   * The desktop quick button: the paired machine's screen as a pane beside the others.
+   * A second press finds the one already open. The grid is turned on when it is off, so
+   * the view lands BESIDE the terminals rather than filling the window - one click on
+   * any other pane is still all it takes to get back to it (brief 2026-09-23).
+   */
+  const openScreenPane = async (): Promise<void> => {
+    const r = await api.openScreen()
+    if (!r.ok) {
+      flash(r.message)
+      return
+    }
+    if (!(config?.grid ?? false) && !handheld.handheld && sessions.some((x) => x.id !== r.id)) patchConfig({ grid: true })
+    setZoomId(null)
+    setActiveId(r.id)
+  }
+
   const toggleZoom = useCallback(
     (id?: string | null) => {
       const target = id ?? activeRef.current
@@ -3182,22 +3277,6 @@ export default function App(): JSX.Element {
   // them as terminal input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // The other machine's picture has the keyboard: every key belongs to it except the
-      // ones it is never sent (see `chordAllowed`). This listener is on the window in the
-      // capture phase and was registered when the window opened, so it runs BEFORE the
-      // view's own listener and cannot be stopped by it - the view has to be asked about
-      // instead. Without this, Cmd+F while typing a password opened this app's Find box.
-      if (
-        !chordAllowed(Boolean(document.querySelector('.login-screen.typing')), {
-          key: e.key,
-          code: e.code,
-          ctrl: e.ctrlKey,
-          meta: e.metaKey,
-          shift: e.shiftKey,
-          alt: e.altKey
-        })
-      )
-        return
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '')
       if (e.key === 'Escape') {
         // An open dropdown owns Escape: closing the dialog under it would be a
@@ -3397,6 +3476,10 @@ export default function App(): JSX.Element {
       } else if (k === ',') {
         e.preventDefault()
         setSettings(true)
+      } else if ((k === '+' || k === '=' || k === '-' || k === '0') && activeId && paneZoom.has(activeId)) {
+        // A screen pane zooms its picture; the terminal font is not what anybody meant.
+        e.preventDefault()
+        paneZoom.get(activeId)!(k === '0' ? 0 : k === '-' ? -1 : 1)
       } else if ((k === '+' || k === '=' || k === '-') && config) {
         e.preventDefault()
         const delta = k === '-' ? -1 : 1
@@ -3409,6 +3492,8 @@ export default function App(): JSX.Element {
         if (target) {
           e.preventDefault()
           setActiveId(target.id)
+        } else if (listedKeyRef.current(Number(k))) {
+          e.preventDefault()
         }
       }
     }
@@ -3449,16 +3534,10 @@ export default function App(): JSX.Element {
     )
     const out: Command[] = []
 
-    for (const s of sessions)
-      out.push({
-        id: `focus:${s.id}`,
-        group: 'Open sessions',
-        title: s.title,
-        hint: s.cwd,
-        icon: logo(s.agent),
-        run: () => setActiveId(s.id)
-      })
-
+    // Open panes are not rows here: they are in `chats` below with the closed ones, found
+    // by what they were asked. Nor is any `Start <project>` row - that is New session's job
+    // (Robert 2026-09-24: "a project shouldnt be in search thats for start project"), and 40
+    // folder rows buried the chats a search is opened to find.
     for (const p of config?.presets ?? [])
       out.push({
         id: `preset:${p.id}`,
@@ -3466,25 +3545,6 @@ export default function App(): JSX.Element {
         title: `Launch ${p.name}`,
         hint: `${p.items.length} projects`,
         run: () => launchPreset(p)
-      })
-
-    // The title carries the VERB. These rows were the bare project name over its path,
-    // which is the same shape as an `Open sessions` row above them - so a folder already
-    // open showed up twice, identically, meaning two different things, and one of them
-    // silently started a second agent. A project already open says so instead of the path,
-    // because that is the fact that decides whether you wanted this row at all.
-    const dflt = config?.defaultAgent ?? 'claude'
-    for (const p of projects.slice(0, 40))
-      out.push({
-        id: `start:${p.path}`,
-        group: 'Start a project',
-        title: `Start ${p.name}`,
-        hint: sessions.some((s) => s.cwd === p.path) ? 'already open - starts another' : p.path,
-        icon: logo(dflt),
-        run: () =>
-          start([
-            { cwd: p.path, title: p.name, agent: dflt, model: config?.defaultModels[dflt] || undefined }
-          ])
       })
 
     if (active)
@@ -3501,8 +3561,7 @@ export default function App(): JSX.Element {
     // There is deliberately no bare `New session` row. It opened the picker DIALOG, so the
     // one thing a palette is for - finish the job on Return - was the one thing it did not
     // do; and the button it duplicates is 40px above the box you typed into, with the same
-    // shortcut printed on it. What replaced it is the `Start a project` group above, which
-    // gets you the same session and names WHICH one.
+    // shortcut printed on it.
     out.push(
       {
         id: 'changes',
@@ -3619,12 +3678,15 @@ export default function App(): JSX.Element {
         group: 'Actions',
         title: 'Split a long ask into panes',
         hint: 'one request, one pane per part that can run alone',
-        run: () => setSplitting(true)
+        run: () => {
+          setSplitInitial(undefined)
+          setSplitting(true)
+        }
       },
       {
         id: 'history',
         group: 'Actions',
-        title: 'Search past sessions',
+        title: 'History: search past sessions',
         hint: 'everything every agent has printed',
         keys: 'Ctrl H',
         run: () => setHistory(true)
@@ -3713,12 +3775,10 @@ export default function App(): JSX.Element {
     sessions,
     activeId,
     agents,
-    projects,
     config,
     grid,
     patchConfig,
     launchPreset,
-    start,
     switchAgent,
     close,
     closeAll,
@@ -3732,6 +3792,94 @@ export default function App(): JSX.Element {
     syncTyping,
     toggleSyncTyping
   ])
+
+  /** Words carried from Ctrl K into History, so its search starts where that one was. */
+  const [historyQuery, setHistoryQuery] = useState('')
+  useEffect(() => {
+    if (!history) setHistoryQuery('')
+  }, [history])
+  const searchAll = useCallback((q: string) => {
+    setHistoryQuery(q)
+    setHistory(true)
+  }, [])
+
+  /**
+   * Every chat the Ctrl K box can find: the panes on screen, then every closed one History
+   * kept. Read from disk each time the box opens rather than held, because a chat closed a
+   * minute ago has to be in it and the list is a few hundred small files the History
+   * window already reads the same way.
+   */
+  const [pastChats, setPastChats] = useState<HistoryEntry[]>([])
+  useEffect(() => {
+    if (palette) void api.listHistory().then(setPastChats)
+  }, [palette])
+  const chats = useMemo<Chat[]>(() => {
+    if (!palette) return []
+    const logo = (id: string): JSX.Element => (
+      <AgentLogo id={id} spec={agents.find((a) => a.id === id)} size={15} />
+    )
+    const past = new Map(pastChats.map((e) => [e.id, e]))
+    // An open pane's asks live in its History entry (same id), which is how its row can
+    // say what it is doing NOW rather than the first thing it was ever asked.
+    const out: Chat[] = sessions.map((s) => {
+      const e = past.get(s.id)
+      return {
+        id: s.id,
+        open: true,
+        at: s.createdAt,
+        title: s.title,
+        cwd: s.cwd,
+        gist: s.gist ?? e?.gist,
+        chapters: e?.chapters,
+        askLines: e?.askLines,
+        lastAsk: e?.lastAsk,
+        place: placeOf(s.cwd),
+        when: s.status === 'working' ? 'working now' : 'open',
+        icon: logo(s.agent),
+        run: () => setActiveId(s.id)
+      }
+    })
+    const open = new Set(sessions.map((s) => s.id))
+    // One conversation, one row. Reopening gives the chat a NEW pane id, so its old entry
+    // is still in History: without this it showed green and red at once, and Return on the
+    // red one started a second agent on the conversation already running. `pastChats` is
+    // newest-closed first, so the first entry seen for a conversation is the one kept.
+    const seen = new Set(
+      sessions.map((s) => s.resumeId ?? past.get(s.id)?.resumeId).filter((r): r is string => Boolean(r))
+    )
+    for (const e of pastChats) {
+      if (open.has(e.id)) continue
+      if (e.resumeId) {
+        if (seen.has(e.resumeId)) continue
+        seen.add(e.resumeId)
+      }
+      // No end time: the app went down under it, so all that is known is when it started.
+      const at = e.endedAt ?? e.startedAt
+      const when = `${e.endedAt ? 'closed' : 'started'} ${whenWords(at)}`
+      out.push({
+        id: e.id,
+        open: false,
+        at,
+        title: e.title,
+        cwd: e.cwd,
+        gist: e.gist,
+        chapters: e.chapters,
+        askLines: e.askLines,
+        place: placeOf(e.cwd),
+        when: e.gone ? `${when} · folder gone` : when,
+        icon: logo(e.agent),
+        // The same reopen as History's `Open again`, with the id for the same reason. A
+        // folder that is gone cannot be reopened into, so that row opens it in History to read.
+        run: e.gone
+          ? () => searchAll(e.title)
+          : () =>
+              start([
+                { cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true, resumeId: e.resumeId, where: 'local' }
+              ])
+      })
+    }
+    return out
+  }, [palette, pastChats, sessions, agents, start, searchAll])
 
 
   /**
@@ -4209,8 +4357,6 @@ export default function App(): JSX.Element {
    * shape that gets a feature switched off.
    */
   const keptUntil = useRef<Record<string, number>>({})
-  /** How many times in a row somebody has kept each pane; the hold grows with it. */
-  const keepPresses = useRef<Record<string, number>>({})
   const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
   mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
 
@@ -4237,6 +4383,8 @@ export default function App(): JSX.Element {
     // closed). Same failure as the two readings of the close clock on 2026-09-01.
     if (s.ask) return false
     if (s.drafting) return false
+    // The app still owes this pane a prompt (2026-10-02: six restored panes closed here, prompt LOST).
+    if (s.owedPrompt) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
     const st = fleetState(s)
@@ -4266,17 +4414,42 @@ export default function App(): JSX.Element {
       api.logReclaim({ event: 'skipped', id, name: paneWordRef.current(id), reason })
     }
   }, [])
+  /**
+   * `skipClose` for a pane a countdown can no longer act on - and a pane that is GONE did
+   * not go back to work. 2026-09-24: the Review auto-close took s16-mue9dvl3 0.4s into
+   * its ten-second sleep card, and this line said "it went back to work", which read as
+   * the countdown closing a working pane. Main's `close-request` line says who closed it.
+   */
+  const skipGone = useCallback(
+    (ids: string[], woke: string) => {
+      for (const id of ids)
+        skipClose([id], sessionsRef.current.some((x) => x.id === id) ? woke : CLOSED_ELSEWHERE)
+    },
+    [skipClose]
+  )
 
   const doClose = useCallback(
-    (ids: string[], mb: number) => {
+    (ids: string[], mb: number, why?: CloseSoon['why'], byPerson = false) => {
       dropSoon(ids)
+      // Re-read at the deadline, not only at the arm: a Keep or a server that arrived during
+      // the count reaches this closure through refs, and the effect that drops the card
+      // may not have run yet. Only the clock is refused: "Do it now" is a person choosing
+      // this close on the card that names the pane, and refusing it would just make the
+      // card vanish with nothing closed.
+      const held = byPerson ? [] : ids.filter((id) => pinnedRef.current[id] || sessionsRef.current.find((x) => x.id === id)?.serving)
+      if (held.length) {
+        skipClose(held, 'it was kept open or started serving during the countdown')
+        mb = Math.round((mb * (ids.length - held.length)) / ids.length)
+        ids = ids.filter((id) => !held.includes(id))
+        if (!ids.length) return
+      }
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
-        skipClose(ids, 'it went back to work during the countdown')
+        skipGone(ids, 'it went back to work during the countdown')
         return
       }
       if (live.length !== ids.length) {
-        skipClose(
+        skipGone(
           ids.filter((id) => !live.includes(id)),
           'it went back to work during the countdown'
         )
@@ -4286,11 +4459,15 @@ export default function App(): JSX.Element {
         // The line that answers "what closed my pane" after the fact. `armed` says a sweep
         // picked it; this says it actually went.
         api.logReclaim({ event: 'closed', id, name: paneWordRef.current(id) })
-        void api.killSession(id)
+        // Into Review, not only History: its reply stays readable and Continue resumes it.
+        void api.closeIntoReview(
+          id,
+          why === 'pressure' ? 'closed to give this machine its memory back' : why === 'turn' ? 'its turn ended' : 'quiet past its close clock'
+        )
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
-    [stillCloseable, dropSoon, skipClose]
+    [stillCloseable, dropSoon, skipClose, skipGone]
   )
 
   /**
@@ -4316,9 +4493,18 @@ export default function App(): JSX.Element {
     void (async () => {
       try {
         for (const move of plan) {
+          // Every `move-armed` line ends in one of `moved`, `move-queued`, `move-failed` or
+          // `move-skipped`. On 2026-09-24 s17, s20 and s29 were armed and then closed with
+          // nothing in reclaim.log between - they had MOVED (handoff.log: "resume confirmed"),
+          // and the close was the handoff taking the copy here down, but this file never
+          // said so.
           const live = sessionsRef.current.find((x) => x.id === move.id)
-          if (!live || live.remote) continue
-          const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
+          const fresh = handoffPanesRef.current().find((p) => p.id === move.id)
+          if (!live || live.remote || !fresh || fresh.focused || fresh.handingOff || !automaticQueueable(fresh)) {
+            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'the pane is no longer safe or unfinished work to move' : 'the pane was gone by the deadline' })
+            continue
+          }
+          const items = await api.handoffToDevice(move.device, [move.id], true, true, false, true).catch((error) => [{
             id: move.id,
             title: live.title,
             ok: false,
@@ -4332,6 +4518,7 @@ export default function App(): JSX.Element {
           // it already holds. `Session.movedTo` carries the same refusal into main.
           if (item?.ok && 'sourceKept' in item && item.sourceKept === true) handoffBlocked.current[move.id] = Number.POSITIVE_INFINITY
           if (item?.ok || item?.pending) {
+            api.logReclaim({ event: item?.ok ? 'moved' : 'move-queued', id: move.id, device: move.deviceName })
             setActed({
               what: 'moved',
               panes: [paneActedRef.current(move.id)],
@@ -4391,12 +4578,18 @@ export default function App(): JSX.Element {
   armSleepRef.current = (plan, pressure) => {
     const now = Date.now()
     const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
-    const keep = plan.filter(
-      (p) =>
+    const keep = plan.filter((p) => {
+      // The live pane, not the plan's reading of it: a pane asleep or ended is never armed.
+      const s = sessionsRef.current.find((x) => x.id === p.id)
+      return (
+        Boolean(s) &&
+        !s!.asleep &&
+        s!.status !== 'exited' &&
         (keptUntil.current[p.id] ?? 0) <= now &&
         (sleepHeld.current[p.id] ?? 0) <= now &&
         !armed.has(p.id)
-    )
+      )
+    })
     if (!keep.length) return
     const why: 'idle' | 'pressure' = pressure === 'ok' ? 'idle' : 'pressure'
     // The pane's OWN deadline, never now-plus-fifteen: the pane was picked up to a lead
@@ -4489,29 +4682,37 @@ export default function App(): JSX.Element {
   // event loop reaches it: a card sitting at `0s`, nothing happening, and nothing in
   // reclaim.log saying why. What the deadline does is written down (`due`) before it does
   // it, so the next "reached the timer and nothing happened" is answerable from the file.
-  const soonActRef = useRef({ doClose, doMove, dropSoon, skipClose, stillCloseable })
-  soonActRef.current = { doClose, doMove, dropSoon, skipClose, stillCloseable }
+  const soonActRef = useRef({ doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable })
+  soonActRef.current = { doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable }
   useEffect(() => {
     if (!closeSoons.length) return
     const timers = closeSoons.map((soon) => {
       const key = soonKey(soon)
       return window.setTimeout(() => {
-        const { doClose, doMove, dropSoon, skipClose, stillCloseable } = soonActRef.current
+        const { doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable } = soonActRef.current
         if (soon.move) {
           const held = moveSoonRef.current[key]
           delete moveSoonRef.current[key]
           if (held) doMove(held.plan, held.cooldownMinutes)
-          else dropSoon(soon.ids)
+          else {
+            dropSoon(soon.ids)
+            for (const id of soon.ids) api.logReclaim({ event: 'move-skipped', id, reason: 'the move it was armed with was already gone at the deadline' })
+          }
           return
         }
         if (soon.sleep) {
           dropSoon(soon.ids)
           for (const id of soon.ids) {
             if (!stillCloseable(id)) {
-              skipClose([id], 'it went back to work during the countdown')
+              skipGone([id], 'it went back to work during the countdown')
               continue
             }
             api.logReclaim({ event: 'due', id, name: paneWordRef.current(id), what: 'sleep' })
+            // Off the clock while main is asked and for a beat after it answers: the card is
+            // already down, and the next sweep reads a session list that still says awake.
+            // s22-mueyklpl slept at 04:35:29.853 (2026-09-24), was armed again at .896 and
+            // refused ten seconds later - "This pane is already asleep."
+            sleepHeld.current[id] = Number.POSITIVE_INFINITY
             void (async () => {
               let slept: unknown = null
               try {
@@ -4526,6 +4727,7 @@ export default function App(): JSX.Element {
               }
               if (slept) {
                 delete sleepRefusals.current[id]
+                sleepHeld.current[id] = Date.now() + SLEPT_SETTLE_MS
                 return
               }
               // Main said no (its own line says why). Not asked again for a while: the
@@ -4544,7 +4746,7 @@ export default function App(): JSX.Element {
         }
         const mb = pendingMb.current[key] ?? 0
         delete pendingMb.current[key]
-        doClose(soon.ids, mb)
+        doClose(soon.ids, mb, soon.why)
       }, Math.max(0, soon.deadline - Date.now()))
     })
     return () => timers.forEach((t) => window.clearTimeout(t))
@@ -4566,13 +4768,35 @@ export default function App(): JSX.Element {
     if (!woke.length) return
     // Named, not counted: this is the line that answers "why was my pane armed twice and
     // never closed" a week later. See `skipClose`.
-    skipClose(
+    skipGone(
       woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id)),
       'it went back to work while the countdown was running'
     )
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
-  }, [closeSoons, sessions, stillCloseable, skipClose])
+  }, [closeSoons, sessions, stillCloseable, skipGone])
+
+  /**
+   * ...and so does Keep it open, wherever it was pressed.
+   *
+   * Pressed on this desk, `savePins` drops the countdown itself. Pressed on the phone or on
+   * the other desk it arrives as a config broadcast, and nothing dropped the count: on the
+   * PC 2026-09-29 `dev: dev` was kept from the Mac before 9:02am and a pressure sweep closed
+   * it at 9:09:33am (reclaim.log `armed` why=pressure, `closed` 15 s later). A kept pane is
+   * never closed. It may still be SLEPT under pressure (`sleepable`), so that countdown runs.
+   */
+  useEffect(() => {
+    const kept = closeSoons.filter(
+      (s) => !s.move && !(s.sleep && s.why === 'pressure') && s.ids.some((id) => pinned[id])
+    )
+    if (!kept.length) return
+    skipClose(
+      kept.flatMap((s) => s.ids).filter((id) => pinned[id]),
+      'Keep it open was turned on during the countdown'
+    )
+    const gone = new Set(kept.map((s) => soonKey(s)))
+    setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
+  }, [closeSoons, pinned, skipClose])
 
   /**
    * Put each local pane's closing deadline on the session, where the card reads it.
@@ -4587,14 +4811,16 @@ export default function App(): JSX.Element {
    * `setClosingAt` emits one when the number moves.
    */
   const closingRef = useRef<Record<string, number | undefined>>({})
-  const keptRef = useRef<Record<string, boolean>>({})
   const publishClosingRef = useRef<() => void>(() => {})
   useEffect(() => {
     const run = (): void => {
       const cfg = config?.reclaim ?? DEFAULT_RECLAIM
-      // The same frozen clock the sweep reads, or a card counts down to a close that is
-      // not coming.
-      const now = deskNow(Date.now(), awayRef.current)
+      // WALL time, because that is what every chip drawing the answer counts - this desk's
+      // card and the paired desk's row alike. While the sweep's clock is frozen (nobody at
+      // this desk) `chipCloseAt` publishes nothing: a deadline computed on a stopped clock
+      // is a moment that arrives on schedule and is then simply past, which was a PC row
+      // on the Mac reading `closes now` for a pane the sweep was not going to touch.
+      const now = Date.now()
       const live = new Set<string>()
       // Every local pane, read once, so the chip can refuse the pane the last-pane rule
       // holds back. Without it that card wore `closes now` and nothing ever closed it.
@@ -4612,28 +4838,24 @@ export default function App(): JSX.Element {
       for (const s of sessions) {
         if (s.remote) continue
         live.add(s.id)
-        const due = idleCloseAt(
+        const due = chipCloseAt(
           localPanes.find((p) => p.id === s.id) as ReclaimPane,
           cfg,
           now,
+          awayRef.current,
           personHere,
           localPanes
         )
-        // A pane somebody pressed "keep it open" on is held by that, not by the clock -
-        // and the card must say so rather than counting down to a close that will not
-        // happen for another hour.
+        // A pane somebody pressed Keep on had its clock restarted, so the chip counts to
+        // the later of the two. It is an ordinary `closes` chip either way: Keep is no
+        // longer a hold with a word of its own (2026-09-25).
         const kept = keptUntil.current[s.id] ?? 0
         const at = due === null ? undefined : Math.max(due, kept)
-        // ...and the card is told WHICH of the two numbers it got. A held pane counted
-        // down under `closes 55m` and a sentence saying it had been quiet and was being
-        // closed - the opposite of what the press it came from promised.
-        const held = at !== undefined && kept > (due ?? 0)
         // `sameDeadline`, not `===`. An overdue pane's deadline IS `now`, and `now` moves
         // every time this runs - so an exact comparison republished on every session
         // broadcast, and `setClosingAt` emitting one in response made that a loop with no
         // floor under it. See shared/reclaim.ts.
-        if (sameDeadline(closingRef.current[s.id], at, now) && keptRef.current[s.id] === held)
-          continue
+        if (sameDeadline(closingRef.current[s.id], at, now)) continue
         // What this publisher actually costs, because nothing else could say. Every write
         // below is a main-process session broadcast to this window and every paired phone,
         // so a number that climbs while the desk is quiet IS the loop `sameDeadline`
@@ -4642,14 +4864,10 @@ export default function App(): JSX.Element {
         const w = window as unknown as { __pfClosePublish?: number }
         w.__pfClosePublish = (w.__pfClosePublish ?? 0) + 1
         closingRef.current[s.id] = at
-        keptRef.current[s.id] = held
-        api.setClosing(s.id, at ?? null, held)
+        api.setClosing(s.id, at ?? null)
       }
       for (const id of Object.keys(closingRef.current))
-        if (!live.has(id)) {
-          delete closingRef.current[id]
-          delete keptRef.current[id]
-        }
+        if (!live.has(id)) delete closingRef.current[id]
     }
     publishClosingRef.current = run
     run()
@@ -4658,7 +4876,7 @@ export default function App(): JSX.Element {
   }, [sessions, config?.reclaim, activeId, pinned, awayAt, personHere])
 
   /**
-   * Hold these panes where they are, for an hour.
+   * Hold these panes where they are, for `KEEP_MINUTES`.
    *
    * Both holds, always together: `keptUntil` is what the two arming functions filter on,
    * and `handoffBlocked` is what the handoff PLANS filter on. Setting one and not the
@@ -4737,32 +4955,48 @@ export default function App(): JSX.Element {
       }
       const mb = pendingMb.current[key] ?? 0
       delete pendingMb.current[key]
-      doClose(ids, mb)
+      doClose(ids, mb, soon?.why, true)
     },
     [doClose, doMove, dropSoon]
   )
 
+  const [savingPins, setSavingPins] = useState(false)
+  const savingPinsRef = useRef(false)
+  const savePins = useCallback(async (ids: string[], keep: boolean) => {
+    if (savingPinsRef.current) return
+    savingPinsRef.current = true
+    setSavingPins(true)
+    try {
+      const current = await api.getConfig()
+      const next = new Set(current.pinnedPanes ?? [])
+      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
+      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
+      const saved = await api.setConfig({ pinnedPanes: [...next] })
+      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
+      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
+      setConfigState(saved)
+      for (const session of sessions.filter(s => s.remote && ids.includes(s.id))) {
+        const ok = await api.setRemoteKeepOpen(session.id, keep)
+        if (!ok) throw new Error(`Could not save on ${session.remote!.name}`)
+      }
+      if (keep) {
+        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
+      }
+    } catch (error) {
+      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      savingPinsRef.current = false
+      setSavingPins(false)
+    }
+  }, [sessions, flash])
+
   const keepOpen = useCallback((ids: string[]) => {
     // The third way an `armed` line ends without a close, and the only one somebody chose.
     skipClose(ids, 'you kept it open')
-    // Each press on the same pane holds it longer - see `keepHoldMs`. A flat ten minutes
-    // meant the identical card came back at minute ten and took the pane then, which is
-    // the press reading as though it did nothing.
-    const now = Date.now()
-    for (const id of ids) {
-      const presses = (keepPresses.current[id] ?? 0) + 1
-      keepPresses.current[id] = presses
-      const hold = keepHoldMs(presses)
-      keptUntil.current[id] = now + hold
-      api.logReclaim({
-        event: 'kept',
-        id,
-        name: paneWordRef.current(id),
-        presses,
-        minutes: Math.round(hold / 60_000)
-      })
+    // Keep is durable. A declined move only keeps its location; closing cards pin it.
+    if (!closeSoonsRef.current.some(c => c.move && c.ids.some(id => ids.includes(id)))) {
+      void savePins(ids, true)
     }
-    const until = now + keepHoldMs(Math.max(...ids.map((id) => keepPresses.current[id] ?? 1)))
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
     // switched off. The sweep lock goes back with it.
@@ -4770,7 +5004,7 @@ export default function App(): JSX.Element {
     // for the life of this window: the person has said where that pane works, and the
     // Handoff button is theirs whenever they change their mind (Robert 2026-09-10: "only
     // offer it once for the move over if i cancel it then i can just move it myself at a
-    // later time"). The ten-minute hold above is for the CLOSE clock only.
+    // later time").
     if (closeSoonsRef.current.some((c) => c.move && c.ids.some((id) => ids.includes(id)))) {
       for (const id of ids) {
         handoffBlocked.current[id] = Number.POSITIVE_INFINITY
@@ -4781,10 +5015,9 @@ export default function App(): JSX.Element {
     // Only the card that named these panes. Answering one of two cards leaves the other
     // counting, which is the whole point of there being two of them.
     setCloseSoons((list) => list.filter((c) => !c.ids.some((id) => ids.includes(id))))
-    // `keptUntil` is a ref, so nothing about this reaches the effect that publishes the
-    // deadline. Without this the chip goes on counting down to a close an hour away.
+    // Remove the cancelled countdown from the published pane state too.
     publishClosingRef.current()
-  }, [])
+  }, [savePins])
 
   /**
    * The queued-move countdown's own Keep/Move, checked first because it is a different
@@ -4805,27 +5038,6 @@ export default function App(): JSX.Element {
     },
     [keepOpen, stopQueuedMove]
   )
-  const moveSoonNow = useCallback(
-    (ids: string[]) => {
-      // `Sleep now` is the wait spent early, nothing else - the pane keeps its card, its
-      // screen and its conversation either way.
-      const asleep = closeSoonsRef.current.find((c) => c.sleep && c.ids.some((id) => ids.includes(id)))
-      if (asleep) {
-        setCloseSoons((list) => list.filter((c) => c !== asleep))
-        for (const id of asleep.ids) void api.sleepSession(id, 'manual', { source: 'renderer' })
-        return
-      }
-      const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
-      if (soon && soon.move) {
-        setQueueSoons((list) => list.filter((c) => c !== soon))
-        const { device } = soon.move
-        for (const id of soon.ids) void api.cancelHandoff(id).then(() => api.handoffToDevice(device, [id], false, true))
-        return
-      }
-      doSoonNow(ids)
-    },
-    [doSoonNow]
-  )
 
   /**
    * This pane was just used by a person - restart its idle clock and say so on the card.
@@ -4835,7 +5047,7 @@ export default function App(): JSX.Element {
    * broadcast. `publishClosingRef` because `focusLeftAt` is a ref and nothing else would
    * notice that it moved.
    */
-  const touchPane = useCallback((id: string, wake = true) => {
+  const touchPane = useCallback((id: string, wake = true, by = 'click') => {
     focusLeftAt.current[id] = Date.now()
     // Main's finished-pane sweep cannot see this ref; tell it a person came to the pane.
     api.touchedSession(id)
@@ -4855,7 +5067,7 @@ export default function App(): JSX.Element {
     // on that press was woken by somebody who wanted to move it (Robert 2026-09-10: "if i
     // right click a pane and its sleep ... allow me to just right click not wake it up").
     const asleepPane = sessionsRef.current.find((x) => x.id === id)
-    if (wake && asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
+    if (wake && asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id, by)
     // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
     // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
     // on `stillCloseable`, which a click does not change - so clicking the pane restarted
@@ -4880,47 +5092,10 @@ export default function App(): JSX.Element {
     publishClosingRef.current()
   }, [])
 
-  const [savingPins, setSavingPins] = useState(false)
-  const savingPinsRef = useRef(false)
-  const savePins = useCallback(async (ids: string[], keep: boolean) => {
-    if (savingPinsRef.current) return
-    savingPinsRef.current = true
-    setSavingPins(true)
-    try {
-      const current = await api.getConfig()
-      const next = new Set(current.pinnedPanes ?? [])
-      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
-      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
-      const saved = await api.setConfig({ pinnedPanes: [...next] })
-      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
-      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
-      setConfigState(saved)
-      if (keep) {
-        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
-      }
-    } catch (error) {
-      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      savingPinsRef.current = false
-      setSavingPins(false)
-    }
-  }, [sessions, flash])
   const togglePin = useCallback((id: string) => {
-    const session = sessions.find((s) => s.id === id)
-    if (!session?.remote) {
-      void savePins([id], !pinnedRef.current[id])
-      return
-    }
-    if (savingPinsRef.current) return
-    savingPinsRef.current = true
-    setSavingPins(true)
-    void api.setRemoteKeepOpen(id, !session.keepOpen)
-      .catch((error) => flash(`Could not change Keep open on ${session.remote!.name}: ${error instanceof Error ? error.message : String(error)}`))
-      .finally(() => {
-        savingPinsRef.current = false
-        setSavingPins(false)
-      })
-  }, [sessions, savePins, flash])
+    const session = sessions.find(s => s.id === id)
+    void savePins([id], !(session?.remote ? session.keepOpen : pinnedRef.current[id]))
+  }, [sessions, savePins])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -4979,16 +5154,14 @@ export default function App(): JSX.Element {
    * Devices, so "is anything running over there" was a question you had to go and ask -
    * which is no way to watch a machine that is meant to be doing the work. Everything
    * needed to answer it already crosses the link (`RemotePaneInfo` rides the
-   * `remote:changed` message), so the sidebar draws them all and mirrors none of them.
+   * `remote:changed` message), so the sidebar draws them all.
    *
-   * That split is the whole design. LISTING a remote pane costs a few fields in a message
-   * that is already sent whenever anything over there moves; MIRRORING one costs a live
-   * byte stream and an xterm buffer on this laptop, per pane. Pressing the row is what
-   * turns one into the other, so a desk showing fifty PC panes costs what showing none
-   * used to.
-   *
-   * A listed row has no pane NUMBER: there is nothing on this machine for Ctrl+N to
-   * switch to until it has been opened.
+   * LISTING a remote pane costs a few fields in a message that is already sent whenever
+   * anything over there moves; MIRRORING one costs a live byte stream and an xterm buffer
+   * on this laptop (5-7 MB per pane, measured 2026-09-23). A paired device's panes are all
+   * mirrored by default (`RemoteClient.mirrorsAll`), so a listed row is the beat before a
+   * mirror attaches, or a device somebody turned down to a hand-picked few. It wears the
+   * next pane NUMBER after this desk's own (`listedByNumber` gives Ctrl+N the same one).
    */
   const deskRows = useMemo(
     () => buildDeskRows(deskSessions, shownSessions, remote?.peers ?? [], deviceFilter),
@@ -5007,7 +5180,7 @@ export default function App(): JSX.Element {
    */
   const needsYou = fleetWaiting(deskRows)
   const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all')
-    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row))), [sessions, remote])
+    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row)) && !finishedTurn(row)), [sessions, remote])
 
   /**
    * Open a pane that is running on another machine: mirror it, then switch to it.
@@ -5028,6 +5201,12 @@ export default function App(): JSX.Element {
     },
     [remote]
   )
+  listedKeyRef.current = (n) => {
+    const hit = listedByNumber(deskSessions.length, remote?.peers ?? [], n)
+    if (!hit) return false
+    openListed(hit.device, hit.pane)
+    return true
+  }
   useEffect(() => {
     const want = pendingOpen.current
     if (!want) return
@@ -5041,38 +5220,37 @@ export default function App(): JSX.Element {
   }, [rawSessions])
 
   /**
-   * A pane running on another machine, drawn without being mirrored.
+   * A pane running on another machine, drawn before its screen has arrived here.
    *
-   * Deliberately thinner than a local row: there is no git badge (the repo is on that
-   * disk), no resource chip (the agent is that machine's process), no close button (it
-   * is not ours to end from a list) and no rename. What it keeps is the four things that
-   * make it worth pressing - which machine, what it is, what it is doing, and for how
-   * long.
+   * With every pane of a paired device mirrored by default this row is a BEAT long - the
+   * moment between the device listing a pane and its bytes attaching - or the state of a
+   * device somebody turned down to a hand-picked few in Devices. Thinner than a local row
+   * (no git badge, no resource chip, no rename: all readings of this disk), but it wears
+   * the same NUMBER and the same close as a local card. Robert, 2026-09-23: "they dont
+   * even have a number on them which is bad u need to fix them and close as well". The
+   * close ends the pane on the machine that owns it (`Remote.closeOn`).
    */
   const listedRow = (row: DeskRow): JSX.Element => {
     const { pane, device } = row.listed!
     const place = describePlace({ cwd: pane.cwd, lane: pane.lane })
     const state = fleetRow(row)
     const agent = agents.find((a) => a.id === pane.agent)
+    const remoteId = `@${device.id}/${pane.id}`
     return (
       <div
         key={row.key}
         className={'row listed' + (pane.asking ? ' asking' : '')}
         title={
           `${pane.title} - running on ${device.name}.\n\n` +
-          'Nothing of it is on this machine yet. Click to watch it here; the agent, the ' +
-          'folder and the transcript stay over there.'
+          `Click to open it here; the agent, the folder and the transcript stay on ${device.name}.`
         }
         onClick={() => openListed(device.id, pane.id)}
       >
         <StatusDot status={pane.status} engaged={pane.engaged} />
         <div className="row-text">
           <div className="row-title has-key">
-            <span className="row-remote">
-              <RemoteIcon size={13} />
-            </span>
-            <span className="row-name">{pane.title}</span>
-            {/* One box, for the reason a local card has one - see `.row-tags`. */}
+            {/* One box, for the reason a local card has one - see `.row-tags`. First, so it
+                floats right of the name's first line. */}
             <span className="row-tags">
               {pane.asking ? (
                 <span
@@ -5086,8 +5264,24 @@ export default function App(): JSX.Element {
               ) : null}
               {/* That desk's own number, forwarded. No press: this window does not own the
                   pty and cannot call the close off. */}
-              {row.closingAt ? <CloseClock at={row.closingAt} kept={row.closeKept} /> : null}
+              {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
             </span>
+            {/* The same number a local card wears, so Ctrl+N reaches it too (`listedByNumber`). */}
+            {row.number > 0 && (
+              <span className="num-wrap">
+                <span
+                  className={'num' + (pane.status === 'working' ? ' live' : '') + (row.number > 9 ? ' far' : '')}
+                  title={row.number <= 9 ? keyLabel(`Ctrl ${row.number}`) : `Pane ${row.number}`}
+                >
+                  {row.number}
+                </span>
+              </span>
+            )}
+            <span className="row-remote">
+              <RemoteIcon size={13} />
+            </span>
+            <wbr />
+            <span className="row-name">{pane.title}</span>
           </div>
           <div className="row-sub">
             <AgentLogo id={pane.agent} spec={agent} size={12} />
@@ -5102,6 +5296,17 @@ export default function App(): JSX.Element {
             )}
           </div>
         </div>
+        <button
+          className="x"
+          title={`Close this pane on ${device.name}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            void api.killSession(remoteId, 'user')
+          }}
+        >
+          x
+        </button>
       </div>
     )
   }
@@ -5142,7 +5347,7 @@ export default function App(): JSX.Element {
               }
               onPointerDown={(e) => {
                 const pick = (): void => {
-                  touchPane(s.id, e.button !== 2)
+                  touchPane(s.id, e.button !== 2, 'pointer')
                   setActiveId(s.id)
                   handheld.showPane()
                 }
@@ -5174,20 +5379,7 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
-              {selectKeepOpen && <input
-                className="keep-open-check"
-                type="checkbox"
-                aria-label={`Keep ${s.title} open`}
-                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open and its agent running until unchecked. Only a machine short of memory sleeps it.'}
-                disabled={savingPins}
-                checked={s.remote ? Boolean(s.keepOpen) : Boolean(pinned[s.id])}
-                onChange={() => togglePin(s.id)}
-                onClick={e => e.stopPropagation()}
-                onPointerDown={e => e.stopPropagation()}
-                onDoubleClick={e => e.stopPropagation()}
-                onContextMenu={e => e.stopPropagation()}
-              />}
-              <StatusDot status={s.status} engaged={s.engaged} />
+              <StatusDot status={s.status} engaged={s.engaged} finished={s.finished && !s.ask} />
               <div className="row-text">
                 {renaming === s.id ? (
                   <input
@@ -5217,6 +5409,176 @@ export default function App(): JSX.Element {
                   />
                 ) : (
                   <div className="row-title has-key">
+                    {/* FIRST in the line, floated right (2026-09-25): the name then flows
+                        from the key across the whole card width and wraps under the key
+                        rather than in a narrow column beside it. */}
+                    {/* The clock lives up HERE, at the far end of the name, because this
+                        line has spare room and the line below it has none: a lane card's
+                        sub-line wanted 214px of the 190px it has, and every arrangement
+                        that fits five facts into 190px destroys one of them. The title
+                        line holds a key, a name and nothing else, and a right-aligned
+                        clock is where every mail client has put one for thirty years.
+                        Counts only while the agent is working: a clock that ran from
+                        launch ticked through an idle night and read as "still busy". */}
+                    {/* A question on screen is the one quiet pane that is quiet because it
+                        is owed something, and every "is it idle" reading in the app says
+                        yes about it - so it looked exactly like a pane that finished. The
+                        card glows red (`asking` below) and this is the word that glow is
+                        allowed to have: the ring on its own is what made the old blue lane
+                        glow "confusing", so the colour never travels without a word and a
+                        hover carrying the question itself.
+
+                        On the TITLE line, not the sub-line: the sub-line already wanted
+                        214px of 190px on a lane card (card-fit-test.mjs) and this line has
+                        room to spare. */}
+                    {/* Plain words, not a box, at the far end of the title line: one state
+                        per card, and a running turn's word IS its clock. What the last turn
+                        took and whether it wrote anything are on the hover (Robert
+                        2026-09-23: too much info). */}
+                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
+                      <span
+                        className={'row-state ' + s.status}
+                        title={[
+                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
+                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
+                        ].filter(Boolean).join('\n') || undefined}
+                      >
+                        {s.status === 'working' && s.runSince ? (
+                          <Elapsed since={s.runSince} title="This turn" />
+                        ) : s.status === 'idle'
+                          ? (s.engaged === false ? 'ready' : s.finished ? 'done' : 'waiting')
+                          : s.status === 'working' ? 'running' : s.status}
+                      </span>
+                    )}
+                    {/* Everything the title line says about STATE, in one box.
+                        They were separate flex items each taking `margin-left: auto`, so a
+                        line that wrapped stranded the clock alone at the far right with
+                        135px of nothing to its left (measured 2026-08-29, card-fit-test:
+                        `kept open` ending at 163px and the clock at 135-190 on a second
+                        row). One box wraps whole, keeps its chips together, and is the
+                        only thing on the line that may be pushed to the right. */}
+                    <span className="row-tags">
+                      {/* The dot gives the state its quickest possible scan, but it cannot
+                          be the only reading. Keep the word beside the actual timers so a
+                          green dot never has to be decoded from memory. A question already
+                          has its stronger, more specific "asks you" state below. */}
+                      {s.ask && (
+                        <span
+                          className="chip asks"
+                          title={
+                            `${s.ask.question}\n\n` +
+                            s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
+                            (s.autoAnswerAt
+                              ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
+                              : s.autoAnswerHeld
+                                ? '\n\nThis would be answered for you, and nothing is pressed while you are looking at this window. Look away and the wait starts. Settings -> Answer an agent’s question for me.'
+                                : '\n\nNothing runs until this is answered. Open the pane and press one.')
+                          }
+                        >
+                          asks you
+                          {/* ...and, when it is about to be answered for you, how long is
+                              left - INSIDE this box rather than in a second one beside it.
+                              "asks you" and the seconds are one fact a step apart, and two
+                              red boxes on a 190px title line read as two readings. */}
+                          {s.autoAnswerAt ? (
+                            <AskClock at={s.autoAnswerAt} />
+                          ) : s.autoAnswerHeld ? (
+                            // A held question has no deadline to draw - `refreshAutoPlan`
+                            // writes `autoAnswerAt = 0` while the desk has focus, and
+                            // leaving the window starts the whole wait again - so a number
+                            // here would be a second that never arrives. But the card is
+                            // only ever LOOKED at from this window, which is exactly when
+                            // the hold is on, so "asks you" with an empty box beside it was
+                            // the only state Robert ever saw and it read as a broken timer.
+                            // The word goes in the same box the seconds use, not in a
+                            // second chip: two red boxes on the title line are two readings.
+                            <span className="asks-in">hold</span>
+                          ) : null}
+                        </span>
+                      )}
+                      {/* ...and when this pane is on its way OUT rather than waiting for
+                          anybody: how long is left, and the press that stops it. Never
+                          beside a question or a move - a pane holding either is refused by
+                          `idleCloseAt` outright, so the three can never be true at once. */}
+                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.doneClosingAt ?? alarmAt(s.id) ?? s.closingAt) ? (
+                        // While the 15s countdown card is up, the CHIP shows that card's
+                        // deadline and not the idle clock's. They are two readings of one
+                        // decision and they disagreed on screen - the card counted down
+                        // while the chip sat at `closes 0:01` (reported 2026-08-28). The
+                        // armed countdown is the one that is about to act, so it wins.
+                        <CloseClock
+                          at={s.doneClosingAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
+                          // A countdown card naming this pane may be a plan to SLEEP it,
+                          // and the chip says which.
+                          sleep={alarmSleeps(s.id)}
+                          onKeep={() => keepOpen([s.id])}
+                        />
+                      ) : null}
+                      {/* A pane on its way out says so, and says it here for the same reason
+                          the chip above is here: the sub-line has no room and this is
+                          transient - it takes the clock's place for the few seconds a move
+                          lasts, or for as long as a queued pane's turn runs. It cannot appear
+                          beside "asks you": a pane holding a question is never moved. */}
+                      {/* Queued agent copies keep their normal status; cancellation is
+                          available from the session menu without a persistent header tag. */}
+                      {s.handingOff && (!s.handoffQueuedAt || s.agent === 'shell') ? (
+                        s.handoffQueuedAt ? (
+                          // Waiting for its own turn to end, which is as long as the agent
+                          // takes. Drawn as a clock rather than as the word `moving`: a
+                          // ten-minute build under a chip that says moving reads as a broken
+                          // handoff, which is exactly how three of these were reported.
+                          // The word on it is `moves when done`, not `waiting`: on its
+                          // own `waiting` named nothing it was waiting FOR and read as a
+                          // stuck pane (Robert, 2026-09-04, on a card that had said it
+                          // for seven minutes).
+                          // ...and it is the control that undoes it. The wait is minutes
+                          // long by construction, so the chip that reports it is the one
+                          // place somebody is already looking when they change their mind.
+                          <button
+                            type="button"
+                            className="chip handoff-queued"
+                            title="Waiting for this turn to end. Press to keep it here."
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              stopMove(s)
+                            }}
+                          >
+                            moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" />
+                          </button>
+                        ) : (
+                          // Which half is running and for how long: a move is a repo push
+                          // and then a link transfer, and either can be the slow one. The
+                          // steps are in handoff.log under the app's data folder.
+                          <span
+                            className="chip"
+                            title="Preparing handoff to a paired device. Agent originals stay open until resume can be confirmed. Each step is in handoff.log."
+                          >
+                            {s.handoffStage ?? 'moving'}
+                            {s.handoffSince ? (
+                              <>
+                                {' '}
+                                <Elapsed since={s.handoffSince} title="Moving for" />
+                              </>
+                            ) : null}
+                          </span>
+                        )
+                      ) : s.asleep ? (
+                        // Before the exited chip, and a BUTTON: a sleeping pane wears
+                        // `status: 'exited'` (see `Session.asleep`), and the one thing
+                        // anybody wants to do to it is the press that gives it back.
+                        <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
+                      ) : s.status === 'exited' ? (
+                        <ExitedChip s={s} />
+                      ) : null}
+                      {/* What the pane is still RUNNING with its turn over. This is the one
+                          card state Robert reported as a lie: an agent that started work in
+                          the background goes quiet, the clock stops, and the card reads
+                          finished while a build or a tail is going. It sits on the clock's
+                          own line rather than in `.row-sub`, which is already three chips
+                          deep at 190px (see the notes there) - and it is drawn only when
+                          there IS something, which on an ordinary card is never.
+                          Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
+                    </span>
                     {/* The switch key, and the fastest place to read the pane's state:
                         lit green while its agent is running, amber when a turn finished
                         while you were looking somewhere else. */}
@@ -5272,204 +5634,35 @@ export default function App(): JSX.Element {
                     {/* The whole place, on the name, so hiding the chip below (when it
                         would only repeat this name) loses no fact - the folder, the
                         branch and the pane number are all still one hover away. */}
+                    {/* A break point between the key and the name: with none, a first line the
+                        floated chips had nearly filled split the name's first WORD to fit. */}
+                    <wbr />
                     <span
                       className="row-name"
                       title={describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber }).full}
                     >
                       {s.title}
                     </span>
-                    {/* The clock lives up HERE, at the far end of the name, because this
-                        line has spare room and the line below it has none: a lane card's
-                        sub-line wanted 214px of the 190px it has, and every arrangement
-                        that fits five facts into 190px destroys one of them. The title
-                        line holds a key, a name and nothing else, and a right-aligned
-                        clock is where every mail client has put one for thirty years.
-                        Counts only while the agent is working: a clock that ran from
-                        launch ticked through an idle night and read as "still busy". */}
-                    {/* A question on screen is the one quiet pane that is quiet because it
-                        is owed something, and every "is it idle" reading in the app says
-                        yes about it - so it looked exactly like a pane that finished. The
-                        card glows red (`asking` below) and this is the word that glow is
-                        allowed to have: the ring on its own is what made the old blue lane
-                        glow "confusing", so the colour never travels without a word and a
-                        hover carrying the question itself.
-
-                        On the TITLE line, not the sub-line: the sub-line already wanted
-                        214px of 190px on a lane card (card-fit-test.mjs) and this line has
-                        room to spare. */}
-                    {/* Everything the title line says about STATE, in one box.
-                        They were separate flex items each taking `margin-left: auto`, so a
-                        line that wrapped stranded the clock alone at the far right with
-                        135px of nothing to its left (measured 2026-08-29, card-fit-test:
-                        `kept open` ending at 163px and the clock at 135-190 on a second
-                        row). One box wraps whole, keeps its chips together, and is the
-                        only thing on the line that may be pushed to the right. */}
-                    <span className="row-tags">
-                      {/* The dot gives the state its quickest possible scan, but it cannot
-                          be the only reading. Keep the word beside the actual timers so a
-                          green dot never has to be decoded from memory. A question already
-                          has its stronger, more specific "asks you" state below. */}
-                      {s.ask && (
-                        <span
-                          className="chip asks"
-                          title={
-                            `${s.ask.question}\n\n` +
-                            s.ask.options.map((o, i) => `${i + 1}. ${o.label}`).join('\n') +
-                            (s.autoAnswerAt
-                              ? '\n\nThis is about to be answered for you. Press an answer, or arrow at the pane, to cancel it. Settings -> Answer an agent’s question for me.'
-                              : s.autoAnswerHeld
-                                ? '\n\nThis would be answered for you, and nothing is pressed while you are looking at this window. Look away and the wait starts. Settings -> Answer an agent’s question for me.'
-                                : '\n\nNothing runs until this is answered. Open the pane and press one.')
-                          }
-                        >
-                          asks you
-                          {/* ...and, when it is about to be answered for you, how long is
-                              left - INSIDE this box rather than in a second one beside it.
-                              "asks you" and the seconds are one fact a step apart, and two
-                              red boxes on a 190px title line read as two readings. */}
-                          {s.autoAnswerAt ? (
-                            <AskClock at={s.autoAnswerAt} />
-                          ) : s.autoAnswerHeld ? (
-                            // A held question has no deadline to draw - `refreshAutoPlan`
-                            // writes `autoAnswerAt = 0` while the desk has focus, and
-                            // leaving the window starts the whole wait again - so a number
-                            // here would be a second that never arrives. But the card is
-                            // only ever LOOKED at from this window, which is exactly when
-                            // the hold is on, so "asks you" with an empty box beside it was
-                            // the only state Robert ever saw and it read as a broken timer.
-                            // The word goes in the same box the seconds use, not in a
-                            // second chip: two red boxes on the title line are two readings.
-                            <span className="asks-in">hold</span>
-                          ) : null}
-                        </span>
-                      )}
-                      {/* ...and when this pane is on its way OUT rather than waiting for
-                          anybody: how long is left, and the press that stops it. Never
-                          beside a question or a move - a pane holding either is refused by
-                          `idleCloseAt` outright, so the three can never be true at once. */}
-                      {alarmAt(s.id) ?? s.closingAt ? (
-                        // While the 15s countdown card is up, the CHIP shows that card's
-                        // deadline and not the idle clock's. They are two readings of one
-                        // decision and they disagreed on screen - the card counted down
-                        // while the chip sat at `closes 0:01` (reported 2026-08-28). The
-                        // armed countdown is the one that is about to act, so it wins.
-                        <CloseClock
-                          at={alarmAt(s.id) ?? (s.closingAt as number)}
-                          // A countdown card naming this pane is a live plan to close it,
-                          // whatever hold the publish had on it a moment ago.
-                          kept={alarmAt(s.id) === undefined && s.closeKept}
-                          // ...or to SLEEP it, and the chip says which.
-                          sleep={alarmSleeps(s.id)}
-                          onKeep={() => keepOpen([s.id])}
-                        />
-                      ) : (s.remote ? s.keepOpen : pinned[s.id]) ? (
-                        // A switch with no reading is a switch nobody can tell they pressed:
-                        // pinning a pane removes the only thing on the card that was about
-                        // the idle clock, so it takes that place rather than leaving a gap.
-                        // A pin, not a `kept open` box: the word cost a whole chip on
-                        // every kept card for a fact that never changes while you look.
-                        <button
-                          type="button"
-                          className="row-kept"
-                          aria-label={keptWords(Boolean(s.asleep))}
-                          title={
-                            `${keptWords(Boolean(s.asleep))}: ` +
-                            (s.asleep
-                              ? 'this pane is never closed for being idle - its card stays even while it sleeps.'
-                              : 'this pane is never closed for being idle.') +
-                            ' Press to put it back on the clock.'
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            togglePin(s.id)
-                          }}
-                        >
-                          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-                            <path d="M6 2h4l-.6 4.2L12 8.6V10H8.7v4L8 15l-.7-1v-4H4V8.6l2.6-2.4z" fill="currentColor" />
-                          </svg>
-                        </button>
-                      ) : null}
-                      {/* A pane on its way out says so, and says it here for the same reason
-                          the chip above is here: the sub-line has no room and this is
-                          transient - it takes the clock's place for the few seconds a move
-                          lasts, or for as long as a queued pane's turn runs. It cannot appear
-                          beside "asks you": a pane holding a question is never moved. */}
-                      {s.handingOff ? (
-                        s.handoffQueuedAt ? (
-                          // Waiting for its own turn to end, which is as long as the agent
-                          // takes. Drawn as a clock rather than as the word `moving`: a
-                          // ten-minute build under a chip that says moving reads as a broken
-                          // handoff, which is exactly how three of these were reported.
-                          // The word on it is `moves when done`, not `waiting`: on its
-                          // own `waiting` named nothing it was waiting FOR and read as a
-                          // stuck pane (Robert, 2026-09-04, on a card that had said it
-                          // for seven minutes).
-                          // ...and it is the control that undoes it. The wait is minutes
-                          // long by construction, so the chip that reports it is the one
-                          // place somebody is already looking when they change their mind.
-                          <button
-                            type="button"
-                            className="chip handoff-queued"
-                            title={s.agent !== 'shell' ? 'Opens a copy on the paired device after this turn. Press to cancel.' : 'Waiting for this turn to end. Press to keep it here.'}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              stopMove(s)
-                            }}
-                          >
-                            {s.agent !== 'shell' ? (
-                              <>copy opens when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            ) : (
-                              <>moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            )}
-                          </button>
-                        ) : (
-                          // Which half is running and for how long: a move is a repo push
-                          // and then a link transfer, and either can be the slow one. The
-                          // steps are in handoff.log under the app's data folder.
-                          <span
-                            className="chip"
-                            title="Preparing handoff to a paired device. Agent originals stay open until resume can be confirmed. Each step is in handoff.log."
-                          >
-                            {s.handoffStage ?? 'moving'}
-                            {s.handoffSince ? (
-                              <>
-                                {' '}
-                                <Elapsed since={s.handoffSince} title="Moving for" />
-                              </>
-                            ) : null}
-                          </span>
-                        )
-                      ) : s.asleep ? (
-                        // Before the exited chip, and a BUTTON: a sleeping pane wears
-                        // `status: 'exited'` (see `Session.asleep`), and the one thing
-                        // anybody wants to do to it is the press that gives it back.
-                        <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
-                      ) : s.status === 'exited' ? (
-                        <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                      ) : null}
-                      {/* What the pane is still RUNNING with its turn over. This is the one
-                          card state Robert reported as a lie: an agent that started work in
-                          the background goes quiet, the clock stops, and the card reads
-                          finished while a build or a tail is going. It sits on the clock's
-                          own line rather than in `.row-sub`, which is already three chips
-                          deep at 190px (see the notes there) - and it is drawn only when
-                          there IS something, which on an ordinary card is never.
-                          Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
-                    </span>
                   </div>
                 )}
-                {/* One muted sentence: which model, how long open, what is left running.
-                    Plain text parted by dots rather than a row of boxes (Robert
-                    2026-09-23: "too cluttered ... not modern"). The agent's NAME is the
-                    logo's hover now - the logo already says it. */}
+                {/* Line two: WHICH PROJECT, always, and which copy of it. The name above
+                    is whatever the pane was called or renamed to, so it cannot carry the
+                    project (Robert 2026-09-23: "what happens if session renamed then i
+                    dont know what project im in"). */}
+                <div className="row-place">
+                  <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
+                  <SessionCopies session={s} boards={laneBoards} />
+                </div>
+                {/* Line three, one muted sentence: which model, how long open, steps left,
+                    what is left running. Plain text parted by dots (Robert 2026-09-23:
+                    "too cluttered ... not modern"). */}
                 <div className="row-sub">
                   {(() => {
                     const spec = agents.find((a) => a.id === s.agent)
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        <AgentLogo id={s.agent} spec={spec} size={12} />
-                        {model || (spec?.label ?? s.agent)}
+                        {s.agent === 'codex' ? 'Lead: ' : ''}{model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
                     )
@@ -5508,30 +5701,21 @@ export default function App(): JSX.Element {
                           </span>
                         )
                       })()}
-                    {/* Plain words, not a box, at the far end of the second line: one state
-                        per card, and a running turn's word IS its clock. What the last turn
-                        took and whether it wrote anything are on the hover (Robert
-                        2026-09-23: too much info). */}
-                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
-                      <span
-                        className={'row-state ' + s.status}
-                        title={[
-                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
-                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
-                        ].filter(Boolean).join('\n') || undefined}
-                      >
-                        {s.status === 'working' && s.runSince ? (
-                          <Elapsed since={s.runSince} title="This turn" />
-                        ) : s.status === 'idle'
-                          ? (s.engaged !== false ? 'waiting' : 'ready')
-                          : s.status === 'working' ? 'running' : s.status}
-                      </span>
-                    )}
                 </div>
+                <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
+                <label className="session-keep-open" title="Keep open until you close it"
+                  onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+                  <input type="checkbox" className="keep-checkbox"
+                    aria-label={`Keep ${s.title} open`}
+                    checked={Boolean(s.remote ? s.keepOpen : pinned[s.id])}
+                    disabled={savingPins}
+                    onChange={() => togglePin(s.id)} />
+                  <span>Keep open</span>
+                </label>
               </div>
               {s.status === 'exited' && (
                 <button
-                  className="x"
+                  className="x row-restart"
                   title="Restart"
                   aria-label="Restart agent"
                   // Same reason as the close button below: the ROW's `onPointerDown` picks
@@ -5546,7 +5730,7 @@ export default function App(): JSX.Element {
                 </button>
               )}
               <button
-                className="x"
+                className="x row-close"
                 title={keyLabel('Close session (Ctrl W)')}
                 // The row picks - and WAKES - the session on `onPointerDown`, which fires
                 // before this button's click, so closing a sleeping session from the
@@ -5610,7 +5794,12 @@ export default function App(): JSX.Element {
         </button>
 
         {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
-        <div className="quick">
+        {/* Two even rows of icons rather than one strip of slivers: at eight buttons one row
+            measured ~26px wide by 36px tall each. Columns = half the buttons, rounded up. */}
+        <div
+          className="quick"
+          style={{ '--quick-cols': Math.ceil((5 + (screenBtn?.ok ? 1 : 0) + (ownerAccess ? 2 : 0)) / 2) } as React.CSSProperties}
+        >
           <button
             className="ghost quick-btn"
             aria-label="Review"
@@ -5625,7 +5814,8 @@ export default function App(): JSX.Element {
               className="ghost quick-btn"
               aria-label="See the other machine's screen"
               title={screenBtn.title}
-              onClick={() => api.openScreen()}
+              disabled={screenBtn.disabled}
+              onClick={() => void openScreenPane()}
             >
               <ScreenIcon />
             </button>
@@ -5736,28 +5926,21 @@ export default function App(): JSX.Element {
             chips on the session cards below. Renders nothing without a lane-using repo. */}
         <LaneStrip boards={laneBoards} sessions={sessions} onFocus={setActiveId} />
 
-        <div className="section">
+        <div className="section sessions-section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
-            {selectKeepOpen && <input
-              className="keep-open-check"
-              type="checkbox"
-              aria-label="Keep all sessions on this device open"
-              title="Keep all sessions on this device open until unchecked"
-              disabled={savingPins || !sessions.some(s => !s.remote)}
-              checked={sessions.some(s => !s.remote) && sessions.filter(s => !s.remote).every(s => Boolean(pinned[s.id]))}
-              ref={el => {
-                const local = sessions.filter(s => !s.remote)
-                if (el) el.indeterminate = local.some(s => pinned[s.id]) && !local.every(s => pinned[s.id])
-              }}
-              onChange={e => { void savePins(sessions.filter(s => !s.remote).map(s => s.id), e.target.checked) }}
-              onClick={e => e.stopPropagation()}
-            />}
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
           </span>
           {/* Badges and the empty-everything button travel together, hard right. One
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
+          <label className="keep-all" title="Select all sessions to keep open, including sessions hidden by the filter">
+            <input type="checkbox" className="keep-checkbox" aria-label="Keep all sessions open" disabled={savingPins || !sessions.length}
+              ref={el => { if (el) el.indeterminate = sessions.some(s => s.remote ? s.keepOpen : pinned[s.id]) && !sessions.every(s => s.remote ? s.keepOpen : pinned[s.id]) }}
+              checked={sessions.length > 0 && sessions.every(s => s.remote ? s.keepOpen : pinned[s.id])}
+              onChange={e => void savePins(sessions.map(s => s.id), e.target.checked)} />
+            <span>Keep all open</span>
+          </label>
           <span className="section-tail">
             {/* The desk's total, beside the pane count it belongs to: panes plus the app
                 itself, which is the figure that answers "what would quitting give me
@@ -5810,7 +5993,7 @@ export default function App(): JSX.Element {
             )}
           </span>
         </div>
-        {(deviceChoices.length > 0 || selectKeepOpen) && (
+        {deviceChoices.length > 0 && (
           <label className="device-filter">
             <span>Show</span>
             <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
@@ -5850,22 +6033,11 @@ export default function App(): JSX.Element {
               onStart={() => setPicking(true)}
               onSearch={() => setPalette(true)}
               onTools={() => setToolsOpen(true)}
+              onLaunch={(req) => start([req])}
             />
           )}
         </div>
 
-        <button
-          className={'ghost small keep-open-toggle' + (selectKeepOpen ? ' active' : '')}
-          aria-pressed={selectKeepOpen}
-          onClick={() => {
-            setSelectKeepOpen(value => !value)
-            if (!selectKeepOpen) setDeviceFilter('all')
-          }}
-          title="Choose sessions to keep open; checked sessions stay protected when these boxes are hidden"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
-          <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
-        </button>
         <div className="foot">
           <Segmented
             value={grid ? 'grid' : 'single'}
@@ -6066,7 +6238,7 @@ export default function App(): JSX.Element {
               } as React.CSSProperties
             }
             onMouseDown={(e) => {
-              touchPane(s.id, e.button !== 2)
+              touchPane(s.id, e.button !== 2, 'pointer')
               setActiveId(s.id)
             }}
           >
@@ -6074,7 +6246,50 @@ export default function App(): JSX.Element {
               className={'pane-title' + (tiled ? ' draggable' : '')}
               onPointerDown={(e) => beginPaneMove(e, s.id)}
             >
-              <StatusDot status={s.status} engaged={s.engaged} />
+              {s.screen ? (
+                // Another machine's screen: no agent, no process, no transcript - so none
+                // of the terminal's chips. Name, how long it has been open, Focus, close.
+                <>
+                  <span className="pt-screen-icon" aria-hidden="true"><ScreenIcon /></span>
+                  <span className="pt-name">{s.title}</span>
+                  {!handheld.handheld && (
+                    <span className="session-clock pt-open">open <Elapsed
+                      since={s.openedAt ?? s.createdAt}
+                      className="elapsed done"
+                      title={`Opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}.`}
+                    /></span>
+                  )}
+                  <span className="pt-actions">
+                    {grid && (
+                      <button
+                        className="icon pt-focus"
+                        aria-label={zoomId === s.id ? 'Back to the grid' : `Fill the window with ${s.title}`}
+                        title={zoomId === s.id ? 'Back to the grid' : 'Fill the window with this screen'}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleZoom(s.id)
+                        }}
+                      >
+                        {zoomId === s.id ? '⤡' : '⤢'}
+                      </button>
+                    )}
+                    <button
+                      className="icon pt-close"
+                      title={keyLabel('Close (Ctrl W)')}
+                      aria-label={`Close ${s.title}`}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        close(s.id)
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                </>
+              ) : (<>
+              <StatusDot status={s.status} engaged={s.engaged} finished={s.finished && !s.ask} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name">
                 {s.title}
@@ -6204,10 +6419,21 @@ export default function App(): JSX.Element {
                   title={`Session opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}; includes idle time.`}
                 /></span>
               )}
+              {/* Steps a fresh session could start on, beside the open clock: the card
+                  carries it too, but the pane you are in is where "is there more to do
+                  here" gets asked. */}
+              {!handheld.handheld && s.handoffOpen ? (
+                <span
+                  className="session-clock pt-steps"
+                  title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on.`}
+                >
+                  {stepsWord(s.handoffOpen)}
+                </span>
+              ) : null}
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
-                <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                <ExitedChip s={s} />
               ) : s.runSince ? (
                 <span className="session-clock pt-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
               ) : s.lastRunMs !== undefined ? (
@@ -6460,7 +6686,17 @@ export default function App(): JSX.Element {
                   ×
                 </button>
               </span>
+              </>)}
             </div>
+            <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
+            {s.screen ? (
+              <ScreenPane
+                session={s}
+                visible={visibleIds.has(s.id)}
+                control={screenBtn?.control ?? null}
+                flash={flash}
+              />
+            ) : (
             <TerminalPane
               sessionId={s.id}
               cwd={s.cwd}
@@ -6517,6 +6753,7 @@ export default function App(): JSX.Element {
               booting={!s.printed && !s.asleep && s.status !== 'exited'}
               asleep={Boolean(s.asleep)}
             />
+            )}
             {/* The mic used to float over the bottom-LEFT of the pane. It is gone from the
                 terminal on purpose (Robert 2026-09-05: "remove the mic icon in the
                 terminal"): it sat directly ON the CLI's own prompt box - Codex draws its
@@ -6584,33 +6821,6 @@ export default function App(): JSX.Element {
         )}
       </main>
 
-      {/* The split: the chat keeps the left half of the pane column, the far machine's
-          browser takes the right. Not an overlay - `html.login-open` pads `.panes` out of
-          the way - because a picture drawn ON TOP of the pane you are talking to is the
-          thing this feature exists to avoid. */}
-      {loginOpen &&
-        (() => {
-          const req = logins.find((r) => r.id === loginOpen)
-          if (!req) return null
-          return (
-            <RemoteLoginView
-              req={req}
-              onToast={flash}
-              onDone={() => {
-                // Done is not Close: main tells the pane that asked - on this desk or the
-                // other one - that the wall is down, and closes the view itself.
-                api.doneLogin(req.id)
-                setLoginOpen(null)
-                flash(`Signed in on ${req.machine}. The job can carry on.`)
-              }}
-              onClose={() => {
-                api.closeLogin(req.id)
-                setLoginOpen(null)
-              }}
-            />
-          )
-        })()}
-
       {note && <div className="toast">{note}</div>}
 
       {picking && config && (
@@ -6650,6 +6860,7 @@ export default function App(): JSX.Element {
         <SplitDialog
           projects={projects}
           cwd={sessions.find((x) => x.id === activeId)?.cwd}
+          initial={splitInitial}
           onLaunch={(reqs) => {
             setSplitting(false)
             if (!reqs.length) return
@@ -6721,7 +6932,11 @@ export default function App(): JSX.Element {
       )}
       {history && (
         <HistoryDialog
+          // Keyed on the words so a search handed over while History is already open
+          // starts over with them, rather than being ignored by a box that already has text.
+          key={historyQuery}
           agents={agents}
+          initialQuery={historyQuery}
           onResume={(e: HistoryEntry) => {
             setHistory(false)
             // With the id, not just `resume: true`: without one the CLI resumes the newest
@@ -6737,6 +6952,9 @@ export default function App(): JSX.Element {
         <ReviewDialog
           onHistory={() => { setReview(false); setHistory(true) }}
           onReopen={(r) => {
+            // A report copied from the other machine: its conversation lives over there, and
+            // resuming its id here would open a chat this desk has no transcript for.
+            if (r.origin) return
             setReview(false)
             start([{ cwd: r.cwd, title: r.title.replace(/ \(closed session\)$/, ''), agent: r.provider as Agent, resume: true, resumeId: r.nativeSessionId, where: 'local' }])
           }}
@@ -7055,10 +7273,10 @@ export default function App(): JSX.Element {
               {
                 key: 'pin',
                 disabled: savingPins,
-                label: (s.remote ? s.keepOpen : pinned[s.id]) ? 'Let it close when idle' : 'Keep this pane open',
+                label: (s.remote ? s.keepOpen : pinned[s.id]) ? 'Let it close by itself' : 'Keep this pane open',
                 hint: (s.remote ? s.keepOpen : pinned[s.id])
-                  ? 'the idle clocks may sleep or close it again'
-                  : 'no idle clock sleeps or closes it - only a machine short of memory does'
+                  ? 'it may close into Review again once it is finished or idle'
+                  : 'it stays until you close it, even after it finishes - a machine short of memory may only put it to sleep'
                 ,
                 run: () => togglePin(s.id)
               },
@@ -7116,7 +7334,7 @@ export default function App(): JSX.Element {
                       key: 'wake',
                       label: 'Wake this pane',
                       hint: 'start its agent again, in the same conversation',
-                      run: () => void api.wakeSession(s.id)
+                      run: () => void api.wakeSession(s.id, 'menu')
                     }
                   ]
                 : []),
@@ -7309,7 +7527,9 @@ export default function App(): JSX.Element {
           onKeys={(keys) => patchConfig({ keys })}
         />
       )}
-      {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      {palette && (
+        <CommandPalette commands={commands} chats={chats} onSearchAll={searchAll} onClose={() => setPalette(false)} />
+      )}
       {/* A device asking to pair arrives while somebody is at the OTHER machine, so this
           is here rather than inside the Devices dialog - that dialog is almost never the
           thing on screen when the request lands. */}
@@ -7349,7 +7569,7 @@ export default function App(): JSX.Element {
         }
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
-          for (const id of ids) void api.killSession(id)
+          for (const id of ids) void api.killSession(id, 'user')
         }}
         onHandoff={(ids) => {
           // It never picks WHICH machine - that is the one question the hand-off box
@@ -7385,6 +7605,13 @@ export default function App(): JSX.Element {
           hand already is. Order is urgency - a countdown that is about to take something
           away sits nearest the corner, a tip sits furthest from it. */}
       <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
+      {sessions.filter(s => s.doneClosingAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
+        <div className="autoclear-card" role="status" key={`review-${s.id}`}>
+          <span>{s.title} will move to Review. Reopen it there to continue.</span>
+          <CloseClock at={s.doneClosingAt!} onKeep={() => keepOpen([s.id])} />
+          <button className="autoclear-keep" onClick={() => keepOpen([s.id])}>Keep open</button>
+        </div>
+      ))}
       <AutoClearToast
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
@@ -7404,29 +7631,14 @@ export default function App(): JSX.Element {
           setStopSoon(null)
         }}
       />
-      {/* A person has to type a password on another computer before a job can go on.
-          It sits with the countdowns because it is the same kind of thing - something
-          is waiting on the hand - and it is dismissable for as long as it is drawn. */}
-      <LoginCard
-        reqs={logins}
-        onOpen={(id) => {
-          setLoginOpen(id)
-          void api.openLogin(id).then((r) => {
-            if (!r.ok && r.error) flash(r.error)
-          })
-        }}
-        onDismiss={(id) => {
-          api.dismissLogin(id)
-          if (loginOpen === id) setLoginOpen(null)
-        }}
-      />
       <MoveSoon
         soons={[...closeSoons, ...queueSoons]}
         onKeep={moveSoonKeep}
-        onNow={moveSoonNow}
       />
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />
+      {/* A Claude Code pane's first ask read lighter or harder than its model/effort. */}
+      <ModelAdvice sessions={sessions} agents={agents} />
       <QuitGuard />
       <UpdateToast />
       <WhatsNewCard />
@@ -7453,7 +7665,7 @@ export default function App(): JSX.Element {
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')
           const t1 = Date.now()
-          await api.wakeSession(pane.id)
+          await api.wakeSession(pane.id, 'tour')
           say(`Awake in ${sayMs(Date.now() - t1)}.`)
         }}
         // A pane step is only shown once a pane is really RUNNING. The card can see a
@@ -7524,7 +7736,7 @@ export default function App(): JSX.Element {
           // for this pane and nobody should have to answer a question to be rid of it.
           const id = tourPaneId.current
           tourPaneId.current = null
-          if (id) void api.killSession(id)
+          if (id) void api.killSession(id, 'user')
           // ...and its example chats, for the same reason: nobody asked for them.
           void api.tourSample(false)
         }}

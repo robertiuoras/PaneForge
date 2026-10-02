@@ -58,6 +58,7 @@ export default function NewSessionDialog({
   const [resume, setResume] = useState(false)
   const [agent, setAgent] = useState<Agent>(defaultAgent)
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
+  const [modelSelected, setModelSelected] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [promptCopied, setPromptCopied] = useState(false)
   // Which machine. Offered only while a paired one is online; `auto` leaves it to the
@@ -85,9 +86,38 @@ export default function NewSessionDialog({
   // Only ever shown when the list is empty, to say WHICH folder came up empty.
   const [root, setRoot] = useState('')
   const [startingFolders, setStartingFolders] = useState<Project[]>([])
+  const [archivedClients, setArchivedClients] = useState<Project[]>([])
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [archiveBusy, setArchiveBusy] = useState(false)
+  const [archiveError, setArchiveError] = useState('')
   const projects = useMemo(() => [...startingFolders, ...projectRows.filter((p) =>
     !startingFolders.some((folder) => folder.path === p.path))], [startingFolders, projectRows])
   useEffect(() => { void api.listSessionFolders().then(setStartingFolders) }, [root])
+  useEffect(() => {
+    void api.listArchivedClients().then(setArchivedClients).catch((error) => setArchiveError(String(error)))
+  }, [root, projectRows])
+
+  const archiveClient = async (path: string, archived: boolean): Promise<void> => {
+    if (archiveBusy) return
+    setArchiveBusy(true)
+    setArchiveError('')
+    try {
+      await api.setClientArchived(path, archived)
+      setArchivedClients(await api.listArchivedClients())
+      setTicked((paths) => paths.filter((p) => p !== path))
+      setManual(true)
+      if (routedRef.current === path) {
+        routedRef.current = null
+        setRouted(null)
+      }
+      setSel(0)
+      onProjectsChanged()
+    } catch (error) {
+      setArchiveError(String(error))
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
 
   useEffect(() => input.current?.focus(), [])
   useEffect(() => void api.getConfig().then((c) => setRoot(c.root)), [])
@@ -227,7 +257,7 @@ export default function NewSessionDialog({
   const chosen = (p?: Project): StartSessionRequest[] => {
     const paths = ticked.length ? ticked : p ? [p.path] : shown[sel] ? [shown[sel].path] : []
     return paths.map((path) => {
-      const proj = projects.find((x) => x.path === path)
+      const proj = projects.find((x) => x.path === path) ?? archivedClients.find((x) => x.path === path)
       return {
         cwd: path,
         title: proj?.name,
@@ -236,7 +266,7 @@ export default function NewSessionDialog({
         // behaviour, because two panes on one project is an ordinary thing to want.
         reuse: proj?.client ? true : undefined,
         agent,
-        model: model || undefined,
+        model: modelSelected ? model || undefined : undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
         // The saved default decides WHERE it opens; only a picker pressed THIS time pins the
@@ -332,8 +362,25 @@ export default function NewSessionDialog({
               {p.checkoutOf && <span className="tag">copy of {p.checkoutOf}</span>}
               {!p.isGit && !p.checkoutOf && !p.scope && <span className="tag">no git</span>}
               <span className="proj-age">{ago(p.lastUsed)}</span>
+              {p.client && <button className="ghost small" disabled={archiveBusy}
+                title={`Hide ${p.path} from this list. Keep its files and chats.`}
+                onClick={(e) => { e.stopPropagation(); void archiveClient(p.path, true) }}>
+                Archive
+              </button>}
             </div>
           ))}
+          {archivedClients.length > 0 && <>
+            <button className="proj-copies" aria-expanded={archiveOpen}
+              onClick={() => setArchiveOpen((open) => !open)}>
+              {archiveOpen ? 'Hide' : 'Show'} archived clients ({archivedClients.length})
+            </button>
+            {archiveOpen && archivedClients.map((p) => <div className="proj" key={p.path}>
+              <span className="proj-name" title={p.path}>{p.name}</span>
+              <button className="ghost small" disabled={archiveBusy} title={`Restore ${p.path} to the launcher`}
+                onClick={() => void archiveClient(p.path, false)}>Restore</button>
+            </div>)}
+          </>}
+          {archiveError && <div className="empty" role="alert">{archiveError}</div>}
           {copies.length > 0 && (
             <button
               className="proj-copies"
@@ -521,6 +568,7 @@ export default function NewSessionDialog({
                 const nextModel = a === agent || m ? m : defaultModels[a] ?? ''
                 setAgent(a)
                 setModel(nextModel)
+                setModelSelected(Boolean(m))
                 onDefaultsChange(a, nextModel)
               }}
             />

@@ -6,33 +6,48 @@
 
 import { spawn } from 'node:child_process'
 import { gitRun } from './gitRun'
-import { existsSync } from 'node:fs'
+import { measureMainTask } from './mainPerformance'
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
+import { join } from 'node:path'
+import { app } from 'electron'
+import { PaneAnswers } from './paneAnswers'
+import { composerOf } from './composerRead'
+import { isTerminalReply } from '../shared/terminalProtocol'
+import type { PaneAnswerIdentity, PaneAnswerRequest, PaneAnswerReceipt } from '../shared/paneAnswer'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
 import { ensureTrusted } from './claudeTrust'
 import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
+import { pfEnv, pfPrimerArgs } from './pfAccess'
 import { memoryPrelude } from './board'
-import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
-import { backJobInfo } from './usage'
-import { forgetHandoff, handoffFor } from './handoffSteps'
+import { backJobInfo, backJobWaitOnly } from './usage'
+import { forgetHandoff, handoffFor, verifiedPaneHandoff } from './handoffSteps'
+import { handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
-import {
-  clientLabel,
-  mayRename,
-  TOPIC_WINDOW,
-  topicReading,
-  type TopicReading
-} from '../shared/clientName'
-import { handleOf, resolvedName } from '../shared/resolvedName'
+import { trustCodexFolder } from './codexTrust'
+import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
+import { appNamedTitle } from './activity'
+import { humanTitle, nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
+
+/** How often a Claude pane's transcript is looked at for its title. See `sweepCliTitle`. */
+const TITLE_READ_MS = 5_000
+/**
+ * How much of a resumed chat's transcript the first read takes. The CLI re-appends its title
+ * as it saves: on the PC on 2026-09-28, every one of 232 titled transcripts over 250 KB had
+ * its last title within 35 KB of the end.
+ */
+const TITLE_TAIL_BYTES = 256 * 1024
 
 /**
  * The refusal a caller must NOT override.
@@ -44,17 +59,19 @@ import type { ClientNamed } from '../shared/types'
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
-import { doneEnough } from '../shared/closeWhenDone'
-import type { DoneReading } from '../shared/doneClose'
+import { closeRefused, doneEnough, type CloseBy } from '../shared/closeWhenDone'
+import { closeHeldBy, personLooking, replyFinished, seedTurnEnd, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
+import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
+import { guardPtyPipes } from './closedPipe'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
 import { SLEEP_REASONS, SLEEP_SOURCES } from '../shared/types'
@@ -79,15 +96,17 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
-import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
+import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
+import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
 import {
   EFFORT_PRESS_GAP_MS,
   EFFORT_SETTLE_MS,
+  classifyEffort,
   confirmEffort,
   decideBeforeTurn,
   planEffortKeys,
@@ -96,7 +115,9 @@ import {
 import { rolloutTurn } from './effort'
 import type { EffortChoice, PaneEffort } from '../shared/types'
 import { codexLadders } from './effortLevels'
-import { logEffort } from './activationLog'
+import { logEffort, logModelAdvice } from './activationLog'
+import { judgeModelAdvice } from '../shared/modelAdvice'
+import { catalogueIdFor, currentClaudeEffort } from './modelAdvice'
 import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -107,7 +128,9 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  * transcript can be quiet-then-busy several times before it really settles.
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
-import { killPaneStrays, trackStrays } from './strays'
+import { killPaneStrays, trackStrays, type ProcRecord, type StrayRecord } from './strays'
+import { listeningPids } from './deadDev'
+import { servingPanes } from '../shared/serving'
 import {
   clearsConversation,
   feedSubmitLine,
@@ -117,16 +140,16 @@ import {
   newSubmitLine,
   typeLine
 } from '../shared/slashTurn'
-import { feedDraft, newDraft, type DraftState } from '../shared/draft'
+import { draftRecheckDue, feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
-import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } from '../shared/agents'
+import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
-import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { anchoredStart, readsBusy, composerHeld, ASK_PROMPT, type BusyReason } from '../shared/busy'
 import { promptStillInBox } from '../shared/promptLanded'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
-import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
+import { holdAfterFinish, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import {
@@ -137,14 +160,14 @@ import {
   heldByGuardDeck,
   pickAnswer
 } from '../shared/autoAnswer'
-import { guardDeckQuestions } from './guardDeckQuestions'
+import { guardDeckQuestions, readGuardDeckQuestions } from './guardDeckQuestions'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
-import { stoppedLine } from '../shared/paneError'
+import { nextStop, stoppedLine, turnSubmitted, type StopLatch } from '../shared/paneError'
 import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
@@ -161,6 +184,8 @@ import { SLOW_WAKE_MS, wokeSlowly } from '../shared/wakePlan'
 
 /** When each pty process was first seen by the sweep - see `backgroundAgentsFor`'s `since`. */
 const procBorn = new WeakMap<object, number>()
+/** When each pty process was spawned (`attach`) - how young a CLI is, for `claudeStartup`. */
+const procStarted = new WeakMap<object, number>()
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
@@ -217,7 +242,7 @@ const ATTENTION_AFTER_FOOTER_MS = 12_000
  */
 const REPAINT_GRACE_MS = 1200
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
-const BUFFER_LIMIT = 400_000
+const BUFFER_LIMIT = LIVE_REPLAY_LIMIT
 /**
  * How long a launching CLI must stop painting before its prompt is typed in, how
  * long to keep waiting for that, and the beat between the prompt and its return.
@@ -227,6 +252,8 @@ const BUFFER_LIMIT = 400_000
 const ms = (name: string, fallback: number): number => Number(process.env[name]) || fallback
 const PROMPT_START_MS = ms('PF_PROMPT_START_MS', 2500)
 const PROMPT_QUIET_MS = ms('PF_PROMPT_QUIET_MS', 900)
+/** Silence after which a busy footer is a leftover, not a turn (see `idle` in `queuePrompt`). */
+const PROMPT_STALE_BUSY_MS = ms('PF_PROMPT_STALE_BUSY_MS', 5000)
 const PROMPT_WAIT_MAX_MS = ms('PF_PROMPT_WAIT_MAX_MS', 45_000)
 const PROMPT_POLL_MS = ms('PF_PROMPT_POLL_MS', 300)
 const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
@@ -250,6 +277,24 @@ const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
  * Robert found the prompt sitting in the box and submitted it himself.
  */
 const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
+/**
+ * How long a prompt for a fresh Claude Code waits for its SessionStart hooks to finish
+ * before it is typed (`claudeStartup`), and how long for the CLI's pid file to appear at
+ * all - both counted from the process's own start, so a pane older than that is never
+ * held. Measured 2026-09-25, five panes opened at once: pid files at +2-5s, hooks done at
+ * +9-15s, and 12-45s on a loaded desk. Past either, the prompt is typed as before.
+ * The short wait also covers a pid file whose transcript is not on disk yet, which on
+ * Claude Code 2.1.281-2.1.283 can stay missing until the first prompt (`claudeStartup`).
+ * Off Windows the process tree answers first (`hookState`, transcripts.ts): hooks seen to
+ * run and end open the gate ~0.5s after the last one, hooks seen still running hold it up to
+ * PROMPT_STARTUP_MS, and hooks this desk runs but not started yet hold it too (`hooksAwaited`).
+ * A prompt that goes in while the hooks still run is one bracketed paste (see `tick`),
+ * and that is delivered: dev probe 2026-09-27, 2.1.283 with a 15s SessionStart hook, typed
+ * at +6s - one user row, whole, written the moment the hooks ended. Typed raw, the same
+ * prompt was left in the box and never sent.
+ */
+const PROMPT_STARTUP_MS = ms('PF_PROMPT_STARTUP_MS', 60_000)
+const PROMPT_PIDFILE_MS = ms('PF_PROMPT_PIDFILE_MS', 10_000)
 /**
  * The wait budget for the resume prompt after an automatic `/clear`, which is not the
  * budget an ordinary launch prompt gets.
@@ -302,6 +347,15 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
  * Nothing else marks the seam - the screen above it is genuinely the screen it had.
  */
 const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m\u00b7 asleep \u00b7\x1b[0m\r\n'
+
+/**
+ * A pty write as its SHAPE for a log: keys and escape sequences as they are, printable text
+ * only as a length (`"<12>\r"`), so the log can tell a bare return from a pasted line
+ * without holding anything a person typed.
+ */
+function writeShape(data: string): string {
+  return JSON.stringify(data.replace(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.|[\x00-\x1f\x7f])|[^\x00-\x1f\x7f]+/g, (m, key?: string) => key ?? `<${m.length}>`))
+}
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -369,6 +423,11 @@ export function setSilenceAlert(minutes: number | undefined): void {
 /** What a new Codex pane is launched thinking at, when the reading is on for it. */
 const EFFORT_START = 'medium'
 
+function startEffort(req: StartSessionRequest): string {
+  if (req.effort?.mode === 'manual' && req.effort.manual) return req.effort.manual
+  return req.prompt ? classifyEffort(req.prompt).level : EFFORT_START
+}
+
 /**
  * The card's half of a pane's effort state: the level the rollout has CONFIRMED, the plain
  * words for why, and the levels this model offers so the right-click menu can list them.
@@ -393,13 +452,15 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
     manual: req.effort.manual,
     // What the `-c model_reasoning_effort` flag on the spawn asked for. It is a starting
     // point for the arithmetic and not a claim: the first rollout line confirms it.
-    launched: EFFORT_START,
+    launched: startEffort(req),
     reason: "waiting for Codex's first reply"
   }
 }
 
 interface Live {
   meta: Session
+  /** When the newest prompt its transcript holds was written - see the handoff read in the sweep. */
+  promptAt?: number
   /** A refused idle sweep may retry, but must not keep printing into the terminal. */
   sleepRefusalShown?: boolean
   /** When the unverified-conversation refusal was last written to reclaim.log. */
@@ -452,8 +513,13 @@ interface Live {
   workAfter?: string
   /** The finished turn waiting to be judged, or absent when there is nothing pending. */
   workTurn?: { startedAt: number; endedAt: number }
-  /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
-  topicAsks?: string[]
+  /** the last few things asked at this pane, for `repeatedClient` - see `trackAsk` */
+  clientAsks?: string[]
+  /**
+   * How far into its transcript this pane's titles have been read, and what was found:
+   * see `sweepCliTitle`. Reset when the pane moves to another conversation.
+   */
+  titleRead?: { path: string; offset: number; at: number; seen?: CliTitles }
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
@@ -495,6 +561,23 @@ interface Live {
   /** epoch ms until which incoming output is treated as a repaint we triggered */
   repaintUntil: number
   /**
+   * Every data event, counted - the repaints inside `repaintUntil` too, which stamp no
+   * `lastOutput`. A cancel key (Ctrl-U, Ctrl-C) is not typing, so the CLI's box-emptying
+   * redraw lands in that grace, and an idle composer prints nothing after it: read off
+   * `lastOutput`, the draft hold never saw the box go empty. `confirmDraft` reads this.
+   */
+  paintSeq: number
+  /** When the newest data event arrived, grace repaints included. */
+  paintedAt: number
+  /**
+   * When this pane last SAID something: `meta.lastOutput` minus the once-a-second tick of a
+   * footer counter on a pane that is not mid-turn (`contentStampAfter`). Read by the three
+   * autoclear quiet gates and nothing else - a finished pane carrying a background agent
+   * repaints its timer for ever, and `lastOutput` on it is never 10s old (s72, 2026-10-02:
+   * 115 holds in 20 minutes, no clear). Reset wherever `lastOutput` is.
+   */
+  contentAt: number
+  /**
    * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
    *
    * Only there to be subtracted: `wake-printed` in reclaim.log is the gap between the
@@ -521,6 +604,11 @@ interface Live {
    */
   footerEndedAt: number
   /**
+   * The last second a person was looking at this pane (`personLooking`) while its turn was
+   * over - `DoneReading.lookedAt`. Older than `footerEndedAt` means an earlier turn's.
+   */
+  lookedAt: number
+  /**
    * Has this pane's footer EVER been readable for this session? Once it has, silence
    * from the pane means the pane stopped talking - not that the turn ended - so the
    * bell must wait for the pane to actually say "the footer is gone". Without this the
@@ -539,14 +627,8 @@ interface Live {
   recoverSeen: number
   /** Auto-continues sent in a row on this pane. Reset by any turn that ends whole. */
   recoverTries: number
-  /**
-   * The handle the last ask pointed at its subject with (`$50 task`), while the card is
-   * still waiting for the reply to say what that is. Unset once named, or when an ask
-   * names its subject outright. `shared/resolvedName.ts`.
-   */
-  handle?: string
-  /** How much of the screen had been painted when that ask went in: the reply starts there. */
-  handleSeen: number
+  /** A stop already sent off the machine for this pane; cleared by a submitted turn. */
+  stop: StopLatch
   /**
    * When the question now on this pane's screen was first seen, and what it was.
    *
@@ -595,6 +677,13 @@ interface Live {
    * handed to the window as `typed` when it did not come from the window itself.
    */
   draft: DraftState
+  /**
+   * Enter is an attempt, not proof that the CLI emptied its composer. `key` names the queued
+   * prompt whose own return set it, so that prompt's late receipt can drop it (`sweepIdle`).
+   */
+  draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean; key?: string }
+  /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
+  draftRecheckAt?: number
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -633,11 +722,18 @@ function claudeModelValues(): string[] {
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
+  private answerLedger?: PaneAnswers
+  private answering = new Set<string>()
+  private pendingAnswers = new Map<string, string[]>()
+  // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
+  /** Keys whose own `queuePrompt` wait is still running: that wait, not a sweep, settles them. */
+  private promptWaits = new Set<string>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string; hold?: Live['draftConfirmation']; accepted?: boolean }>()
   /**
-   * Windows only: what each shell pane's pty had running at the last table read.
-   * Empty on POSIX, where the tty answers the same question for free.
+   * Shell children at the last table read. Also used on POSIX for background jobs
+   * and for distinguishing an interactive Codex wrapper from an ordinary node job.
    */
-  private tableJobs = new Map<string, { name: string; elapsed?: number }>()
+  private tableJobs = new Map<string, NonNullable<ReturnType<typeof jobFromTable>>>()
   /** One armed /clear per pane, cleared by every path that stands one down. */
   private autoClearTimers = new Map<string, NodeJS.Timeout>()
   /**
@@ -659,6 +755,7 @@ export class SessionManager extends EventEmitter {
    */
   private autoClearPending = new Map<string, AutoClearArm>()
   private tableJobsBusy = false
+  private servingBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -669,12 +766,13 @@ export class SessionManager extends EventEmitter {
     super()
     // Single timer for all sessions: flipping working -> idle per session with its
     // own timer would mean N timers doing the same 1s tick.
-    setInterval(() => this.sweepIdle(), 1000).unref()
+    setInterval(() => measureMainTask('idle-sweep', () => this.sweepIdle()), 1000).unref()
     // Windows only, and it stops itself when no shell pane is open. See `sweepWinJobs`.
     setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
-    trackStrays(() => this.roots())
+    // ...and, off the same table, which panes are serving something. See `sweepServing`.
+    trackStrays(() => this.roots(), (procs, ledger) => this.sweepServing(procs, ledger))
   }
 
   /**
@@ -685,14 +783,49 @@ export class SessionManager extends EventEmitter {
    * pane costs). Both walk the same trees from the same roots, and both must ask per
    * sample rather than hold a list - see strays.ts.
    */
-  roots(): { id: string; pid: number }[] {
+  roots(): { id: string; pid: number; cwd: string }[] {
     return [...this.sessions.entries()]
-      .map(([id, s]) => ({ id, pid: s.proc?.pid ?? 0 }))
+      // The folder rides along so the usage sampler can attribute a dev server that has
+      // left the pane's tree by the path in its command line (`PaneUsage.devMb`).
+      .map(([id, s]) => ({ id, pid: s.proc?.pid ?? 0, cwd: s.meta.cwd }))
       .filter((p) => typeof p.pid === 'number' && p.pid > 0)
   }
 
   list(): Session[] {
-    return [...this.sessions.values()].map((s) => s.meta)
+    return [...this.sessions.values()].map((s) => {
+      const focused = s.meta.id === this.activeId
+      // `owedPrompt` is READ here, not only stored: see `owesPrompt`. A copy only when it
+      // differs from the meta, as for `focused`.
+      const owed = !s.meta.owedPrompt && this.owesPrompt(s)
+      if (!focused && !owed) return s.meta
+      return { ...s.meta, ...(focused ? { focused: true } : {}), ...(owed ? { owedPrompt: true } : {}) }
+    })
+  }
+
+  /**
+   * The app owes this pane a prompt - `Session.owedPrompt` as `list()`, `doneReadings()` and
+   * `sleep()` all read it, from this one place so they cannot disagree.
+   *
+   * Three facts: a prompt `queuePrompt` accepted and has not settled; the handover between
+   * an autoclear's `/clear` and its resume prompt (`handoverUntil`); and an automatic clear
+   * on its way in - the ask waiting for the turn to end, the settle hold in front of the
+   * countdown, and the countdown up to the moment `/clear` is typed. The last was missing
+   * on 2026-09-28 (Mac 0.8.230, s60-mulljm2l): a move armed at 19:01:07Z fired at 19:01:22
+   * inside the clear's countdown, the PC resumed the 259k conversation un-cleared, and the
+   * `/clear` typed at 19:01:37 went into the copy being closed. A sleep or close in that
+   * window loses the clear the same way. `autoClearAt` rather than `autoClearTimers`: every
+   * live countdown timer has its deadline there, and the lead timer is left in that map
+   * after it has typed.
+   */
+  private owesPrompt(live: Live): boolean {
+    const id = live.meta.id
+    return (
+      Boolean(live.meta.owedPrompt) ||
+      (live.meta.handoverUntil ?? 0) > Date.now() ||
+      Boolean(live.meta.autoClearAt) ||
+      this.autoClearPending.has(id) ||
+      this.autoClearArmTimers.has(id)
+    )
   }
 
   /** The pane a person is looking at, as the window last said (`sessions:active`). */
@@ -700,6 +833,8 @@ export class SessionManager extends EventEmitter {
   setActive(id: string | null): void {
     this.activeId = id
   }
+  /** Whether this app's window has the keyboard - set by main/index.ts. */
+  windowFocused: () => boolean = () => false
 
   /**
    * What `shared/doneClose.ts` needs to know about every live pane. The manager reads,
@@ -716,16 +851,83 @@ export class SessionManager extends EventEmitter {
         asleep: m.asleep,
         runSince: m.runSince,
         busyUntil: live.busyUntil,
-        ask: m.ask,
+        // Native async questions outlive their terminal turn and may have no PTY ask.
+        ask: m.ask || heldByGuardDeck(m.id, guardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(m.id) : undefined),
         drafting: m.drafting,
         job: m.job,
         backJob: m.backJob,
-        focused: m.id === this.activeId,
+        serving: m.serving,
+        backWaitOnly: backJobWaitOnly(m.id),
+        focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
-        turnEndedAt: live.footerEndedAt
+        turnEndedAt: live.footerEndedAt,
+        // Only while a pane it opened is still open or their summary is still on its way.
+        // This was a Set kept for the pane's whole life, and done-close.log (27 Sep, from
+        // 08:00Z) had it holding 8 finished panes for good - 27 lines, more than any other
+        // reason. Once the summary has landed and been answered, the opener is a pane
+        // like any other.
+        openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
+        owedPrompt: this.owesPrompt(live),
+        handingOff: m.handingOff,
+        handoffQueuedAt: m.handoffQueuedAt,
+        handoffOpen: m.handoffOpen,
+        handoverUntil: m.handoverUntil,
+        lookedAt: live.lookedAt || undefined
       }
     })
   }
+
+  /**
+   * When this pane's last turn ended and whether a person has looked at it since
+   * (`shared/doneClose.ts` `wasRead`) - undefined for a pane that is not open here.
+   */
+  turnRead(id: string): { endedAt: number; read: boolean } | undefined {
+    const live = this.sessions.get(id)
+    if (!live) return undefined
+    return { endedAt: live.footerEndedAt, read: wasRead({ lookedAt: live.lookedAt, turnEndedAt: live.footerEndedAt }) }
+  }
+
+  /**
+   * A summary of the panes this one opened is waiting to be told to it
+   * (`FinishedDigest.has`). Set by index.ts, which owns the digest.
+   */
+  digestPending: (id: string) => boolean = () => false
+
+  /** The grid the desk last fitted a pane to - the size a new pane is born at. See `start`. */
+  private deskSize: { cols: number; rows: number } | null = null
+
+  /** The live pane `ref` names, by id or by title - the two ways `--report-to` spells it. */
+  private paneFor(ref: string): Live | undefined {
+    return this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
+  }
+
+  /** Which open pane asked to hear how this one ended. Never itself. */
+  openerOf(id: string): string | undefined {
+    const ref = this.sessions.get(id)?.req.reportTo
+    const opener = ref ? this.paneFor(ref)?.meta.id : undefined
+    return opener && opener !== id ? opener : undefined
+  }
+
+  /** How many panes that `openerId` opened are still open, asleep included. */
+  openChildrenOf(openerId: string): number {
+    let n = 0
+    for (const live of this.sessions.values())
+      if (live.meta.id !== openerId && this.openerOf(live.meta.id) === openerId) n++
+    return n
+  }
+
+  /**
+   * Called as a `--close-when-done` pane closes, with the opener it names. index.ts
+   * reads the reply and adds the summary to the opener's digest; unset, the opener gets
+   * the old one-line notice.
+   */
+  onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** Agent closure must persist its report through the normal Review sweep. */
+  onCloseWhenDone: ((id: string) => void) | null = null
+  /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
+  keptOpen: ((id: string) => boolean) | null = null
+  /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
+  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number; turnEndedAt?: number } | undefined) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -734,6 +936,18 @@ export class SessionManager extends EventEmitter {
 
   buffer(id: string): string {
     return this.sessions.get(id)?.buffer.read() ?? ''
+  }
+
+  /**
+   * A live Claude pane whose turn is over but whose CLI still owes work to a background
+   * agent, a `run_in_background` shell command, or a task notification not yet acted on.
+   * A restart kills that work with the process, so the pane must come back RESUMED and be
+   * told to continue, not asleep (pane 2, 2026-10-01: waiting on a background Bash, `runSince`
+   * unset, killed with the app, restored asleep). Reads the sweep's cached transcript scan.
+   */
+  private hasPendingBackground(s: Live): boolean {
+    if (s.meta.agent !== 'claude' || s.meta.asleep || s.meta.status === 'exited' || !s.proc) return false
+    return pendingBackgroundFor(s.meta.id, procBorn.get(s.proc))
   }
 
   /**
@@ -756,6 +970,9 @@ export class SessionManager extends EventEmitter {
       .map((s) => ({
         cwd: s.meta.cwd,
         title: s.meta.title,
+        // ...and who gave it that name, or a restart turns every automatic name into one a
+        // person typed, which nothing may replace.
+        autoTitled: s.meta.autoTitled,
         agent: s.meta.agent,
         model: s.meta.model,
         role: s.meta.role,
@@ -794,7 +1011,7 @@ export class SessionManager extends EventEmitter {
         // turn evidence when available, retaining the clock for other agents.
         wasWorking: (s.meta.agent === 'codex' && !s.meta.asleep
           ? rolloutTurn(codexTranscriptPath(s.meta.cwd, resumeIdFor(s.meta.id) ?? '')).inProgress
-          : undefined) ?? Boolean(s.meta.runSince),
+          : undefined) ?? (Boolean(s.meta.runSince) || this.hasPendingBackground(s)),
         // ...and whether this pane was picking its own reasoning effort. Only the choice
         // survives, never the level: the pane comes back as a new conversation's worth of
         // launch flag, and what it is really running is confirmed from the rollout again.
@@ -842,13 +1059,38 @@ export class SessionManager extends EventEmitter {
     const id = `s${++this.seq}-${Date.now().toString(36)}`
     const clock = restoredClock(req, Date.now())
 
+    // What this pane had on screen last time, if it is coming back - read first, because
+    // its shape is also the grid the new process is born at.
+    const back = restoredTail(req.scrollbackId)
+    // Born at the grid it will be drawn at, not at 120x30. A pane the window is not showing
+    // is never fitted, so a START-sized birth kept it at 120 columns - under a desk of 133 -
+    // for as long as it stayed hidden, and every show/hide re-flowed its screen 133 -> 120
+    // -> 133 (fix.log, 2026-09-26: s68 held at 120x30 for 18 minutes; 6 of 17 Claude logs
+    // narrowed 133 -> 120 at least once). A restored pane is born at the size its old
+    // screen was painted at; a new one at the size the desk last fitted a pane to.
+    const startCols = back.cols > 0 ? back.cols : (this.deskSize?.cols ?? START_COLS)
+    const startRows = back.rows > 0 ? back.rows : (this.deskSize?.rows ?? START_ROWS)
+    // A word-picker name saved by an older build comes back as if a person had typed it
+    // and would never be replaced: the Activity list says the app gave it, so the pane
+    // starts over on its project name and its chat's own title can land. A client label
+    // is kept - that one came from the roster, not from the typing. Only on the way back
+    // from a saved desk or a handoff (`scrollbackId`): a pane reopened from History or a
+    // continuation is carrying a name on purpose.
+    const oldGuess =
+      !!req.scrollbackId &&
+      !!req.title &&
+      !req.autoTitled &&
+      !req.title.endsWith(` | ${CLIENTS_DIR}`) &&
+      appNamedTitle(req.title)
     const meta: Session = {
       id,
       // The PROJECT, never the folder: a pane opened in the `PaneForge-a` worktree is
       // still working on PaneForge, and the `-a` is a slot id this app invented. The
       // copy is already said by the chip beside the name (`copy 2`), so the folder
       // spelling here was the machinery leaking onto the card twice.
-      title: req.title ?? projectOf(req.cwd, req.lane),
+      // An opener's name (`pf open --title`, a saved desk) loses its ids like every other one.
+      title: (req.title && !oldGuess && humanTitle(req.title, this.chatTitles(id))) || projectOf(req.cwd, req.lane),
+      autoTitled: oldGuess ? undefined : req.autoTitled,
       cwd: req.cwd,
       agent,
       model: req.model || undefined,
@@ -875,8 +1117,14 @@ export class SessionManager extends EventEmitter {
       stayHere: req.stayHere ? true : undefined,
       lane: req.lane,
       laneNote: req.laneNote,
-      cols: START_COLS,
-      rows: START_ROWS
+      // Started ON a conversation (History's Open again, `pf continue`, a restored desk):
+      // its id is known before the first turn, and `startOrSend` has already checked the
+      // transcript is on disk. Without it `pf continue` could not find this pane until its
+      // first turn ended, and a second prompt in that window opened a second pane on the
+      // same conversation. `wake()` stamps it the same way.
+      resumeId: req.resume ? req.resumeId : undefined,
+      cols: startCols,
+      rows: startRows
     }
     // A pane the restore is bringing back with no agent in it. The card, its place and
     // its screen are all built below exactly as an awake pane's are; the only difference
@@ -896,26 +1144,30 @@ export class SessionManager extends EventEmitter {
     }
     const live: Live = {
       meta,
-      proc: born ? null : this.spawn(req, agent, START_COLS, START_ROWS, id),
+      proc: born ? null : this.spawn(req, agent, startCols, startRows, id),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
-      cols: START_COLS,
-      rows: START_ROWS,
-      deskCols: START_COLS,
-      deskRows: START_ROWS,
+      cols: startCols,
+      rows: startRows,
+      deskCols: startCols,
+      deskRows: startRows,
       runner: specFor(agent).bin,
       jobName: null,
       effort: effortStart(req, agent),
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
+      paintSeq: 0,
+      paintedAt: 0,
+      contentAt: Date.now(),
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
+      lookedAt: 0,
       sawFooter: false,
       recoverSeen: 0,
-      handleSeen: 0,
       recoverTries: 0,
+      stop: { reported: false },
       askSince: 0,
       askHold: 0,
       askSig: '',
@@ -933,9 +1185,11 @@ export class SessionManager extends EventEmitter {
     }
     // What this pane had on screen last time, put back before the new process says
     // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
-    const back = restoredTail(req.scrollbackId)
     if (back.text) {
       live.buffer.set(back.text)
+      // Last run's screen is not this process's output. Read as new, a pane that came back
+      // showing a limit or a login error reported it again on every restart.
+      live.recoverSeen = strip(live.buffer.read()).length
       if (back.cols > 0) meta.replayCols = back.cols
       // ...and its height, which antigravity's cursor-up frame is drawn against.
       if (back.rows > 0) meta.replayRows = back.rows
@@ -963,6 +1217,14 @@ export class SessionManager extends EventEmitter {
       // be resumed" on a pane that had only ever slept). One restart with the pane asleep
       // was enough to lose it for good.
       noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
+      // ...and it gets its History row now. This branch used to return before `recordStart`,
+      // so a pane that stayed asleep until the idle countdown closed it had no row for
+      // `recordEnd` to stamp: its `resumeId` was never saved and `pf continue` answered "no
+      // chat <id> ... History has no record of it" (2026-10-02: after a crash 0.8.232 restored
+      // 11 panes asleep, s3-mupvhztd..s11-mupvhzza; history/ held s3-mupvhztd.log and no .json).
+      // `recordStart` keeps an earlier row's gist and asks, and `wake()` calling it again is the
+      // same rewrite a restarted live pane gets.
+      recordStart(meta)
       this.emitSessions()
       return meta
     }
@@ -999,7 +1261,7 @@ export class SessionManager extends EventEmitter {
 
     // ...and WHO this pane is for, when the folder proves it. A title the caller supplied
     // is a person's answer to the same question and is never argued with.
-    if (!req.title) this.nameForClient(id, 'folder')
+    if (!req.title || oldGuess) this.nameForClient(id, 'folder')
 
     this.emitSessions()
     return meta
@@ -1028,17 +1290,13 @@ export class SessionManager extends EventEmitter {
     if (!live) return
     const s = live.meta
     if (s.clientOff) return
-    // Only a pane still wearing the name the APP gave it, with one exception: a subject
-    // read out of the first prompt is a guess, and a client identified afterwards is
-    // evidence, so evidence is allowed to replace the guess. Nothing replaces a client,
-    // and nothing at all replaces a name a person typed.
-    const untitled = mayRename(s.title, s.cwd)
-    const upgradable = s.autoTitled === 'topic'
-    if (!untitled && !upgradable) return
+    // Only a pane still wearing a name the APP gave it: its folder, or the agent's own
+    // title for the chat, which a client identified afterwards is allowed to replace.
+    // Nothing replaces a client, and nothing at all replaces a name a person typed.
+    if (!this.appDefault(s) && s.autoTitled !== 'agent') return
 
-    // Every ask is remembered here, on its way to the pty - both for the topic reading
-    // below and for `found`, so a client lifted out of the words somebody typed needs the
-    // same repetition a topic does: see `repeatedClient`.
+    // Every ask is remembered here, on its way to the pty, so a client lifted out of the
+    // words somebody typed needs the same client named again: see `repeatedClient`.
     const asks = from === 'prompt' && text ? this.trackAsk(live, text) : undefined
     const found =
       from === 'folder'
@@ -1046,54 +1304,38 @@ export class SessionManager extends EventEmitter {
         : asks
           ? clientForTexts(s.cwd, asks)
           : undefined
-    if (found && found.slug === s.clientSlug) return
-    // A pane in a client tree doing something else entirely is still a pane nobody can
-    // tell apart, so it gets the subject of what was asked instead. Never on the folder
-    // reading, which has no words to read.
-    // A subject is only ever written over the word `clients`: see `mayTopicName`.
-    // Outside a client roster the folder name is already true, so a subject may only
-    // replace it once the desk has asked about the same thing three times: see
-    // `repeatedTopic`. Inside the tree every card says `clients` and nothing tells them
-    // apart, so the first ask still names them.
-    const topic: TopicReading =
-      !found && from === 'prompt' && text
-        ? topicReading(live.meta.cwd, asks ?? [], text)
-        : { title: '', strong: false }
-    // An ask that points at its subject rather than naming it (`$50 task from
-    // yesterday`) is a question the reply answers; the sweep reads the answer off the
-    // screen and names the card for it. Remembered only while no client is found and
-    // the card still wears an app-given name - the same gate as every rename here.
-    if (!found && from === 'prompt' && text) {
-      const handle = handleOf(text)
-      live.handle = handle || undefined
-      live.handleSeen = handle ? strip(live.buffer.read()).length : 0
-    }
-    // ...and a subject already on the card may be replaced by a BETTER one. The first
-    // few asks in a repo are usually an errand ("what did we ship yesterday") and the
-    // card then wears that errand through the job that follows it, which is the name
-    // Robert kept looking at after a `/clear`. Only a STRONG reading may do it - three
-    // of the last four asks agreeing - so one sentence cannot re-name a pane, and a
-    // title a person typed is still never touched.
-    if (!found && !untitled && !(upgradable && topic.strong)) return
-    const title = found ? clientLabel(found) : topic.title
+    if (!found || found.slug === s.clientSlug) return
+    this.nameTo(live, clientLabel(found), 'client', from, found.slug)
+  }
+
+  /**
+   * Another chat's name, for `humanTitle` to put where a title says its id: a pane on this
+   * desk, else one History remembers. Never `self` - a chat is not named after itself.
+   */
+  private chatTitles(self: string): (paneId: string) => string | undefined {
+    return (paneId) => (paneId === self ? undefined : (this.sessions.get(paneId)?.meta.title ?? titleOf(paneId)))
+  }
+
+  /** Whether a pane still wears the name the app gave it at birth: its folder or project. */
+  private appDefault(s: Session): boolean {
+    return mayRename(s.title, s.cwd) || s.title === projectOf(s.cwd, s.lane)
+  }
+
+  /** Put an automatic name on a pane and write the Activity row. Silent otherwise. */
+  private nameTo(live: Live, title: string, by: 'client' | 'agent', from: ClientNamed['from'], slug = ''): void {
+    const s = live.meta
     if (!title || title === s.title) return
     const was = s.title
     s.title = title
-    s.clientSlug = found?.slug
-    s.autoTitled = found ? 'client' : 'topic'
-    this.emit('clientNamed', {
-      id,
-      slug: found?.slug ?? '',
-      title,
-      was,
-      from: found ? from : 'topic'
-    } satisfies ClientNamed)
+    s.clientSlug = by === 'client' ? slug : s.clientSlug
+    s.autoTitled = by
+    this.emit('clientNamed', { id: s.id, slug, title, was, from } satisfies ClientNamed)
     this.emitSessions()
   }
 
   /**
-   * Every ask this pane has taken, most recent last, capped to the window both the topic
-   * and client readings agree on.
+   * Every ask this pane has taken, most recent last, capped to the window the client
+   * reading looks at.
    *
    * Kept here rather than read back out of the transcript because they are already
    * passing through this process on their way to the pty - the same feed the prompt
@@ -1101,9 +1343,9 @@ export class SessionManager extends EventEmitter {
    * CLI to cooperate.
    */
   private trackAsk(live: Live, text: string): string[] {
-    const asks = (live.topicAsks ??= [])
+    const asks = (live.clientAsks ??= [])
     asks.push(text)
-    if (asks.length > TOPIC_WINDOW) asks.splice(0, asks.length - TOPIC_WINDOW)
+    if (asks.length > ASK_WINDOW) asks.splice(0, asks.length - ASK_WINDOW)
     return asks
   }
 
@@ -1211,6 +1453,7 @@ export class SessionManager extends EventEmitter {
     live.typed = ''
     live.submitLine = newSubmitLine()
     live.draft = newDraft()
+    live.draftConfirmation = undefined
     live.meta.drafting = undefined
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
@@ -1220,6 +1463,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.attention = false
     live.meta.bell = false
     live.meta.stalledSince = undefined
@@ -1234,6 +1478,7 @@ export class SessionManager extends EventEmitter {
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     this.emit('data', id, RESET)
@@ -1279,21 +1524,31 @@ export class SessionManager extends EventEmitter {
       busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
       asking: Boolean(live.meta.ask),
       drafting: Boolean(live.meta.drafting),
-      // `handoverUntil` covers the beat between a queued prompt settling and the next one
-      // starting (the model-switch-then-resume chain) that `owedPrompt` alone would miss.
-      owedPrompt: Boolean(live.meta.owedPrompt) || (live.meta.handoverUntil ?? 0) > Date.now(),
+      // The same reading `list()` gives - see `owesPrompt`, which also covers the beat
+      // between a queued prompt settling and the next one starting.
+      owedPrompt: this.owesPrompt(live),
       job: live.meta.job,
       // A background agent still running inside the CLI dies with a sleep exactly as a
       // background shell does. See `Session.subagent`.
       backJob: live.meta.backJob ?? live.meta.subagent
     }
+    // An idle sweep's reading is taken when its countdown is ARMED, fifteen seconds before
+    // this runs, and that number used to be the one logged: `idleMs 45371 < thresholdMs
+    // 60000` on s17-muexgy28 (2026-09-24), a pane that was a full 60.0s quiet by the time
+    // it slept. So the idle time is measured again here, off the same last-keystroke and
+    // last-output stamps the sweep reads, and the armed reading is kept beside it.
+    const sweep = evidence?.source === 'renderer-idle-sweep'
+    const quietAt = Math.max(live.meta.lastKeyboard ?? 0, live.meta.lastOutput ?? 0)
+    const idleNow = sweep && quietAt ? Date.now() - quietAt : undefined
+    const armedIdleMs = Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined
     // These are measured before killing the process. Explicit fields keep caller-supplied
     // data out of the log: never spread an IPC payload which could contain prompt text.
     const decision = {
       reason,
       source: (SLEEP_SOURCES as readonly string[]).includes(evidence?.source ?? '') ? evidence!.source : 'internal',
       pressure: ['ok', 'tight', 'over'].includes(evidence?.pressure ?? '') ? evidence!.pressure : undefined,
-      idleMs: Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined,
+      idleMs: idleNow ?? armedIdleMs,
+      armedIdleMs: idleNow === undefined ? undefined : armedIdleMs,
       thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
       status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
       busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
@@ -1314,6 +1569,14 @@ export class SessionManager extends EventEmitter {
       // and every word about why went to a log file. A refusal of a press is a sentence
       // on screen or it is a broken button.
       this.emit('sleepRefused', id, why)
+      return null
+    }
+    // ...and a pane that printed or was typed into during the count is not the pane the
+    // sweep picked: refused. A second of slack, because the deadline IS the threshold and a
+    // timer landing a millisecond early is not a pane that woke up. Inline for the same
+    // reason as the five minutes below: `sleep-test.mjs` evals this method on its own.
+    if (idleNow !== undefined && decision.thresholdMs !== undefined && idleNow < decision.thresholdMs - 1000) {
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: 'under-idle-threshold' })
       return null
     }
     // An unnamed provider resume selects some other conversation. Do this before the
@@ -1455,10 +1718,21 @@ export class SessionManager extends EventEmitter {
     return placed.cwd
   }
 
-  wake(id: string): Session | null {
+  wake(id: string, by = 'unknown'): Session | null {
     const live = this.sessions.get(id)
+    // One press can ask twice: the pane's pointer-down AND its click both reach the wake
+    // (log review 2026-10-01: `wake-request -> wake -> process-start`, then a scary
+    // `wake-refused not-asleep` a moment later at 04:45:36Z and 11:20:32Z). Nothing was left
+    // running - the refusal returns before any spawn - but a "refused" line for a wake that
+    // succeeded reads as a fault. A pane that is already awake with its program running has
+    // got what the caller asked for, so that is a success logged as a duplicate, not a
+    // refusal. `wake-refused` stays for a pane that is gone, or awake with nothing running.
+    if (live && !live.meta.asleep && live.proc) {
+      logReclaim({ action: 'wake-duplicate', pane: id, by })
+      return live.meta
+    }
     if (!live || !live.meta.asleep) {
-      logReclaim({ action: 'wake-refused', pane: id, refusal: live ? 'not-asleep' : 'pane-missing' })
+      logReclaim({ action: 'wake-refused', pane: id, by, refusal: live ? 'not-asleep' : 'pane-missing' })
       return null
     }
     const reason = live.meta.asleepReason
@@ -1476,7 +1750,7 @@ export class SessionManager extends EventEmitter {
     // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
     // adopted from a sibling: the resume is dropped, not widened to `--continue`.
     const fresh = live.meta.agent !== 'shell' && !resumable
-    logReclaim({ action: 'wake-request', pane: id, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
+    logReclaim({ action: 'wake-request', pane: id, by, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
     if (fresh) {
       const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
@@ -1501,7 +1775,7 @@ export class SessionManager extends EventEmitter {
     // conversation state it needs - so the ledger reads asleep for the whole gap between
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
-    logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, by, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
     // Stamped on the broadcast Session too, kept (never zeroed on first byte like
@@ -1512,6 +1786,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.engaged = false
     live.busyUntil = 0
     live.ackedAt = 0
@@ -1523,6 +1798,7 @@ export class SessionManager extends EventEmitter {
     // `openedAt` is the pane's own age and a sleep does not interrupt it.
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     // Not a caption: the pane says "Starting <agent>..." over the terminal already
@@ -1533,6 +1809,10 @@ export class SessionManager extends EventEmitter {
     live.buffer.push(clean)
     this.attach(live)
     recordStart(live.meta)
+    // The rows a pane restored ASLEEP was carried (`deliverOwed(old, new, false)`) are typed
+    // now that it has a composer, exactly as `restart()` does. Without this the pane wore
+    // `owedPrompt` for good once woken and its prompt was never typed (2026-10-02 review).
+    this.deliverOwed(id, id)
     this.emitSessions()
     return live.meta
   }
@@ -1645,11 +1925,12 @@ export class SessionManager extends EventEmitter {
 
   rename(id: string, title: string): void {
     const s = this.sessions.get(id)
-    if (!s || !title.trim()) return
-    s.meta.title = title.trim().slice(0, 60)
+    // `pf rename` is mostly another chat naming this one, and chats write ids.
+    const named = s ? humanTitle(title.trim(), this.chatTitles(id)) : ''
+    if (!s || !named) return
+    s.meta.title = named.slice(0, 60)
     // A manual name is authoritative even when it happens to equal the folder label.
     s.meta.autoTitled = undefined
-    s.handle = undefined
     this.emitSessions()
   }
 
@@ -1673,6 +1954,31 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, text)
   }
 
+  /**
+   * Type a continue into a pane a usage limit stopped, once the limit has reset
+   * (`main/limitWaves.ts`). Most such panes are ASLEEP by then - the idle sweep sleeps a
+   * pane after half an hour and a 5-hour limit is a long wait - and `queuePrompt` into a
+   * pane with no process types into nothing, so it is woken first. A woken CLI repaints its
+   * conversation, old limit line and all; that repaint names a reset already gone, and
+   * `limitWaves.stopped` drops it as stale. The prompt waits the beat a restored pane's
+   * continue does. `done` gets `queuePrompt`'s own ending.
+   */
+  carryOn(id: string, text: string, done: (end: QueueDrop | 'sent' | 'withheld' | 'wake-failed') => void): void {
+    const live = this.sessions.get(id)
+    if (!live) return done('gone')
+    const asleep = Boolean(live.meta.asleep)
+    if (asleep) {
+      try {
+        if (!this.wake(id)) return done('wake-failed')
+      } catch {
+        return done('wake-failed')
+      }
+    }
+    // No waiting behind a person: somebody typing in there has the pane, and a "carry on
+    // with what you were doing" landing after THEIR turn would steer it back to the old job.
+    this.queuePrompt(id, text, asleep ? RESTORE_CONTINUE_MS : 0, PROMPT_START_MS, done, PROMPT_WAIT_MAX_MS, 'turn', undefined, 0)
+  }
+
   /** A native receipt may say queued only after the real recovery ledger is saved. */
   sendNativePrompt(id: string, text: string): boolean {
     const live = this.sessions.get(id)
@@ -1693,12 +1999,37 @@ export class SessionManager extends EventEmitter {
   deliverOwed(oldId: string, newId: string, queue = true): number {
     const owed = owedAfterRestore(oldId, newId)
     // A pane that came back ASLEEP has no composer to type into, so the rows are carried
-    // onto its new id and left there: `wake()` calls this again with `queue` on. Typing
+    // onto its new id and left there: `wake()` calls this again with `queue` on (it did not
+    // until 2026-10-02 - the comment said so, the code never did). Typing
     // into a pane with no process is how a recovered prompt would be lost a second time.
     if (queue) {
-      for (const row of owed)
+      for (const row of owed) {
+        if (row.typed) {
+          if (row.typed.proof === 'receipt' && row.cwd && row.typed.conversationId &&
+            codexConversationReceipt(row.cwd, row.typed.conversationId, row.text, row.typed.at)) {
+            noteSubmitted(row.key)
+            continue
+          }
+          // An empty new process says nothing about delivery in the old process.
+          // Retain the intent without pasting again, and protect subsequent queues.
+          const live = this.sessions.get(newId)
+          const prior = this.codexQueued.get(newId)
+          if (prior && (prior.live !== live || prior.proc !== live?.proc || !stillOwed(prior.key)))
+            this.codexQueued.delete(newId)
+          if (live?.meta.agent === 'codex' && !this.codexQueued.has(newId)) {
+            this.codexQueued.set(newId, { key: row.key, live, proc: live.proc, prompt: row.text,
+              since: row.typed.at, proof: row.typed.proof, conversationId: row.typed.conversationId, receiptCwd: row.cwd,
+              writing: false, foreign: true, recovered: true })
+          }
+          continue
+        }
         this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
+      }
     }
+    // Asleep or not: a pane carrying owed rows says so, so every sweep and reclaim refusal
+    // sees it. Before, an asleep pane held rows with `owedPrompt` false and was closed
+    // (2026-10-02 18:44Z, six prompts LOST).
+    this.setOwedPrompt(newId, owedCount(newId) > 0)
     return owed.length
   }
 
@@ -1732,6 +2063,65 @@ export class SessionManager extends EventEmitter {
       level: choice.mode === 'manual' ? choice.level : undefined
     })
     this.emitSessions()
+  }
+
+  /**
+   * A Claude Code pane's first ask, scored against the model and effort it is already
+   * on. Never holds the write - the ask goes through unchanged, this only reads it and,
+   * if the rule found something worth saying, sets the card and tells the desk.
+   */
+  private adviseModel(live: Live, prompt: string): void {
+    if (live.meta.agent !== 'claude' || getConfig().modelAdvice === false) return
+    // The model this pane is really on: the transcript's own reading (`meta.model`,
+    // `main/paneModel.ts` - which itself already falls back to the launch `--model`), or
+    // the configured default when neither said anything. `defaultModels` is `{}` out of
+    // the box, so a pane started with no `--model` and no configured default is a model
+    // this app has NEVER been told - guessing `claude-sonnet-5` for it would be advice
+    // about a model the pane might not even be running. No evidence, no card.
+    const fromModel = live.meta.model || getConfig().defaultModels?.claude
+    if (!fromModel) {
+      logModelAdvice({ id: live.meta.id, refused: 'unknown-model' })
+      return
+    }
+    const fromEffort = currentClaudeEffort(live.req.effort?.manual)
+    const advice = judgeModelAdvice({ prompt, model: fromModel, effort: fromEffort })
+    if (!advice) {
+      logModelAdvice({ id: live.meta.id, from: { model: fromModel, effort: fromEffort }, refused: 'no signal' })
+      return
+    }
+    const toModel = advice.to.family ? catalogueIdFor(advice.to.family) : fromModel
+    live.meta.modelAdvice = {
+      tier: advice.tier,
+      to: { family: advice.to.family, model: toModel, effort: advice.to.effort },
+      from: { model: fromModel, effort: fromEffort },
+      askedAt: Date.now()
+    }
+    logModelAdvice({
+      id: live.meta.id,
+      tier: advice.tier,
+      reason: advice.reason,
+      from: { model: fromModel, effort: fromEffort },
+      to: { model: toModel, effort: advice.to.effort }
+    })
+    this.emit('modelAdvice', live.meta.id, live.meta.modelAdvice)
+    this.emitSessions()
+  }
+
+  /**
+   * `Switch` types the two CLI commands that carry it out; `Keep` (or the card going idle,
+   * or the pane's next ask) just clears the card. Either way it lands on an idle
+   * composer, the same as every other queued prompt - see `queuePrompt`'s own contract.
+   */
+  answerModelAdvice(id: string, doSwitch: boolean): void {
+    const live = this.sessions.get(id)
+    const advice = live?.meta.modelAdvice
+    if (!live || !advice) return
+    live.meta.modelAdvice = undefined
+    logModelAdvice({ id, answered: doSwitch ? 'switch' : 'keep', to: advice.to })
+    this.emitSessions()
+    if (!doSwitch) return
+    if (advice.to.model !== advice.from.model) this.sendPrompt(id, `/model ${advice.to.model}`)
+    if (advice.to.effort !== advice.from.effort) this.sendPrompt(id, `/effort ${advice.to.effort}`)
   }
 
   /**
@@ -1825,19 +2215,168 @@ export class SessionManager extends EventEmitter {
    * nothing relayed those keystrokes. `null` means no such pane; an empty `text` with
    * `certain` true is the one shape that really means nothing is pending.
    */
+  answerStatus(req: PaneAnswerIdentity): PaneAnswerReceipt | null {
+    this.answerLedger ??= new PaneAnswers(join(app.getPath('userData'), 'pane-answers.json'))
+    return this.answerLedger.status(req)
+  }
+
+  /** Conversation-bound steering. Never clears a draft or retries an uncertain write. */
+  answerPane(req: PaneAnswerRequest): PaneAnswerReceipt {
+    this.answerLedger ??= new PaneAnswers(join(app.getPath('userData'), 'pane-answers.json'))
+    const ledger = this.answerLedger
+    const accepted = ledger.accept(req)
+    if (!accepted.fresh) return accepted.receipt
+    const id = req.paneId
+    const live = this.sessions.get(id)
+    const proc = live?.proc
+    const sameProcess = () => Boolean(live && proc && this.sessions.get(id) === live && live.proc === proc &&
+      !live.meta.asleep && live.meta.status !== 'exited' && live.meta.agent === 'codex')
+    const same = () => sameProcess() && resumeIdFor(id) === req.expectedConversationId
+    const known = resumeIdFor(id)
+    const waitingPrompt = () => {
+      const queued = this.codexQueued.get(id)
+      // Native question navigation may mark this queue foreign before we paste it.
+      // Only an untouched prompt can pause here; a pasted or in-flight draft still owns the composer.
+      return Boolean(queued && queued.live === live && queued.proc === proc && stillOwed(queued.key) &&
+        queued.since === 0 && !queued.writing)
+    }
+    const composerReserved = () => {
+      const queued = this.codexQueued.get(id)
+      return Boolean((queued && (!waitingPrompt())) || (live!.meta.handoverUntil ?? 0) > Date.now() ||
+        live!.meta.autoClearAt || this.autoClearPending.has(id) || this.autoClearArmTimers.has(id))
+    }
+    if (!sameProcess() || (known && known !== req.expectedConversationId) || composerReserved() ||
+      (live!.meta.owedPrompt && !waitingPrompt() && !this.pendingAnswers.has(id))) {
+      return ledger.update(req, { state: 'rejected', reason: 'Pane identity unavailable or another prompt owns the composer' })
+    }
+    const pending = this.pendingAnswers.get(id) ?? []
+    pending.push(req.requestId)
+    this.pendingAnswers.set(id, pending)
+    this.setOwedPrompt(id, true)
+    let ownsComposer = false
+    // The draft hold this answer's own Enter set (see `write`). A confirmed answer is
+    // out of the box, and a hold left behind would park the next queued answer until
+    // the turn it is steering ends.
+    let answerHold: Live['draftConfirmation']
+    const finish = (state: PaneAnswerReceipt['state'], reason?: string, transcriptAt?: number) => {
+      const pending = this.pendingAnswers.get(id)
+      if (pending) {
+        const index = pending.indexOf(req.requestId)
+        if (index >= 0) pending.splice(index, 1)
+        if (!pending.length) this.pendingAnswers.delete(id)
+      }
+      if (ownsComposer) this.answering.delete(id)
+      if (state === 'confirmed') this.releaseDraftHold(live, answerHold)
+      if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0 || this.pendingAnswers.has(id))
+      try {
+        ledger.update(req, { state, reason, ...(state === 'confirmed' ? { confirmedAt: Date.now(), transcriptAt } : {}) })
+      } catch { console.warn('pane answer: receipt persistence failed; request must not be replayed') }
+    }
+    const started = Date.now()
+    const tick = () => {
+      try {
+        if (!same()) { finish('rejected', 'Pane process or conversation changed before delivery'); return }
+        if (Date.now() - started > 120_000) { finish('rejected', 'Composer remained occupied; no answer was typed'); return }
+        if (composerReserved()) { finish('rejected', 'Another prompt took the composer; no answer was typed'); return }
+        if (this.pendingAnswers.get(id)?.[0] !== req.requestId) { setTimeout(tick, 250).unref(); return }
+        if (!ownsComposer) { this.answering.add(id); ownsComposer = true }
+        // Keep line boundaries and the whole tail: the audit formatter truncates at
+        // 400 characters and joins lines, hiding anchored question footers.
+        const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
+        // A busy turn is allowed. A human draft, uncertain reconstruction, dialog,
+        // or reasoning-control write is not. Do not erase/reconstruct somebody's text.
+        if (!live!.draft.certain || live!.draft.text || live!.typed.trim() || live!.meta.drafting ||
+          live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
+          setTimeout(tick, 250).unref(); return
+        }
+        if (!codexQuestionPending(live!.req.resumeCwd ?? live!.meta.cwd, req.expectedConversationId, req.toolUseId, req.questionCount)) {
+          finish('rejected', 'Exact native question is unavailable or already ended; no answer was typed'); return
+        }
+        // Persist intent before the first byte. A crash at any later point is uncertain.
+        const submittedAt = Date.now()
+        ledger.update(req, { state: 'submitted', submittedAt })
+        this.write(id, `\x1b[200~${req.text}\x1b[201~`, 'app')
+        const keyboard = live!.meta.lastKeyboard
+        setTimeout(() => {
+          try {
+            const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
+            if (!same() || composerReserved() ||
+              !codexQuestionPending(live!.req.resumeCwd ?? live!.meta.cwd, req.expectedConversationId, req.toolUseId, req.questionCount) ||
+              live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain ||
+              live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
+              finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
+            }
+            // Codex 0.157 Enter submits/steers an active turn; Tab queues it.
+            const priorHold = live!.draftConfirmation
+            live!.effortPassThrough = true
+            try { this.write(id, '\r', 'app') } finally { live!.effortPassThrough = false }
+            if (live!.draftConfirmation !== priorHold) answerHold = live!.draftConfirmation
+            const waiting = this.codexQueued.get(id)
+            if (waiting && waiting.live === live && waiting.proc === proc && !waiting.since && !waiting.foreign)
+              waiting.answerKeyboard = live!.meta.lastKeyboard
+            const confirm = () => {
+              try {
+                if (!same()) { finish('uncertain', 'Pane changed before transcript confirmation'); return }
+                const proof = codexPromptReceipt(id, req.text, submittedAt)
+                if (proof) { finish('confirmed', undefined, proof.transcriptAt); return }
+                if (Date.now() - submittedAt > 30_000) { finish('uncertain', 'No exact native transcript receipt; no automatic retry'); return }
+                setTimeout(confirm, 250).unref()
+              } catch { finish('uncertain', 'Receipt verification failed; no automatic retry') }
+            }
+            confirm()
+          } catch { finish('uncertain', 'Delivery failed; no automatic retry') }
+        }, 150).unref()
+      } catch { finish('uncertain', 'Durable delivery failed; no automatic retry') }
+    }
+    if (known) setTimeout(tick, 0).unref()
+    else void claimCodexFromProcess(id, proc!.pid).then(() => {
+      if (!same()) { finish('rejected', 'Pane identity unavailable; no answer was typed'); return }
+      tick()
+    }).catch(() => finish('rejected', 'Pane identity verification failed; no answer was typed'))
+    return accepted.receipt
+  }
+
   draftOf(id: string): { text: string; certain: boolean } | null {
     const live = this.sessions.get(id)
     if (!live) return null
     return { text: live.draft.text, certain: live.draft.certain }
   }
 
-  write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
+  write(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return
+    // The renderer's onKey context distinguishes Shift-F3 from an identical cursor
+    // report. Only its tagged, validated protocol replies bypass ownership and drafts.
+    if (terminalReply && isTerminalReply(data)) {
+      live.proc.write(data)
+      live.repaintUntil = Date.now() + REPAINT_GRACE_MS
+      return
+    }
+    const queued = this.codexQueued.get(id)
+    if (queued && queued.live === live && queued.proc === live.proc && !queued.writing &&
+      !(origin === 'app' && this.answering.has(id)) && !live.effortPassThrough && data &&
+      data !== '\x1b[I' && data !== '\x1b[O') {
+      // Only a bare manual Enter, before any foreign editing, can complete our command.
+      if (queued.proof === 'idle' && queued.since && data === '\r' && !queued.foreign)
+        queued.commandOutputAt = live.meta.lastOutput
+      // Accepting a startup chooser hands back an as-yet untouched composer.
+      // The queue still requires an idle, certain empty and unchanged frame before
+      // its first paste. Ordinary editing/navigation remains foreign ownership.
+      const startupScreen = strip(live.buffer.read()).split('\n').slice(-30).join('\n')
+      const trustChoice = /do you trust the contents of this directory\?/i.test(startupScreen) &&
+        /^[^\S\n]*[›❯]\s*1\.\s*Yes, proceed\s*$/im.test(startupScreen) &&
+        /^[^\S\n]*Enter to select\s*$/im.test(startupScreen)
+      const startupChoice = !queued.since && !typedOwed(id).length && data === '\r' &&
+        (ASK_PROMPT.test(startupScreen) || trustChoice)
+      if (!startupChoice) queued.foreign = true
+      if (data === '\x03' || data === '\x15') this.cancelCodexQueued(id)
+    }
+    if (origin !== 'app' && (data === '\x03' || data === '\x15')) this.cancelClaudeTyped(id)
     // Before a byte moves: a submitted prompt is a turn boundary, and a turn boundary is
     // the one moment a Codex pane's reasoning effort may be changed. An `app` write
     // (a queued prompt, an automatic clear) is a turn too, so it takes the same path.
     if (this.holdForEffort(live, data, origin)) return
+    const writtenAt = Date.now()
     live.proc.write(data)
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
@@ -1846,11 +2385,32 @@ export class SessionManager extends EventEmitter {
     // The whole line, for the rail. The window builds its own tags from the keystrokes it
     // relays, so a line that came FROM the window is already tagged there; only a line
     // typed by this app or by a phone needs telling. `Live.draft` says why.
-    const whole = feedDraft(live.draft, data)
+    const whole = feedDraft(live.draft, data, {
+      backslashNewline: continuesOnBackslash(live.meta.agent)
+    })
+    // Keep the automatic-close/clear hold after Enter until a fresh screen proves
+    // the box empty. Startup and paste handling can swallow that very key, and a prompt
+    // this app typed is no exception: once its owed flag drops, the hold is all that
+    // keeps every closer off a box still holding it. `queuePrompt` and `answerPane` drop
+    // their own hold the moment a receipt proves the prompt went in. Not for an app
+    // slash command (`/clear`, `/model ...`): it prints its own answer and hands the box
+    // straight back, and holding the box would stall the resume queued right behind it.
+    if (live.meta.agent !== 'shell' && whole.submitted.length &&
+        !(origin === 'app' && isSlashCommand(whole.submitted.join('\n'))) &&
+        (whole.submitted.some((line) => line.trim()) || !live.draft.certain)) {
+      live.draftConfirmation = {
+        prompt: live.draft.certain ? whole.submitted.join('\n') : '',
+        since: writtenAt, afterPaint: live.paintSeq
+      }
+    }
     live.draft = whole.state
+    if (whole.submitted.some((line) => line.trim())) turnSubmitted(live.stop)
+    // `typeLine` ignores Enter, so the `\` Claude Code just turned into a line break is still
+    // on the end of `typed`, and the words asked would read "one \two".
+    if (whole.continued && live.typed.endsWith('\\')) live.typed = live.typed.slice(0, -1) + '\n'
     // A CLI owns its composer. An automatic stop cannot recover a typed line, so a known
     // draft and an edited line we cannot faithfully reconstruct both refuse it.
-    const drafting = !whole.state.certain || whole.state.text.trim().length > 0
+    const drafting = Boolean(live.draftConfirmation) || !whole.state.certain || whole.state.text.trim().length > 0
     const draftChanged = drafting !== Boolean(live.meta.drafting)
     live.meta.drafting = drafting || undefined
     for (const line of whole.submitted) {
@@ -1873,7 +2433,10 @@ export class SessionManager extends EventEmitter {
     // Submitting is what starts the clock. The pane's busy footer confirms it a
     // moment later, but a turn that is still drawing its first frame is already
     // running, and starting here is what makes the readout mean "since I asked".
-    const submitted = data.includes('\r') || data.includes('\n')
+    // Except the Enter after a typed `\` in Claude Code: that is a new line in the box,
+    // and a line still in the box has not started anything.
+    const submitted =
+      (data.includes('\r') || data.includes('\n')) && !(whole.continued && !whole.submitted.length)
     // Did this keystroke throw the conversation away? `/clear` is the one command that
     // puts a pane back to the state a brand new one is in - nothing has been asked of it
     // and there is nothing waiting to be read - which is the ONLY thing "Ready" is meant
@@ -1903,7 +2466,19 @@ export class SessionManager extends EventEmitter {
     // client reading needs the words, and by the time the block ends they are gone.
     const asked = submitted ? live.typed : ''
     if (submitted) {
+      // WHO SENT A LINE WHILE THIS APP WAS DELIVERING ONE. Every "typed into by hand while
+      // confirming" on 2026-09-27 (s75, s77, s78, s73, s81) has a counted intervention
+      // 0.4-1.7s after the app's own return, four of them with nobody at the desk - so
+      // something other than a person writes a submitted line there, and the logs never
+      // said what. The shape of the bytes and the origin say it next time - control keys as
+      // they are, words only as a length, so nothing a person typed reaches the log.
+      if (origin !== 'app' && live.meta.owedPrompt)
+        acLog(`${id} a ${origin} write submitted while a prompt is owed: ${writeShape(data)} (${data.length} bytes, line of ${asked.length} chars)`)
       live.meta.lastKeyboard = Date.now()
+      // A card left over from the pane's FIRST ask has nothing to say about this one -
+      // it leaves the moment the next turn boundary arrives, whether it was pressed or
+      // not. `adviseModel` a few lines down may set a fresh one for THIS turn.
+      if (live.meta.modelAdvice) live.meta.modelAdvice = undefined
       // A person sending a line owns the pane, so an armed countdown stands down for it -
       // and an `app` write never does. `standDownFor` is the whole decision; without it
       // this app's own queued prompt cancelled the clear and the log blamed the person.
@@ -1912,6 +2487,27 @@ export class SessionManager extends EventEmitter {
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
+      // The FIRST ask of a fresh conversation, and only that one: `engaged` is read here,
+      // before the block below ever sets it, which is the one moment "nothing has been
+      // asked of this pane yet" is still true. A slash command and a bare return are
+      // never an ask at all, so neither reaches this.
+      //
+      // `engaged` alone is not enough: a restart (~1267) and a wake (~1555) both reset it
+      // to false on a pane that is really resuming a conversation with plenty of context
+      // already loaded - `!live.req.resume && !live.req.resumeId` is what tells a pane
+      // that has genuinely never been asked anything apart from one continuing an old
+      // chat. And an `app` write is this app typing autoclear's own resume prompt into an
+      // idle-looking composer, never a person - only `origin === 'desk'` or a phone's own
+      // typing earns a card.
+      if (
+        !slash &&
+        !bare &&
+        !live.meta.engaged &&
+        !live.req.resume &&
+        !live.req.resumeId &&
+        origin !== 'app'
+      )
+        this.adviseModel(live, live.typed)
       // A7: how often a person had to step in. Counted here because this is the one place
       // that knows all four readings at once - who did it, whether anything was sent,
       // whether the pane was holding a question, and whether a turn was running.
@@ -1968,11 +2564,11 @@ export class SessionManager extends EventEmitter {
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running
     // while its hooks flap), and the pane falls into Ready the moment that ends.
-    // A `/clear` ends the job the pane was named for, so the asks that earned that name
-    // stop counting towards the next one: the card keeps what it has - flickering back to
-    // the folder name would be a worse reading, not a truer one - until three fresh asks
-    // agree on something else.
-    if (cleared) live.topicAsks = []
+    // A `/clear` ends the job the pane was named for, so the asks that named a client stop
+    // counting towards the next one. The card keeps its name - flickering back to the folder
+    // would be a worse reading, not a truer one - until the new conversation's own title
+    // says what the next job is: see `sweepCliTitle`.
+    if (cleared) live.clientAsks = []
     if (cleared && live.meta.engaged) {
       live.meta.engaged = false
       live.meta.attention = false
@@ -2076,6 +2672,10 @@ export class SessionManager extends EventEmitter {
       if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
     })
     live.meta.runSince = undefined
+    // One more turn finished on this machine - the turn-count rung of the automatic move
+    // reads it (`Session.turnsHere`). Counted here and nowhere else, so a turn is whatever
+    // `runSince` was: a submit, a busy footer or a shell command, exactly as `Running` is.
+    live.meta.turnsHere = (live.meta.turnsHere ?? 0) + 1
     // The turn is over, so the CLI has flushed it: this is when the conversation id
     // becomes something another machine could resume (`Session.resumeId`, read by the
     // automatic move). A Map lookup for Claude; Codex checks its claimed rollout file.
@@ -2109,8 +2709,7 @@ export class SessionManager extends EventEmitter {
    *
    * `queuePrompt` is the difference between this and a raw write: it waits for an idle
    * composer, so a line that arrives while the agent is mid-answer is not typed into the
-   * middle of it. The sign-in card uses it to tell the pane that asked that the wall is
-   * down; `false` means no such pane, which the caller logs rather than retries.
+   * middle of it. `false` means no such pane.
    */
   tellPane(ref: string, text: string): boolean {
     const live =
@@ -2145,18 +2744,25 @@ export class SessionManager extends EventEmitter {
 
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
+    if (this.keptOpen?.(meta.id)) return
+    // An automatic clear on its way in is not a finished job: closing then loses the
+    // handoff's open steps (2026-10-01, s57-mupk43r8 and s28-mupc5ct1, killed 179ms and
+    // 84ms into it). After the resume turn ends nothing is owed and the pane closes.
+    // Startup output and an unsent composer are not a completed agent response either.
+    if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    if (meta.agent !== 'shell') {
+      this.onCloseWhenDone?.(meta.id)
+      return
+    }
     const told = live.req.reportTo
-    if (told) {
-      const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
-      if (opener && opener.meta.id !== meta.id)
-        this.queuePrompt(
-          opener.meta.id,
-          `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`
-        )
+    const opener = this.openerOf(meta.id)
+    if (opener) {
+      if (this.onFinished) this.onFinished(meta, opener)
+      else this.queuePrompt(opener, `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`)
     }
     console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
-    this.kill(meta.id)
+    this.kill(meta.id, 'close-when-done')
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -2165,6 +2771,8 @@ export class SessionManager extends EventEmitter {
     if (!ask) return
     this.autoClearPending.delete(id)
     const res = this.armAutoClear(id, ask)
+    // Dropped after the turn: the pane is owed nothing now (`owesPrompt`).
+    if (!res.ok) this.emitSessions()
     console.info(
       res.ok
         ? `autoclear: ${id} countdown started - the turn ended (${ask.seconds}s)`
@@ -2288,6 +2896,7 @@ export class SessionManager extends EventEmitter {
     if (!s.meta.deskHeld) s.borrows?.clear()
     s.deskCols = Math.max(cols, 20)
     s.deskRows = Math.max(rows, 5)
+    this.deskSize = { cols: s.deskCols, rows: s.deskRows }
     this.applyGrid(id, s.deskCols, s.deskRows, false)
   }
 
@@ -2556,17 +3165,21 @@ export class SessionManager extends EventEmitter {
    * a pane nobody is going to close. `sessions:closing` is refused for a mirrored id in
    * `index.ts` for exactly the reason `sessions:busy` is.
    */
-  setClosingAt(id: string, at: number | null, kept = false): void {
+  setClosingAt(id: string, at: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return
     const next = at && at > 0 ? at : undefined
-    const heldOpen = next ? kept || undefined : undefined
     // Only when it MOVED: this arrives on every session change, and emitting a fresh list
-    // in response to one would be a loop that never settles. Both halves, or a pane that
-    // stops being held keeps the word `kept` on an ordinary idle countdown.
-    if (s.meta.closingAt === next && s.meta.closeKept === heldOpen) return
+    // in response to one would be a loop that never settles.
+    if (s.meta.closingAt === next) return
     s.meta.closingAt = next
-    s.meta.closeKept = heldOpen
+    this.emitSessions()
+  }
+
+  setDoneClosingAt(id: string, at: number | undefined): void {
+    const s = this.sessions.get(id)
+    if (!s || s.meta.doneClosingAt === at) return
+    s.meta.doneClosingAt = at
     this.emitSessions()
   }
 
@@ -2606,14 +3219,12 @@ export class SessionManager extends EventEmitter {
     // running off this machine. Only on a `false`: that is the frame the finished footer
     // is drawn in, and it is the only one this process is sent. A sighting REFRESHES the
     // stamp rather than only setting it, so a pane that keeps reprinting the line keeps
-    // its hold; the absence of the line clears nothing, because the CLI never rewrites
-    // that footer when the cloud session ends. `cloudHeld` is what expires it.
+    // its hold. A later finished footer without the line ends a SHELL hold; a cloud
+    // session's is only ended by `cloudHeld` running out. `holdAfterFinish` has both.
     if (!busy && tail) {
-      const cloud = readsCloudWork(tail)
-      if (cloud) {
-        s.cloudWork = cloud
-        s.cloudSince = now
-      }
+      const hold = holdAfterFinish({ work: s.cloudWork, since: s.cloudSince }, tail, now)
+      s.cloudWork = hold.work
+      s.cloudSince = hold.since
     }
     // A question and a running agent are never on screen together - ASK_PROMPT outranks
     // every busy footer in `readsBusy` - so a busy pane has no question by construction
@@ -2803,6 +3414,9 @@ export class SessionManager extends EventEmitter {
     if (decision === 'queue') {
       this.autoClearPending.set(id, ask)
       acLog(`${id} queued until this turn ends (${why})`)
+      // `owedPrompt` from here - see `owesPrompt`. Said now, or the desk arms a move on a
+      // reading that does not have it yet.
+      this.emitSessions()
       return { ok: true, reason: 'queued until this turn ends' }
     }
     if (decision === 'refuse') {
@@ -2815,7 +3429,7 @@ export class SessionManager extends EventEmitter {
     // countdown over that and requeueing it a second later, the arm waits out the
     // remainder and asks again - by which time `dropFor` sees the new turn and queues it
     // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
-    const quiet = Date.now() - s.meta.lastOutput
+    const quiet = Date.now() - s.contentAt
     if (!quietEnoughToArm(quiet)) {
       const wait = Math.max(250, ARM_QUIET_MS - quiet)
       const prev = this.autoClearArmTimers.get(id)
@@ -2823,10 +3437,12 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} holding ${wait}ms: the pane printed ${quiet}ms ago and may not be finished`)
       const t = setTimeout(() => {
         this.autoClearArmTimers.delete(id)
-        this.armAutoClear(id, ask)
+        // A refusal on the second pass ends what `owedPrompt` was saying - say that too.
+        if (!this.armAutoClear(id, ask).ok) this.emitSessions()
       }, wait)
       t.unref?.()
       this.autoClearArmTimers.set(id, t)
+      this.emitSessions()
       return { ok: true, reason: 'waiting for the pane to settle' }
     }
     // The steps that reached here are a PHOTOGRAPH, and everything above this line is a
@@ -2852,13 +3468,11 @@ export class SessionManager extends EventEmitter {
         acLog(`${id} refused: ${NOTHING_OPEN} (${hand.path})`)
         return { ok: false, reason: NOTHING_OPEN }
       }
-      if (hand.path && hand.steps.length) plan.steps = hand.steps
     }
     this.cancelAutoClear(id, 'cancelled')
     const at = Date.now() + plan.seconds * 1000
     s.meta.autoClearAt = at
     s.meta.autoClearPrompt = plan.prompt
-    s.meta.autoClearSteps = plan.steps
     // Decided HERE, once, and typed verbatim when the timer fires. The command is the
     // CLI's own (`/new` in Codex), and a pane's agent cannot change under an armed
     // countdown, so there is nothing to gain from re-deriving it at the last moment - and
@@ -2888,7 +3502,7 @@ export class SessionManager extends EventEmitter {
         armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
-        quietMs: live ? Date.now() - live.meta.lastOutput : undefined
+        quietMs: live ? Date.now() - live.contentAt : undefined
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -2913,7 +3527,7 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'settling') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        acLog(`${id} waiting: the pane printed ${Date.now() - live!.meta.lastOutput}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
+        acLog(`${id} waiting: the pane printed ${Date.now() - live!.contentAt}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -2974,7 +3588,7 @@ export class SessionManager extends EventEmitter {
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
-        const lateQuiet = Date.now() - current.meta.lastOutput
+        const lateQuiet = Date.now() - current.contentAt
         if (!late && !quietEnoughToArm(lateQuiet)) {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
@@ -3059,7 +3673,7 @@ export class SessionManager extends EventEmitter {
   cancelAutoClear(id: string, why: DropReason): boolean {
     // Somebody using the pane means the whole idea is off, queue included. A 'working'
     // cancel is the internal re-queue above and must leave the pending ask alone.
-    if (why !== 'working') this.autoClearPending.delete(id)
+    let dropped = why !== 'working' && this.autoClearPending.delete(id)
     // ...and the wait in FRONT of the countdown, or pressing Keep on a card is undone a
     // few seconds later by an arm nobody can see. A 'working' cancel is this class's own
     // re-queue and leaves it alone, exactly as it leaves the pending ask alone.
@@ -3068,6 +3682,7 @@ export class SessionManager extends EventEmitter {
       if (arming) {
         clearTimeout(arming)
         this.autoClearArmTimers.delete(id)
+        dropped = true
       }
     }
     const s = this.sessions.get(id)
@@ -3076,7 +3691,12 @@ export class SessionManager extends EventEmitter {
       clearTimeout(timer)
       this.autoClearTimers.delete(id)
     }
-    if (!s?.meta.autoClearAt) return false
+    if (!s?.meta.autoClearAt) {
+      // A dropped ask or hold ends `owedPrompt` (`owesPrompt`): say so, or the desk goes on
+      // holding the pane on a reading that is no longer true.
+      if (dropped) this.emitSessions()
+      return false
+    }
     this.clearAutoClearMeta(s)
     console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
     acLog(`${id} stood down - ${dropWords(why)}`)
@@ -3085,11 +3705,10 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
-  /** The six countdown fields, deleted together - the fire path and every drop share it. */
+  /** The five countdown fields, deleted together - the fire path and every drop share it. */
   private clearAutoClearMeta(s: { meta: Session }): void {
     delete s.meta.autoClearAt
     delete s.meta.autoClearPrompt
-    delete s.meta.autoClearSteps
     delete s.meta.autoClearChunks
     delete s.meta.autoClearNoResume
     delete s.meta.autoClearTokens
@@ -3205,11 +3824,18 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
-  kill(id: string): void {
+  /**
+   * `by` names the part of the app that closed the pane, for the `close-request` line: on
+   * 2026-09-24 the Review auto-close took a pane mid-countdown and nothing on disk said so,
+   * so the countdown was blamed for it. Required since log review 2026-10-01, where two
+   * working panes closed with no `by` at all. Answers whether the pane closed.
+   */
+  kill(id: string, by: CloseBy): boolean {
     const s = this.sessions.get(id)
-    if (!s) return
+    if (!s) return false
+    if (this.closeRefusedFor(id, by)) return false
     logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
-      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down })
+      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
@@ -3224,11 +3850,28 @@ export class SessionManager extends EventEmitter {
     // will ever restore that id, and a row left behind would be a promise the app cannot
     // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
     dropAllFor(id, 'gone')
+    this.codexQueued.delete(id)
     forgetSession(id)
     forgetBackgroundAgents(id)
+    forgetCodexWorkers(id)
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
+    return true
+  }
+
+  /**
+   * Whether `by` may not close this pane now (`shared/closeWhenDone.ts` `closeRefused`),
+   * logged when it may not. Public so a close that writes something first (the idle
+   * clock's Review row) can ask before it does.
+   */
+  closeRefusedFor(id: string, by: CloseBy): boolean {
+    const s = this.sessions.get(id)
+    if (!s) return false
+    const reason = closeRefused(by, s.meta.status)
+    if (!reason) return false
+    logReclaim({ action: 'close-refused', pane: id, processPid: s.proc?.pid, status: s.meta.status, by, reason })
+    return true
   }
 
   /** Close only at a review-safe boundary; records are written before this is called. */
@@ -3236,15 +3879,18 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
-    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
-    if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
+    if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
+    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.serving) return { closed: false, reason: `session is serving (${m.serving})` }
+    const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
+    if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
-    this.kill(id)
+    this.kill(id, 'review')
     return { closed: true }
   }
 
   killAll(): void {
-    for (const id of [...this.sessions.keys()]) this.kill(id)
+    for (const id of [...this.sessions.keys()]) this.kill(id, 'user')
   }
 
   /**
@@ -3262,9 +3908,12 @@ export class SessionManager extends EventEmitter {
    * `claude` processes holding locks on the files it had just replaced. /T takes the
    * grandchildren too: an agent CLI is node, which spawns ripgrep, git and its own
    * subagents.
+   *
+   * Returns the pids it asked to die, so an update can wait for them to be gone before the
+   * installer starts copying (see `shared/installWedge.ts`).
    */
-  shutdown(): void {
-    if (this.down) return
+  shutdown(): number[] {
+    if (this.down) return []
     this.down = true
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
@@ -3277,14 +3926,12 @@ export class SessionManager extends EventEmitter {
     // Before the early return: a pane that was teed and then closed by hand is gone
     // from the map, but its stream is only closed here if anything went wrong above.
     stopAllPipes()
-    if (!live.length) return
+    if (!live.length) return []
     endAll(ids, resumeIdFor)
+    const pids = live.map((s) => s.proc?.pid ?? 0).filter((pid) => typeof pid === 'number' && pid > 0)
 
     if (process.platform === 'win32') {
-      const args = live
-        .map((s) => s.proc?.pid ?? 0)
-        .filter((pid) => typeof pid === 'number' && pid > 0)
-        .flatMap((pid) => ['/PID', String(pid)])
+      const args = pids.flatMap((pid) => ['/PID', String(pid)])
       if (args.length) {
         // No taskkill on PATH - the pty kill below is still the real one. `spawnQuiet`
         // for the same reason as everywhere else: the failure this comment names is an
@@ -3306,6 +3953,7 @@ export class SessionManager extends EventEmitter {
         /* already dead */
       }
     }
+    return pids
   }
 
   private spawn(
@@ -3325,17 +3973,24 @@ export class SessionManager extends EventEmitter {
     // `effort` only reaches a Codex spec, and only when the pane was opened with the
     // reading on: it is a `-c` override for THIS process, so the person's own
     // config.toml is never read, written or consulted.
-    const args = buildArgs(spec, {
-      resume: req.resume,
-      resumeId: req.resumeId,
-      model: req.model,
-      effort: req.effort ? EFFORT_START : undefined
-    })
+    // Plus one line telling the agent `pf` is how it drives PaneForge (`shared/pfAccess.ts`).
+    const args = [
+      ...buildArgs(spec, {
+        resume: req.resume,
+        resumeId: req.resumeId,
+        model: req.model,
+        effort: req.effort ? startEffort(req) : undefined
+      }),
+      ...pfPrimerArgs(spec.id)
+    ]
     // Antigravity opens on `Yes, I trust this folder` in any folder it has not seen, and
     // a pane this app was asked to open is not a question anybody wants to answer twice.
     // No-op for every other agent and on a desk where that CLI is not installed.
     if (spec.id === 'antigravity') trustAgyWorkspace(req.cwd)
-    return pty.spawn(which(spec.bin), args, {
+    // Codex asks the same question, and on a machine it has never run on there is no
+    // config.toml to answer it from - `main/codexTrust.ts` creates one.
+    if (spec.id === 'codex') trustCodexFolder(req.cwd)
+    const proc = pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -3346,7 +4001,8 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: {
+      // `pf` on the PATH's tail and pointed at this app (`main/pfAccess.ts`).
+      env: pfEnv({
         ...scrubForeignKeys(agentEnv(), spec),
         ...resolveEnv(spec, agentKeys()),
         // Which pane this is. `pf open --report-to` defaults to it, so an agent that opens
@@ -3357,8 +4013,14 @@ export class SessionManager extends EventEmitter {
         // desk: browser work stops being a reason to keep a pane here. `shared/peerChrome.ts`.
         ...(chromeCdpFor(req.fromAddress) ? { PF_CHROME_CDP: chromeCdpFor(req.fromAddress)! } : {}),
         ...(req.laneEnv ?? {})
-      }
+      }) as Record<string, string>
     })
+    // A keystroke written after the console behind this pane went away is an EPIPE with no
+    // listener, which used to reach `crash.ts` as an uncaughtException naming nothing
+    // (2026-09-22). One line per pipe, per pane, naming both. See `closedPipe.ts`.
+    guardPtyPipes(proc, (side, code) =>
+      logReclaim({ action: 'pipe-error', pane: id, side, code, agent: spec.id, folder: basename(req.cwd) }))
+    return proc
   }
 
   private attach(live: Live): void {
@@ -3367,6 +4029,7 @@ export class SessionManager extends EventEmitter {
     const proc = live.proc
     // A pane with no process: `wake()` calls this again once there is one.
     if (!proc) return
+    procStarted.set(proc, Date.now())
     const processIdentity = { pane: id, processPid: proc.pid, agent: meta.agent,
       resumeId: live.req.resumeId, folder: basename(meta.cwd) }
     logReclaim({ action: 'process-start', ...processIdentity })
@@ -3376,6 +4039,9 @@ export class SessionManager extends EventEmitter {
       // dead output into the fresh buffer.
       if (live.proc !== proc) return
       live.buffer.push(data)
+      // Before the repaint gate below: a repaint changes what the composer holds.
+      live.paintSeq++
+      live.paintedAt = Date.now()
       recordData(id, data)
       // A gate in the pane refusing a command is not output the pane produced and not
       // anything this app decided, but it costs the pane a whole round trip and nothing
@@ -3442,6 +4108,9 @@ export class SessionManager extends EventEmitter {
       // own banner is not working for you. Submitting a prompt starts it, and the
       // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
+      // The autoclear quiet floor's own reading: every byte, EXCEPT a footer counter ticking
+      // on a pane that is not mid-turn. See `contentStampAfter`.
+      live.contentAt = contentStampAfter({ stamp: live.contentAt, now, idle: wasIdle, chunk: data })
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
@@ -3457,9 +4126,17 @@ export class SessionManager extends EventEmitter {
     })
 
     proc.onExit(({ exitCode }) => {
+      // Read before anything below overwrites it: a pane that dies while still `starting`
+      // never got going, which `shared/exitClose` keeps on the desk.
+      const wasStarting = meta.status === 'starting'
+      // `kill()` takes the pane out of the list before its process is gone, so a missing
+      // pane here means the app or a person closed it and this exit is the answer. The
+      // 2026-09-23 log review read eleven of those as crashes; this says so on the line.
+      const closedFirst = !this.sessions.has(id)
       logReclaim({ action: 'process-exit', ...processIdentity, exitCode,
         superseded: live.proc !== proc, asleep: Boolean(meta.asleep),
-        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status })
+        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status,
+        closedFirst: closedFirst || undefined })
       if (live.proc !== proc) return
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
@@ -3482,7 +4159,6 @@ export class SessionManager extends EventEmitter {
       // now: a row that never arrives because the pane closed first is the same as no
       // reading at all.
       endHookDeny(id)
-      this.emitSessions()
       // ...AND THE CARD GOES. A pane whose program has ended is a card wearing `exited`
       // and a number nobody can explain; the History row for it is already written, with
       // the conversation id, so `Open again` brings the same chat back. `shared/exitClose`
@@ -3493,17 +4169,29 @@ export class SessionManager extends EventEmitter {
         handingOff: !!meta.handingOff,
         quitting: this.down,
         printed: !!meta.printed,
-        exitCode
+        exitCode,
+        starting: wasStarting,
+        kept: this.keptOpen?.(id) ?? false
       })
+      // A pane closed while it was starting is not one that failed to start: nothing is
+      // left on the desk to mark, and the activity list would blame the agent for a close.
+      const failedStart = plan.failedStart && !closedFirst
+      if (failedStart) {
+        meta.startFailed = true
+        logReclaim({ action: 'start-failed', pane: id, agent: meta.agent, folder: basename(meta.cwd),
+          exitCode, afterMs: Date.now() - meta.createdAt, tail: plainTail(live.buffer.read(), 8) })
+      }
+      this.emitSessions()
+      if (failedStart) this.emit('start-failed', id, meta.title || meta.cwd || 'A pane', plan.why)
       if (!plan.close) return
       const say = exitWords(meta.title || meta.cwd || 'A pane', plan)
       const go = (): void => {
         // Re-read: the pane may have been woken, moved or closed by hand in the meantime,
         // and a pane with a LIVE process again is not the one this plan was made for.
         const now = this.sessions.get(id)
-        if (!now || now.proc || now.meta.status !== 'exited') return
+        if (!now || now.proc || now.meta.status !== 'exited' || this.keptOpen?.(id)) return
         this.emit('exit-closed', id, say)
-        this.kill(id)
+        this.kill(id, 'exit-close')
       }
       if (plan.after) setTimeout(go, plan.after).unref?.()
       else go()
@@ -3542,6 +4230,7 @@ export class SessionManager extends EventEmitter {
   private setOwedPrompt(id: string, owed: boolean): void {
     const live = this.sessions.get(id)
     if (!live) return
+    owed ||= this.pendingAnswers.has(id)
     if (Boolean(live.meta.owedPrompt) === owed) return
     live.meta.owedPrompt = owed || undefined
     this.emitSessions()
@@ -3562,8 +4251,43 @@ export class SessionManager extends EventEmitter {
     if (!live) return false
     live.meta.lastKeyboard = Date.now()
     live.meta.tookOverAt = Date.now()
+    this.cancelCodexQueued(id)
     this.setHandover(id, 0)
     return true
+  }
+
+  private cancelCodexQueued(id: string): void {
+    const owner = this.codexQueued.get(id)
+    const live = this.sessions.get(id)
+    if (!owner || !live || owner.live !== live || owner.proc !== live.proc) return
+    // An explicit cancellation abandons only this intent. A receipt already written
+    // still outranks cancellation, but ordinary external typing never clears it.
+    if (owner.proof === 'receipt' && owner.since && (owner.conversationId ?
+      codexConversationReceipt(owner.receiptCwd ?? owner.live.meta.cwd, owner.conversationId, owner.prompt, owner.since) :
+      !owner.recovered && codexAcceptedPrompt(id, owner.prompt, owner.since))) noteSubmitted(owner.key)
+    else noteDropped(owner.key, 'abandoned')
+    if (this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
+    this.setOwedPrompt(id, owedCount(id) > 0)
+  }
+
+  /**
+   * The Claude half of `cancelCodexQueued`. A typed Claude prompt whose returns were
+   * swallowed stays owed until its transcript row (`settle`), and every follow-up waits
+   * behind it. A person's Ctrl-U or Ctrl-C empties that box: the prompt is abandoned, not
+   * owed, unless Claude Code already wrote it down. Rows a live wait is still typing are
+   * that wait's to settle.
+   */
+  private cancelClaudeTyped(id: string): void {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.agent !== 'claude') return
+    let changed = false
+    for (const row of typedOwed(id)) {
+      if (this.promptWaits.has(row.key) || row.typed?.proof !== 'receipt') continue
+      if (claudeAcceptedPrompt(live.proc?.pid, row.text, row.typed.at - 1000)) noteSubmitted(row.key)
+      else noteDropped(row.key, 'abandoned')
+      changed = true
+    }
+    if (changed) this.setOwedPrompt(id, owedCount(id) > 0)
   }
 
   /**
@@ -3596,12 +4320,13 @@ export class SessionManager extends EventEmitter {
     prompt?: string,
     extraDelay = 0,
     startMs = PROMPT_START_MS,
-    onSettled?: () => void,
+    onSettled?: (end: QueueDrop | 'sent' | 'withheld') => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
     proof: PromptProof = 'turn',
-    known?: string
+    known?: string,
+    personWaitMs = PERSON_WAIT_MAX_MS
   ): void {
-    if (!prompt) return onSettled?.()
+    if (!prompt) return onSettled?.('withheld')
     // The app owes this pane a prompt from here until `settle` below runs, whatever the
     // caller is - autoclear's resume, a restore, `pf open --prompt`, a split brief. See
     // `Session.owedPrompt`.
@@ -3612,23 +4337,59 @@ export class SessionManager extends EventEmitter {
     // `known` is a prompt already in the ledger being re-queued after a restart, so it is
     // not accepted a second time.
     const key = known ?? noteAccepted(id, prompt, this.sessions.get(id)?.meta.cwd)
+    const original = this.sessions.get(id)
+    if (original?.meta.agent === 'codex' && prompt.trimStart().startsWith('/')) proof = 'idle'
+    const codex = original?.meta.agent === 'codex' && proof !== 'idle'
+    const owner = original?.meta.agent === 'codex' ?
+      { key, live: original, proc: original.proc, prompt, since: 0, writing: false, foreign: false,
+        proof: proof === 'idle' ? 'idle' as const : 'receipt' as const, conversationId: undefined as string | undefined,
+        receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined,
+        answerKeyboard: undefined as number | undefined, hold: undefined as Live['draftConfirmation'], accepted: false } : undefined
+    if (owner && !this.codexQueued.has(id)) this.codexQueued.set(id, owner)
+    this.promptWaits.add(key)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
     // reach is a pane nobody can type into: every `return` below goes through `settle`.
     //
-    // It is also the one place the ledger row is closed: 'sent' means a turn (or, for a
-    // command, an idle composer) PROVED the text went in; every other word is a prompt
-    // nobody typed, and says so in `queued-prompts.log`.
+    // 'sent' closes the ledger only with submission proof. An unconfirmed typed CLI
+    // prompt stays recoverable and keeps its composer owner after this wait ends.
     let settled = false
-    const settle = (end: QueueDrop | 'sent'): void => {
+    let curtainReleased = false
+    // The draft hold our own return set (see `write`). Dropped once the prompt is proven
+    // sent; an unsent or withheld prompt keeps it, so no automatic close or clear reads a
+    // box still holding the whole prompt as empty after the owed flag drops below.
+    let ownHold: Live['draftConfirmation']
+    const releaseCurtain = (): void => {
+      if (curtainReleased) return
+      curtainReleased = true
+      // A blocked composer may need a person's input. Releasing its UI is separate
+      // from finishing this wait: onSettled also sequences model switches and resumes.
+      if (this.sessions.get(id)?.meta.handoverUntil) this.setHandover(id, 0)
+    }
+    const settle = (end: QueueDrop | 'sent' | 'withheld'): void => {
       if (settled) return
       settled = true
-      if (end === 'sent') noteSubmitted(key)
-      else noteDropped(key, end)
-      this.setOwedPrompt(id, false)
-      onSettled?.()
+      this.promptWaits.delete(key)
+      // A failed confirmation is not an empty composer. Keep both the full durable
+      // prompt and its owner; a subsequent queue must never paste onto that draft.
+      const retained = (owner?.since || (original?.meta.agent === 'claude' && typedTextAt)) &&
+        end !== 'sent' && stillOwed(key)
+      if (!retained) {
+        if (end === 'sent') noteSubmitted(key)
+        else if (end === 'withheld') noteWithheld(key)
+        else noteDropped(key, end)
+        if (this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
+      }
+      if (end === 'sent') {
+        // Said on the owner itself, which outlives its removal above: a follow-up queued
+        // behind it holds the reference, and this proof may come before that one looks.
+        if (owner) owner.accepted = true
+        this.releaseDraftHold(this.sessions.get(id), ownHold)
+      }
+      this.setOwedPrompt(id, owedCount(id) > 0)
+      onSettled?.(end)
     }
-    const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
+    let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
     // an autoclear's own `/clear\r` goes through `write` and bumps it. Anything later is a
     // person submitting into the pane, and `queuedPromptDecision` drops the queued prompt
@@ -3641,14 +4402,47 @@ export class SessionManager extends EventEmitter {
     // turn", which is a different question and a much longer answer - a turn Robert starts
     // in a freshly cleared pane routinely runs ten minutes. Below it the prompt waits; at
     // it, it gives up and says so, rather than sitting owed for ever.
-    const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
+    const personDeadline = Date.now() + personWaitMs + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
-      this.write(id, data, 'app')
+      const priorHold = this.sessions.get(id)?.draftConfirmation
+      if (owner) owner.writing = true
+      try { this.write(id, data, 'app') } finally { if (owner) owner.writing = false }
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
+      if (after?.draftConfirmation && after.draftConfirmation !== priorHold) {
+        ownHold = after.draftConfirmation
+        // Named, because the receipt that proves a prompt left UNSENT went in after all is
+        // read by the idle sweep once this wait is over, and only this hold is its to drop.
+        ownHold.key = key
+        // A retained Codex prompt is promoted by whichever prompt queues behind it,
+        // so that wait has to be able to drop this hold too.
+        if (owner) owner.hold = ownHold
+      }
     }
-    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict =>
-      queuedPromptDecision({
+    // A follow-up received during an existing turn must wait for that turn, even
+    // though its last keystroke predates `mark`. The boot timeout is not permission
+    // to paste into a running conversation. Autoclear owns its own handover wait.
+    const queuedLive = this.sessions.get(id)
+    // Not behind a prompt of ours still held in this composer: its own return stamped
+    // `runSince`, and that retained owner already gates this one until its receipt (and
+    // re-arms this wait when the receipt comes, below). Only a live owner of this very
+    // process counts: a recovered one was typed by the process before, and a stale one is
+    // about to be dropped, so neither says whose turn is running now.
+    const held = this.codexQueued.get(id)
+    const behindOurs = Boolean(held && held !== owner && held.since && queuedLive && held.live === queuedLive &&
+      held.proc === queuedLive.proc && !held.recovered && stillOwed(held.key))
+    let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil &&
+      !behindOurs
+    // Re-armed once, when that held prompt is proven sent (see `tick`).
+    let heldTurnArmed = false
+    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict => {
+      // An authenticated answer is steering this same turn, not a person claiming
+      // the composer. Keep waiting through delayed questions; actual drafting or
+      // foreign input still restores the person's existing far ceiling.
+      const personExpired = Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
+        owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
+        !live.meta.drafting && !live.typed?.trim())
+      const decision = queuedPromptDecision({
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
         mark,
@@ -3656,12 +4450,21 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        personExpired: Date.now() >= personDeadline,
+        personExpired,
         turnLive:
           Boolean(live.meta.runSince) ||
           live.busyUntil > Date.now() ||
           Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
       })
+      if (decision === 'abandon') return decision
+      if (waitingForTurn) {
+        if (live.meta.runSince || live.busyUntil > Date.now()) {
+          return personExpired ? 'abandon' : 'wait'
+        }
+        waitingForTurn = false
+      }
+      return decision
+    }
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
     // fixed tail reports a pane as working long after it went quiet at its composer
@@ -3681,9 +4484,17 @@ export class SessionManager extends EventEmitter {
         seen = text.length
       }
     }
+    // A WORKING LINE THAT HAS STOPPED MOVING IS NOT A TURN. A live footer ticks every
+    // second (spinner glyph, `(12s ...)` counter), so a busy reading on a pty that has
+    // printed nothing for PROMPT_STALE_BUSY_MS is a leftover. After `/clear`, Claude Code's
+    // last bytes are `✳ Forming… (running SessionEnd hooks… 0/2 · 0s)` and then silence
+    // while the fresh session sits ready: every post-clear resume on 2026-09-23 read busy
+    // until the 45s budget ran out (22 of 22 at 44.5-45.3s; fresh panes 2-3s), and at
+    // 10:54:14 Robert started typing into s4-mudqp2ef 41s in, so the resume never went.
     const idle = (live: Live): boolean => {
       repaint(live)
-      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted) && !composerHeld(painted)
+      const quietMs = Date.now() - live.meta.lastOutput
+      return quietMs >= PROMPT_QUIET_MS && (quietMs >= PROMPT_STALE_BUSY_MS || !readsBusy(painted)) && !composerHeld(painted)
     }
 
     // THE WAIT'S DEADLINE MAY NOT ALSO BE THE CONFIRM'S. `deadline` caps how long we
@@ -3703,15 +4514,205 @@ export class SessionManager extends EventEmitter {
     // echo of a different message - 2026-09-22 19:16:25 s21-muczy2r3 logged "no longer in
     // the composer" over a composer still holding the whole prompt.
     let typedIntoTurn = false
-    const submit = (tries: number): void => {
+    // WHAT THE SCREEN CANNOT SAY, CLAUDE CODE'S TRANSCRIPT CAN. An idle box after the return,
+    // or a pane still painting with no composer on screen, looks the same whether the return
+    // went in or was eaten; read as eaten, a prompt Claude answered was fed more returns and
+    // logged LOST (s105 2026-09-24, 5/5 and 3/5 fresh panes 2026-09-25). Its user row is the
+    // receipt - see `claudeAcceptedPrompt`. A command (proof 'idle') writes no such row.
+    //
+    // The window opens when the TEXT went in, not at the first return. Measured 2026-09-26
+    // in a dev copy on a Mac under memory pressure: the first return was written 1.2s,
+    // 9.3s and 4.8s after the text (350ms asked), and Claude's user row was stamped 0.6s,
+    // 7.4s and 1.4s BEFORE it - why the row came first is not known. A window opened at
+    // the return missed two of those receipts and logged s3-muhsr8eu's prompt LOST while
+    // Claude answered it.
+    let firstReturnAt = 0
+    let typedTextAt = 0
+    let askedAgain = false
+    const claudeTook = (live: Live): boolean =>
+      proof !== 'idle' &&
+      live.meta.agent === 'claude' &&
+      claudeAcceptedPrompt(live.proc?.pid, prompt, (typedTextAt || firstReturnAt) - 1000)
+    // ONLY THE RECEIPT SAYS SENT, once there is one to read. A turn clock and an empty-looking
+    // box both said "submitted" over prompts that never went in: 2026-10-01 08:14:53Z, pane
+    // s54-mup9d0za, a 4958-char brief sat in the composer as `[Pasted text #1 +30 lines]` for
+    // 2m47s after the log said it had left; 08:50:43Z, s11-mup9scpm, "a turn started" was the
+    // busy footer of a `/clear` that then wiped the typed resume prompt. With Claude Code's pid
+    // file naming its conversation, no user row is no prompt; the screen is only read without one.
+    const receiptOnly = (live: Live): boolean =>
+      proof !== 'idle' && live.meta.agent === 'claude' && claudeReceiptReadable(live.proc?.pid)
+    // A RETURN TAKEN WHILE CLAUDE CODE STARTS IS HELD, NOT LOST. The CLI runs the submit once
+    // its SessionStart hooks are done - 17s in for s54, 65s in for s27-mupamiv8 (user row at
+    // +72s, with no further key) - and every return sent meanwhile goes INTO the composer as a
+    // character: s54's returns 2-5 came back as "Removed 4 invisible characters - review and
+    // press Enter to send", which stopped the held submit until Robert pressed Enter 3 minutes
+    // later. Of 2026-10-01's fresh panes, the ones given one return landed; the ones given
+    // five or six were logged UNSENT and landed 44-97s later, or sat for minutes. So while a
+    // young process may still be starting, the confirm waits for the receipt and sends nothing.
+    let saidDeferring = false
+    const deferring = (live: Live): boolean => {
+      if (proof === 'idle' || live.meta.agent !== 'claude') return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid, born, resumed) === 'started') return false
+      // With no pid file there is no receipt to wait for. One is born 3-19s after spawn on
+      // this Mac (2026-10-01; none yet at +10s in the dev proof), so a process past twice
+      // the pid-file wait without one - a CLI that writes none for this pid - gets its
+      // returns as before rather than a minute of silence.
+      if (!claudeReceiptReadable(live.proc?.pid) && Date.now() - born >= PROMPT_PIDFILE_MS * 2) return false
+      if (!saidDeferring) {
+        saidDeferring = true
+        acLog(`${id} return taken while Claude Code is still starting - no more returns until it has (up to ${Math.round((born + PROMPT_STARTUP_MS - Date.now()) / 1000)}s)`)
+      }
+      // The window to prove it in starts again once the start is over.
+      confirmUntil = Math.max(confirmUntil, Date.now() + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES)
+      return true
+    }
+    const codexTook = (): boolean => Boolean(owner?.since && (owner.conversationId ?
+      codexConversationReceipt(owner.receiptCwd, owner.conversationId, prompt, owner.since) :
+      codexAcceptedPrompt(id, prompt, owner.since)))
+    const blocked = (live: Live): boolean => {
+      const screen = strip(live.buffer.read()).split('\n').slice(-30).join('\n').slice(-PROMPT_TAIL_CHARS)
+      return Boolean(live.meta.ask || live.effortHold || this.pendingAnswers.has(id) || ASK_PROMPT.test(screen) || composerHeld(screen))
+    }
+    const sameCodex = (live: Live): boolean =>
+      live === owner?.live && live.proc === owner.proc && this.codexQueued.get(id) === owner && stillOwed(key)
+    const commandLanded = async (held: { key: string; live: Live; proc: Live['proc']; commandOutputAt?: number }, live: Live): Promise<boolean> => {
+      if (held.commandOutputAt === undefined || live.meta.lastOutput <= held.commandOutputAt || blocked(live) || !idle(live)) return false
+      const raw = live.buffer.read()
+      const keyboard = live.meta.lastKeyboard
+      const output = live.meta.lastOutput
+      let box: Awaited<ReturnType<typeof composerOf>> = null
+      try { box = await composerOf(raw, live.cols, live.rows, 'codex') } catch { return false }
+      return this.sessions.get(id) === live && held.live === live && held.proc === live.proc &&
+        this.codexQueued.get(id) === held && stillOwed(held.key) && !blocked(live) && idle(live) &&
+        live.meta.lastKeyboard === keyboard && live.meta.lastOutput === output && live.buffer.read() === raw &&
+        Boolean(box && box.text.trim() === '')
+    }
+    // Unlike a turn clock or a repaint, a native receipt proves the entire payload,
+    // including its line breaks. Ask before every refusal and again after replay.
+    const codexConfirm = (tries: number): void => {
+      setTimeout(() => {
+        if (settled) return
+        const live = this.sessions.get(id)
+        if (!live) return settle('gone')
+        if (!sameCodex(live)) return settle('replaced')
+        if (codexTook()) {
+          acLog(`${id} prompt submitted - native Codex receipt`)
+          return settle('sent')
+        }
+        if (blocked(live)) {
+          acLog(`${id} selector or control on screen, return withheld - no native Codex receipt`)
+          return settle('withheld')
+        }
+        if (owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) {
+          if (!askedAgain || Date.now() < confirmUntil) {
+            askedAgain = true
+            return codexConfirm(tries)
+          }
+          acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
+          return settle('unsent')
+        }
+        if (Date.now() >= confirmUntil) {
+          acLog(`${id} prompt left UNSENT: no exact native Codex receipt; composer ownership retained`)
+          return settle('unsent')
+        }
+        if (tries + 1 < PROMPT_ENTER_TRIES) void codexSubmit(tries + 1)
+        else codexConfirm(tries)
+      }, PROMPT_CONFIRM_MS)
+    }
+    const codexSubmit = async (tries: number): Promise<void> => {
+      if (settled) return
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
+      if (!sameCodex(live)) return settle('replaced')
+      if (codexTook()) {
+        acLog(`${id} prompt submitted - native Codex receipt`)
+        return settle('sent')
+      }
+      if (owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) {
+        // A receipt can be written after this first look. No Enter can follow a
+        // foreign write, but receipt confirmation still gets its bounded window.
+        if (!confirmUntil) confirmUntil = Date.now() + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
+        return codexConfirm(Math.max(0, tries - 1))
+      }
+      if (blocked(live)) {
+        acLog(`${id} selector or control on screen, return withheld - no native Codex receipt`)
+        return settle('withheld')
+      }
+      if (tries === 0) {
+        if (!live.draft.certain || live.draft.text !== prompt) {
+          acLog(`${id} prompt left UNSENT: pasted composer could not be verified`)
+          return settle('unsent')
+        }
+      } else {
+        // A cursor-only Working repaint can leave the draft tens of thousands of
+        // bytes behind the tail. Reconstruct the actual screen at the pane's size.
+        const raw = live.buffer.read()
+        const keyboard = live.meta.lastKeyboard
+        let box: Awaited<ReturnType<typeof composerOf>> = null
+        try { box = await composerOf(raw, live.cols, live.rows, 'codex') } catch { /* unknown: never retry */ }
+        if (settled) return
+        const after = this.sessions.get(id)
+        if (!after) return settle('gone')
+        if (!sameCodex(after)) return settle('replaced')
+        if (codexTook()) {
+          acLog(`${id} prompt submitted - native Codex receipt`)
+          return settle('sent')
+        }
+        if (blocked(after)) {
+          acLog(`${id} selector or control on screen, return withheld after composer replay`)
+          return settle('withheld')
+        }
+        if (owner?.foreign || after.meta.lastKeyboard !== keyboard || (after.meta.lastKeyboard ?? 0) > mark ||
+          after.buffer.read() !== raw || Date.now() >= confirmUntil) return codexConfirm(tries - 1)
+        // Replay adds visual wrap newlines. Ignore only those separators for draft
+        // ownership; the native receipt above still requires byte-exact text.
+        if (!box || box.text.replace(/\n/g, '') !== prompt.replace(/\n/g, '')) return codexConfirm(tries - 1)
+      }
+      // The first paste and replay are asynchronous boundaries. Nothing may take
+      // the composer between their checks and this keystroke.
+      if (!sameCodex(live) || blocked(live) || owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) return codexConfirm(Math.max(0, tries - 1))
+      ourWrite('\r')
+      if (tries === 0) recordPromptReview(live.meta, prompt)
+      noteSubmittedPrompt(id, prompt)
+      acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
+      const typedAt = Date.now()
+      if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
+      if (!firstReturnAt) firstReturnAt = typedAt
+      codexConfirm(tries)
+    }
+    const submit = (tries: number): void => {
+      if (settled) return
+      if (codex) { void codexSubmit(tries); return }
+      const live = this.sessions.get(id)
+      if (!live) return settle('gone')
+      if (owner && !sameCodex(live)) return settle('replaced')
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
-      if ((live.meta.lastKeyboard ?? 0) > mark) {
+      if (owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) {
+        if (claudeTook(live)) {
+          acLog(`${id} prompt submitted - Claude transcript receipt (then the pane was typed into by hand)`)
+          return settle('sent')
+        }
         acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
         return settle('unsent')
       }
+      // A RETURN INTO A QUESTION IS AN ANSWER. 2026-09-27 04:55Z, pane s9-mujbz9vp: `pf tell`
+      // typed into a Claude turn, Claude queued it, and an AskUserQuestion with 4 questions
+      // was drawn over it at 04:55:17. The retries' five returns (04:55:21-37) each picked the
+      // highlighted "(Recommended)" option and the last one pressed Submit - Robert's own
+      // question answered by this app. While a selector is on screen no return goes in:
+      // Claude's receipt says it went in, and otherwise nobody can say, so this stops there.
+      if (live.meta.ask || ((owner || live.meta.agent === 'claude') && blocked(live))) {
+        if (claudeTook(live)) {
+          acLog(`${id} prompt submitted - Claude transcript receipt (a question is on screen)`)
+          return settle('sent')
+        }
+        acLog(`${id} selector on screen, return withheld (try ${tries + 1}/${PROMPT_ENTER_TRIES}) - the prompt may be queued or still typed; not proven`)
+        return settle('withheld')
+      }
+      if (owner?.proof === 'idle') owner.commandOutputAt = live.meta.lastOutput
       ourWrite('\r')
       // Renderer submissions record at `prompt:used`; queued continuations and handoffs
       // bypass that event, so capture their typed prompt here on the first return only.
@@ -3733,11 +4734,22 @@ export class SessionManager extends EventEmitter {
       // `lastOutput` is the pty's own stamp, so it cannot be moved by the return this sends.
 
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
+      if (!firstReturnAt) firstReturnAt = typedAt
       const confirm = (): void => {
-        setTimeout(() => {
+        setTimeout(async () => {
+          if (settled) return
           const still = this.sessions.get(id)
           if (!still) return settle('gone')
-          // A TURN is the only proof the return went in. `runSince` is set when one starts
+          if (owner && !sameCodex(still)) return settle('replaced')
+          if (owner?.proof === 'idle' && await commandLanded(owner, still)) {
+            if (settled) return
+            acLog(`${id} command landed - the verified composer is empty and idle`)
+            return settle('sent')
+          }
+          if (settled) return
+          if (owner && !sameCodex(still)) return settle('replaced')
+          // A shell turn is proof the return went in. Native agents require their receipt.
+          // `runSince` is set when one starts
           // - by this submit or by the agent's own busy footer - so a value newer than the
           // return is the answer being written.
           // ...for a PROMPT. `write()` stamps `runSince` on any return it sends, so for a
@@ -3754,11 +4766,39 @@ export class SessionManager extends EventEmitter {
           // answer, so the turn proof still stands there.
           repaint(still)
           const heldNow = proof !== 'idle' ? promptStillInBox(painted, prompt) : null
-          if (proof !== 'idle' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
-            acLog(`${id} prompt submitted - a turn started`)
-            return settle('sent')
+          if (proof !== 'idle' && still.meta.agent !== 'codex' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
+            if (!receiptOnly(still)) {
+              acLog(`${id} prompt submitted - a turn started`)
+              return settle('sent')
+            }
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt (its turn had begun)`)
+              return settle('sent')
+            }
           }
-          if ((still.meta.lastKeyboard ?? 0) > mark) {
+          // ...AND SOMEBODY TYPING AFTERWARDS DOES NOT UN-SEND IT. 2026-09-27 05:37Z, pane
+          // s27-mujdy58r: the launch prompt is a user row in its transcript at 05:37:06.4, a
+          // `pf type` re-send landed at 05:37:13.8, and the next tick called it UNSENT and
+          // queued-prompts.log said LOST - the receipt was never asked on this branch.
+          // ...AND ONE LOOK IS NOT THE ANSWER. The receipt can land late (the row is written
+          // when Claude Code gets to it) and a line written into the pane moved nothing about
+          // the prompt already sent, so the receipt is asked again every tick until the
+          // confirm window closes - never another return, which would land on that line.
+          // 2026-09-27 16:31, s81: return at 51.902, another write at 52.455, one look at
+          // 55.926 said UNSENT and queued-prompts.log said LOST over a prompt Claude had.
+          if (owner?.foreign || (still.meta.lastKeyboard ?? 0) > mark) {
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt (then the pane was typed into by hand)`)
+              return settle('sent')
+            }
+            // The first look always asks again, whatever the clock says: a lagging timer can
+            // bring that look in after the window has closed (1.4s late on the PC, where the
+            // test's 600ms window ended before it), and one look is still not the answer.
+            if (proof !== 'idle' && still.meta.agent === 'claude' && (!askedAgain || Date.now() < confirmUntil)) {
+              if (!askedAgain) acLog(`${id} no receipt yet after a line from outside - asking again until the confirm ends`)
+              askedAgain = true
+              return confirm()
+            }
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
             return settle('unsent')
           }
@@ -3772,7 +4812,7 @@ export class SessionManager extends EventEmitter {
           // painting" - 24s and two stray keystrokes on every clear, before the resume
           // prompt was even queued. For a command, the composer coming back idle IS the
           // proof, read at the poll cadence rather than the confirm's.
-          if (proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
+          if (!owner && proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
             acLog(`${id} command landed - the composer is idle again (no turn expected)`)
             return settle('sent')
           }
@@ -3795,7 +4835,13 @@ export class SessionManager extends EventEmitter {
             // nobody had sent, with the app's own log ending at that write. So a busy pane
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
-            if (Date.now() >= confirmUntil) {
+            // A receipt is asked for on every tick rather than at the end: a pane painting
+            // its answer is the common case, and the wait it ends can be a minute long.
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt`)
+              return settle('sent')
+            }
+            if (!deferring(still) && Date.now() >= confirmUntil) {
               // ...AND A PANE THAT IS ANSWERING IS NOT A PANE THAT WAS NEVER ASKED. The turn
               // proof above cannot fire for the app's own return - `ourWrite('\r')` runs
               // `beginRun`, which stamps `runSince` a hair BEFORE `typedAt` is read - so it
@@ -3814,19 +4860,40 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - native Codex receipt`)
                 return settle('sent')
               }
-              if (box === false && !typedIntoTurn) {
+              if (claudeTook(still)) {
+                acLog(`${id} prompt submitted - Claude transcript receipt`)
+                return settle('sent')
+              }
+              const noRecord = receiptOnly(still)
+              if (box === false && !typedIntoTurn && still.meta.agent !== 'codex' && !noRecord) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
+              // Codex takes a return while it answers - the prompt waits as a follow-up - so a
+              // prompt still in its composer after the window is a return that did not go in,
+              // not one to guess about: the box says so. Another, within the same budget.
+              if (box === true && still.meta.agent === 'codex' && !typedIntoTurn && tries + 1 < PROMPT_ENTER_TRIES) {
+                acLog(`${id} return did not go in - the Codex composer still holds the prompt`)
+                return submit(tries + 1)
+              }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
-                  (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
+                  (box ? ', and the composer still holds it' : noRecord ? ', and Claude Code has no record of it' :
+                    typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
               )
               return settle('unsent')
             }
             return confirm()
           }
-          // Idle at the composer with no turn behind it: the return was eaten. Send another.
+          // Idle at the composer with no turn behind it: the return was eaten - unless Claude
+          // Code wrote the message down, and then another return is a stray keystroke.
+          if (claudeTook(still)) {
+            acLog(`${id} prompt submitted - Claude transcript receipt`)
+            return settle('sent')
+          }
+          // ...or held by a Claude Code still starting, which sends it itself when it is done.
+          if (deferring(still)) return confirm()
+          // Otherwise the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
             return settle('unsent')
@@ -3838,9 +4905,133 @@ export class SessionManager extends EventEmitter {
     }
 
     let saidWaiting = false
-    const tick = (): void => {
+    // NOT WHILE CLAUDE CODE IS STILL STARTING. An idle-looking composer is not a ready one
+    // until its SessionStart hooks are done - text typed before that was lost outright
+    // (s113-mufldnmu), drawn seconds late, or held unsent past the confirm; see
+    // `claudeStartup`. Only a process younger than PROMPT_STARTUP_MS is held, never past
+    // that age, and no longer than PROMPT_PIDFILE_MS while there is no pid file or no
+    // transcript to read - Claude Code may write none until the prompt this is holding goes
+    // in. Once open it stays open.
+    let gateOpen = false
+    let startWait: string | null = null
+    const starting = (live: Live): boolean => {
+      if (gateOpen) return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      const age = born === undefined ? Infinity : Date.now() - born
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      const now = live.meta.agent === 'claude' && born !== undefined && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
+      const hold = now === 'starting' || now === 'awaiting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
+      if (hold) {
+        if (!startWait) {
+          startWait = now
+          const why = now === 'unknown' ? 'no pid file or transcript yet' : now === 'awaiting' ? 'its SessionStart hooks have not started yet' : 'SessionStart hooks running'
+          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${why})`)
+        }
+        return true
+      }
+      gateOpen = true
+      if (startWait) {
+        acLog(`${id} Claude Code ${now === 'started' ? 'finished starting' : 'still starting - typing anyway'} after ${(age / 1000).toFixed(1)}s`)
+        // The idle-composer wait starts now: its budget was never meant to be spent here.
+        deadline = Date.now() + Math.max(0, budgetMs)
+      }
+      return false
+    }
+    const tick = async (): Promise<void> => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
+      // A restart or wake re-queued this row under a new key while it waited: that wait
+      // types it, this one must not type it a second time.
+      if (!stillOwed(key)) {
+        acLog(`${id} queued prompt handed to the pane's new process - not typed from here`)
+        return settle('replaced')
+      }
+      if (starting(live)) {
+        setTimeout(tick, PROMPT_POLL_MS)
+        return
+      }
+      if (!owner) {
+        // Claude's review composer may conceal a pasted paragraph. Neither a new
+        // empty process nor unreadable paint authorizes replay or a follower paste.
+        for (const row of typedOwed(id)) {
+          if (row.key !== key && !this.promptWaits.has(row.key) && live.meta.agent === 'claude' && row.typed?.proof === 'receipt' &&
+            claudeAcceptedPrompt(live.proc?.pid, row.text, row.typed.at - 1000)) noteSubmitted(row.key)
+        }
+        if (typedOwed(id).some((row) => row.key !== key)) {
+          if (Date.now() >= deadline) releaseCurtain()
+          setTimeout(tick, PROMPT_POLL_MS)
+          return
+        }
+      }
+      if (owner) {
+        if (live !== owner.live || live.proc !== owner.proc) return settle('replaced')
+        let previous = this.codexQueued.get(id)
+        if (previous && previous !== owner &&
+          (previous.live !== live || previous.proc !== live.proc || !stillOwed(previous.key))) {
+          this.codexQueued.delete(id)
+          previous = undefined
+        }
+        let previousAccepted = false
+        if (previous && previous !== owner && previous.since &&
+          previous.live === live && previous.proc === live.proc) {
+          if (previous.proof === 'idle') previousAccepted = await commandLanded(previous, live)
+          else {
+            const cwd = previous.receiptCwd ?? previous.live.meta.cwd
+            const file = previous.conversationId ? codexTranscriptPath(cwd, previous.conversationId) :
+              !previous.recovered ? transcriptFor(id) : null
+            let signature: string | undefined
+            try {
+              if (file) {
+                const st = statSync(file)
+                signature = JSON.stringify([file, st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs,
+                  cwd, previous.conversationId, previous.prompt, previous.since])
+              }
+            } catch { /* unavailable files must not leave a cached miss */ }
+            // Every follower checks the same retained intent. Share only a negative
+            // scan of an unchanged file; native identity is still resolved above.
+            if (!signature || previous.receiptMiss !== signature) {
+              previous.receiptMiss = undefined
+              const receipt = previous.conversationId ?
+                codexConversationReceipt(cwd, previous.conversationId, previous.prompt, previous.since) :
+                !previous.recovered ? codexPromptReceipt(id, previous.prompt, previous.since) : undefined
+              previousAccepted = Boolean(receipt)
+              if (receipt === null) previous.receiptMiss = signature
+            }
+          }
+        }
+        if (previous && previousAccepted) {
+          noteSubmitted(previous.key)
+          previous.accepted = true
+          this.codexQueued.delete(id)
+          this.releaseDraftHold(live, previous.hold)
+          // It went in, so a turn running now is its answer: this prompt waits for that
+          // turn like any other follow-up rather than steering into it. Not behind a
+          // command, which starts no turn - `runSince` there is our own return's stamp.
+          if (proof === 'turn' && previous.proof === 'receipt') waitingForTurn = true
+        }
+        // ...and the same when the held prompt this one queued behind proved ITSELF sent
+        // (its own confirm can look first, and its settle removes it from the map above),
+        // or another follower found its receipt: the turn running now is still its answer,
+        // and Codex's box is empty mid-turn, so nothing else here would stop this one.
+        if (behindOurs && held?.accepted && !heldTurnArmed) {
+          heldTurnArmed = true
+          if (proof === 'turn' && held.proof === 'receipt') waitingForTurn = true
+        }
+        if (settled) return
+        if (this.sessions.get(id) !== live || live.proc !== owner.proc) return settle('replaced')
+        if (!this.codexQueued.has(id)) this.codexQueued.set(id, owner)
+        if (this.codexQueued.get(id) !== owner || blocked(live) || !live.draft.certain) {
+          if (Date.now() >= deadline && !curtainReleased) {
+            acLog(`${id} queued prompt retained - previous composer ownership or dialog is unresolved; not typed`)
+            // Lower the handover curtain without discarding accepted intent. This same
+            // wait promotes it when the owner clears; a restart carries its ledger row.
+            releaseCurtain()
+          }
+          setTimeout(tick, PROMPT_POLL_MS)
+          return
+        }
+      }
+      if (this.pendingAnswers.has(id)) { setTimeout(tick, PROMPT_POLL_MS); return }
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         // Somebody is typing in there. The curtain says "Keys are held" and they are
@@ -3866,14 +5057,76 @@ export class SessionManager extends EventEmitter {
         )
         return settle('abandoned')
       }
+      if (owner) {
+        const raw = live.buffer.read()
+        const keyboard = live.meta.lastKeyboard
+        const draft = live.draft
+        let box: Awaited<ReturnType<typeof composerOf>> = null
+        try { box = await composerOf(raw, live.cols, live.rows, 'codex') } catch { /* unknown: wait */ }
+        if (settled) return
+        const after = this.sessions.get(id)
+        if (!after) return settle('gone')
+        if (!sameCodex(after)) return settle('replaced')
+        if (blocked(after) || after.meta.lastKeyboard !== keyboard || after.draft !== draft || after.buffer.read() !== raw ||
+          !box || box.text.trim() !== '') {
+          if (Date.now() >= deadline) releaseCurtain()
+          setTimeout(tick, PROMPT_POLL_MS)
+          return
+        }
+      }
       // Only on the person path: after an ordinary /clear the app's own return stamped
       // `runSince`, and that is not somebody else's turn.
       typedIntoTurn =
         (live.meta.lastKeyboard ?? 0) > mark && (Boolean(live.meta.runSince) || live.busyUntil > Date.now())
-      ourWrite(prompt)
+      if (!typedTextAt) typedTextAt = Date.now()
+      if (owner || live.meta.agent === 'claude') {
+        if (owner?.foreign) { typedTextAt = 0; return settle('abandoned') }
+        const conversationId = resumeIdFor(id)
+        if (!noteTyped(key, { at: typedTextAt, conversationId, proof: owner?.proof ?? (proof === 'idle' ? 'idle' : 'receipt') })) {
+          acLog(`${id} queued prompt not typed - durable delivery marker could not be saved`)
+          // No bytes left this process. Release only this untyped reservation and keep
+          // its durable accepted row available to the existing wait and restore path.
+          if (owner && this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
+          typedTextAt = 0
+          setTimeout(tick, Math.max(PROMPT_POLL_MS, 1000))
+          return
+        }
+        if (owner) {
+          owner.since = typedTextAt
+          owner.conversationId = conversationId
+        }
+      }
+      // ONE PASTE, NOT A BURST OF KEYS. The pty hands a big write to the CLI 1024 bytes a
+      // read, and Claude Code takes each read of a burst as a paste of its own and a short
+      // last one as typing: a 2110-byte prompt showed as `[Pasted text #1 +12 lines]
+      // [Pasted text #2 +12 lines] bulk. LAST LINE...` (dev probe, 2.1.283). Those pieces
+      // can come apart - 2026-09-27 05:37:04Z, pane s26-mujdy43s, 2116 chars: Claude's user
+      // row was the 99-char tail and nothing else - and a Claude user row came back shorter
+      // than half its prompt for s115, s108, s17 and s15 before it (10392 -> 2333 chars).
+      // Bracketed, it is one paste however it is read: the same probe gave one
+      // `[Pasted text #1 +26 lines]` and a user row holding every line. A slash command
+      // stays keystrokes: it is a command only while typed, and `typeLine` reads it so.
+      // CODEX TOO. Typed raw, Codex reads a fast run of keys as a paste of its own and the
+      // return that follows it as a newline inside that paste: 2026-09-29 7:59:39am, pane
+      // s62-mulltgcs, a 959-char `pf tell` was typed, its one return went in a second later
+      // and the whole brief sat in the composer, never sent (a 1078-char one at 7:10 too).
+      // Bracketed, Codex takes it as ONE paste and the return as a key of its own. A long
+      // one shows as `[Pasted Content N chars]`, a placeholder `promptStillInBox` reads as
+      // the prompt still sitting there.
+      if ((live.meta.agent === 'claude' || live.meta.agent === 'codex') && !prompt.trimStart().startsWith('/')) {
+        ourWrite(`\x1b[200~${prompt}\x1b[201~`)
+        // `typeLine` skips a paste whole, and the words asked - the pane's name is read
+        // from them at the return - are the prompt all the same.
+        live.typed = typeLine(live.typed, prompt)
+      } else ourWrite(prompt)
+      if (owner) noteSubmittedPrompt(id, prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
-      setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
+      setTimeout(() => submit(0), PROMPT_ENTER_MS)
     }
+    // A fresh Claude Code's hooks can be over before that first look: watch them from now.
+    const first = this.sessions.get(id)
+    const firstBorn = first?.proc ? procStarted.get(first.proc) : undefined
+    if (first?.meta.agent === 'claude' && firstBorn !== undefined && Date.now() - firstBorn < PROMPT_STARTUP_MS) watchClaudeHooks(first.proc?.pid, firstBorn)
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
   }
 
@@ -3899,8 +5152,18 @@ export class SessionManager extends EventEmitter {
     // they are different features and share only this cursor. Turning the automatic
     // continue off must not also silence the pane that has given up, which is the one a
     // person misses (`shared/paneError.ts`).
-    const stopped = stoppedLine(painted)
-    if (stopped) this.emit('paneError', live.meta, stopped)
+    // Once per stop: `nextStop` answers null until a turn is submitted into this pane.
+    // The tail goes with the line: a limit's reset is read off it (`shared/limitWave.ts`),
+    // and Codex wraps its date onto the row below.
+    const stopped = nextStop(live.stop, painted)
+    if (stopped) this.emit('paneError', live.meta, stopped, painted)
+    // Already reported, so no news for Telegram - but news for a limit wave. Claude Code
+    // continues a limit-stopped chat by itself, typing nothing through this app, so the
+    // latch never reopens and that turn hitting the limit again would be invisible.
+    else if (live.stop.reported) {
+      const again = stoppedLine(painted)
+      if (again) this.emit('paneStopAgain', live.meta, again, painted)
+    }
     const found = cfg.enabled
       ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)
       : null
@@ -3916,27 +5179,6 @@ export class SessionManager extends EventEmitter {
       `recover: ${live.meta.id} continuing a cut-off turn (${live.recoverTries}/${cfg.maxTries}) - ${found.because}`
     )
     this.queuePrompt(live.meta.id, found.text)
-  }
-
-  /**
-   * Name the pane for what its reply said the handle was.
-   *
-   * `Working On 50 Task` sat on a card all day (2026-09-03) while the first line the
-   * agent printed was `$50 task = Travel Video Editor, Jacob P. (board id 794 ...)`. The
-   * ask carried the handle, the reply carried the name; this joins them. Only output since
-   * the ask is read, and only once: a handle is spent the first time a reply resolves it,
-   * and dropped the moment a person types a title or a client is found.
-   */
-  private sweepResolved(live: Live): void {
-    const handle = live.handle
-    if (!handle) return
-    const s = live.meta
-    if (s.clientOff || s.clientSlug || !(mayRename(s.title, s.cwd) || s.autoTitled === 'topic')) {
-      live.handle = undefined
-      return
-    }
-    // Agent output is not user task evidence. Keep titles grounded in submitted prompts.
-    live.handle = undefined
   }
 
   /**
@@ -4047,10 +5289,10 @@ export class SessionManager extends EventEmitter {
       // The table knows how long it has been alive, so the pane's clock is the command's
       // real age rather than the moment this app noticed it - which matters most for the
       // pane that was already running when the app restarted.
-      return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+      return found && !found.turnTracked ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
     }
     try {
-      const name = live.proc ? paneJob(live.proc.process, live.runner) : ''
+      const name = live.proc ? paneJob(live.proc.process, live.runner, this.tableJobs.get(live.meta.id)) : ''
       if (name) return { name, since: now }
     } catch {
       // A pane whose pty has just died throws from the tty read, inside a sweep that runs
@@ -4066,7 +5308,56 @@ export class SessionManager extends EventEmitter {
     // background job is invisible for at most TABLE_JOB_MS - which costs a clock that
     // starts a beat late, never a pane that is closed.
     const found = this.tableJobs.get(live.meta.id)
-    return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+    return found && !found.turnTracked ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+  }
+
+  /**
+   * Name the pane from its transcript: the CLI's own title for the chat, or a person's
+   * `/rename` inside it. `shared/cliTitle.ts` decides; this only reads what is new since
+   * the last look, at most every `TITLE_READ_MS`.
+   */
+  private sweepCliTitle(live: Live, path: string, now: number): void {
+    const prev = live.titleRead?.path === path ? live.titleRead : undefined
+    if (prev && now - prev.at < TITLE_READ_MS) return
+    let size: number
+    try {
+      size = statSync(path).size
+    } catch {
+      return // gone since the path was resolved - nothing to read
+    }
+    const from = prev ? Math.min(prev.offset, size) : Math.max(0, size - TITLE_TAIL_BYTES)
+    const read: CliTitles = { ...prev?.seen }
+    let offset = from
+    if (size > from) {
+      const buf = Buffer.allocUnsafe(size - from)
+      const fd = openSync(path, 'r')
+      let got = 0
+      try {
+        got = readSync(fd, buf, 0, buf.length, from)
+      } finally {
+        closeSync(fd)
+      }
+      // Whole lines only: one still being written is read, whole, next time.
+      const end = buf.subarray(0, got).lastIndexOf(0x0a) + 1
+      offset = from + end
+      Object.assign(read, titlesIn(buf.subarray(0, end).toString('utf8')))
+    }
+    live.titleRead = { path, offset, at: now, seen: read }
+    const s = live.meta
+    const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
+    const next = nextTitle(
+      pane,
+      read,
+      prev?.seen,
+      projectOf(s.cwd, s.lane),
+      s.clientOff ? undefined : () => earlierTitles(path),
+      this.chatTitles(s.id)
+    )
+    if (!next) return
+    // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
+    // holds the app's own naming back.
+    if (next.by === 'person') this.rename(s.id, next.title)
+    else if (!s.clientOff) this.nameTo(live, next.title, 'agent', 'agent')
   }
 
   /**
@@ -4087,12 +5378,14 @@ export class SessionManager extends EventEmitter {
     const shells = [...this.sessions.values()].filter((l) => {
       if (l.meta.status === 'exited') return false
       if (!SHELLS.has(programName(l.runner).toLowerCase())) return false
-      // POSIX: the tty already answered, exactly and for free, so do not pay for a table
-      // to repeat it. Only a pane whose foreground IS its own shell has anything left to
-      // find out about.
+      // POSIX: ordinary foreground commands are already named by the tty. A shell
+      // foreground can hide background jobs; node/codex needs command-line identity.
       if (!WIN) {
         try {
-          if (l.proc && paneJob(l.proc.process, l.runner)) return false
+          const foreground = l.proc ? paneJob(l.proc.process, l.runner) : null
+          // node may be Codex launched inside a shell. Read its command line on the
+          // existing four-second sampler; never infer an idle agent from "node" alone.
+          if (foreground && !['node', 'codex'].includes(foreground.toLowerCase())) return false
         } catch {
           // A pty that has just died: let the table have the question.
         }
@@ -4118,13 +5411,180 @@ export class SessionManager extends EventEmitter {
       })
   }
 
+  /**
+   * Drop the draft hold an app write set, once that very submission is proven sent.
+   * Only that hold: a person's later Enter sets its own, and theirs still waits for the
+   * screen in `confirmDraft`, whose arithmetic this repeats.
+   */
+  private releaseDraftHold(live: Live | undefined, hold: Live['draftConfirmation']): void {
+    if (!live || !hold || live.draftConfirmation !== hold || this.sessions.get(live.meta.id) !== live) return
+    live.draftConfirmation = undefined
+    const drafting = !live.draft.certain || Boolean(live.draft.text.trim())
+    if (drafting === Boolean(live.meta.drafting)) return
+    live.meta.drafting = drafting || undefined
+    this.emitSessions()
+  }
+
+  /**
+   * A prompt of this app's already in the composer or on its way in: a ledger row marked
+   * typed (`noteTyped` is written before the first byte) or an answer being typed. One only
+   * accepted is not - while a draft flag is up it waits behind that flag, so it cannot also
+   * be what keeps the flag from being rechecked: s19-muqs9nqa, 2026-10-02 11:03Z, a queued
+   * prompt sat "waiting behind you" on a stale flag over an empty box.
+   */
+  private promptInFlight(live: Live): boolean {
+    return this.pendingAnswers.has(live.meta.id) || typedOwed(live.meta.id).length > 0
+  }
+
+  /**
+   * A draft flag nothing has touched for a minute, held against the screen. An empty box
+   * clears it - only when nothing moved while the box was read (same process, same draft,
+   * no paint, no key), the same rule `confirmDraft` keeps, and never under a submission
+   * hold or a prompt this app has typed (`promptInFlight`). `draftRecheckDue` says when.
+   */
+  private async recheckDraft(live: Live): Promise<void> {
+    const { draft, paintSeq: paint } = live
+    const keyboard = live.meta.lastKeyboard
+    if (live.draftConfirmation || this.promptInFlight(live)) return
+    live.draftRecheckAt = Date.now()
+    let box
+    try {
+      box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+    } catch {
+      return
+    }
+    if (!box || box.text.trim()) return
+    if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) || !live.meta.drafting) return
+    live.draft = newDraft()
+    live.typed = ''
+    live.meta.drafting = undefined
+    this.emitSessions()
+    acLog(`${live.meta.id} unsent-draft flag cleared - its prompt box is empty on screen`)
+  }
+
+  private async confirmDraft(live: Live): Promise<void> {
+    const pending = live.draftConfirmation
+    // Paints, not `lastOutput`: the redraw a cancel key causes stamps no output.
+    const paint = live.paintSeq
+    if (!pending || pending.checking || paint <= pending.afterPaint || pending.checkedPaint === paint) return
+    const draft = live.draft
+    pending.checking = true
+    pending.checkedPaint = paint
+    try {
+      const box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+      // Both input and output can change while xterm replays. Never apply an old
+      // empty reading to newer text, or to a replaced process with the same pane id.
+      if (this.sessions.get(live.meta.id) !== live || live.draftConfirmation !== pending ||
+          live.draft !== draft || live.paintSeq !== paint) {
+        pending.checkedPaint = undefined
+        return
+      }
+      const accepted = pending.prompt && (
+        (live.meta.agent === 'codex' && codexAcceptedPrompt(live.meta.id, pending.prompt, pending.since)) ||
+        (live.meta.agent === 'claude' && claudeAcceptedPrompt(live.proc?.pid, pending.prompt, pending.since))
+      )
+      // A native receipt also proves submission when the idle CLI draws a hint in
+      // its otherwise empty box. Unknown providers keep the empty-screen requirement.
+      if (!accepted && (!box || box.text.trim())) return
+      live.draftConfirmation = undefined
+      live.meta.drafting = !draft.certain || Boolean(draft.text.trim()) || undefined
+      this.emitSessions()
+    } catch {
+      // An unreadable composer cannot authorise losing the draft.
+    } finally {
+      pending.checking = false
+    }
+  }
+
+  /**
+   * Which panes are serving something, off the strays sampler's table (`shared/serving.ts`).
+   *
+   * The sampler runs every 30 s whether or not the window can be seen - unlike the usage
+   * sampler behind `backJob`, which stops with a hidden window, and a hidden window is how
+   * the other desk spends its day. One `lsof`/`netstat` per sample on top of a table that
+   * was being read anyway. A socket reading that came back empty is a FAILED reading - no
+   * machine listens on nothing - so it leaves every pane as it was rather than calling
+   * every server stopped.
+   */
+  private sweepServing(procs: ProcRecord[], ledger: ReadonlyMap<string, StrayRecord[]>): void {
+    if (this.servingBusy) return
+    this.servingBusy = true
+    void listeningPids()
+      .then((listening) => {
+        if (!listening.size) return
+        const serving = servingPanes(
+          procs,
+          listening,
+          [...this.sessions.values()]
+            .filter((l) => l.meta.status !== 'exited' && l.proc)
+            .map((l) => ({ id: l.meta.id, pid: l.proc?.pid ?? 0, recorded: ledger.get(l.meta.id) ?? [] }))
+        )
+        let changed = false
+        for (const live of this.sessions.values()) {
+          const next = serving.get(live.meta.id)
+          if (live.meta.serving === next) continue
+          live.meta.serving = next
+          changed = true
+        }
+        if (changed) this.emitSessions()
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.servingBusy = false
+      })
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
+    // Who has read what: the pane a person is looking at, stamped every second while its
+    // turn is over, so a finished reply they read closes 30 s after they look away.
+    const seen = this.activeId ? this.sessions.get(this.activeId) : undefined
+    if (seen?.footerEndedAt && personLooking(true, this.windowFocused(), this.deskWatched())) seen.lookedAt = now
     const reap: string[] = []
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      // A withheld/restored prompt can be accepted manually after its queue timer
+      // ends. Reconcile the entire native payload even when no follower is queued;
+      // an empty composer, repaint or partial receipt leaves its intent owed.
+      if (meta.agent === 'claude' && live.proc) {
+        for (const row of typedOwed(meta.id)) {
+          if (row.typed?.proof === 'receipt' && !this.promptWaits.has(row.key) &&
+            claudeAcceptedPrompt(live.proc.pid, row.text, row.typed.at - 1000)) {
+            noteSubmitted(row.key)
+            // ...and the hold its own return set goes with it, as `settle('sent')` drops it.
+            // Left up, it outlived the whole turn the prompt started (`confirmDraft` waits for
+            // an idle pane), so `endRun` re-asked the next automatic clear over it, read
+            // 'drafting' and queued it for good: s19-muqs9nqa and s17-muqs9hui, 2026-10-02.
+            // A later Enter's hold is somebody else's and stays.
+            if (live.draftConfirmation?.key === row.key) this.releaseDraftHold(live, live.draftConfirmation)
+            this.setOwedPrompt(meta.id, owedCount(meta.id) > 0)
+            acLog(`${meta.id} retained prompt submitted - Claude transcript receipt`)
+            changed = true
+          }
+        }
+      }
+      // Quiet by paint as well: a grace repaint stamps no output and may still be arriving.
+      if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
+          now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
+      // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
+      // has typed is its queue's. This is only the flag left once both are gone.
+      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+          now - live.paintedAt >= 1000) void this.recheckDraft(live)
+      // A CLEAR QUEUED FOR A TURN END ON A PANE WITH NO TURN LEFT. `endRun` re-asks a queued
+      // clear the moment a turn ends, and a draft flag still up then - the hold of the prompt
+      // that started the turn, a line somebody later deleted - queues it again for a turn end
+      // that never comes: 2026-10-02, s19-muqs9nqa and s17-muqs9hui sat idle over an empty box
+      // owed a clear for 15+ minutes. Asked again here once nothing holds the pane; a prompt
+      // this app still owes goes first, and its own turn's end asks again.
+      if (this.autoClearPending.has(meta.id) && meta.status === 'idle' && !live.draftConfirmation &&
+          !meta.owedPrompt && !meta.autoClearAt && !this.autoClearArmTimers.has(meta.id) &&
+          now - meta.lastKeyboard >= 1000 && !dropFor({ ...meta, typed: live.typed })) {
+        acLog(`${meta.id} queued clear asked again - the pane is idle and its box is empty`)
+        this.resumePendingAutoClear(meta.id)
+      }
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live
@@ -4199,10 +5659,53 @@ export class SessionManager extends EventEmitter {
       // `backJob`: it decorates and ranks nothing that could close a pane. It is cached for
       // CACHE_MS inside `handoffFor`, so the sweep is a Map lookup on all but one tick in
       // thirty. A pane with no handoff answers `undefined`, which is not `0`.
+      //
+      // The reply is the transcript, read through `replyFor` (index.ts, cached on
+      // size+mtime), and only for an idle agent pane whose footer has said the turn is over.
+      // A pane started on a conversation that had already finished - handed in, reopened,
+      // restored - never shows a running footer, so nothing would ever end its turn. Its
+      // transcript says the turn is over; that moment (now, not the transcript's) is its
+      // turn end, and the ordinary close rules take it from there (`seedTurnEnd`).
+      if (!live.footerEndedAt && !live.sawFooter && live.req.resume && meta.agent !== 'shell' && meta.status === 'idle' && this.replyFor) {
+        const seen = seedTurnEnd({
+          agent: meta.agent, status: meta.status, asleep: Boolean(meta.asleep), ask: meta.ask, resumed: true,
+          sawFooter: live.sawFooter, turnEndedAt: live.footerEndedAt, turnPending: live.turnPending, runSince: meta.runSince,
+          transcriptTurnEndedAt: this.replyFor(meta.id, meta.agent)?.turnEndedAt
+        })
+        if (seen) {
+          live.footerEndedAt = now
+          audit('turn-end-seeded', { title: meta.title, agent: meta.agent, resumeId: live.req.resumeId ?? null })
+          changed = true
+        }
+      }
+      const reply =
+        meta.agent !== 'shell' && meta.status === 'idle' && live.footerEndedAt && !meta.ask && this.replyFor
+          ? this.replyFor(meta.id, meta.agent)
+          : undefined
+      // A HANDOFF OLDER THAN THE PANE'S LAST PROMPT HAS BEEN READ. `handoffFor` falls back to
+      // the project's unscoped handoff, so on 27 Sep s78 and s81 - panes born hours after it
+      // - both read `session-handoff.md` written 26 Sep 04:41Z and carried "1 step open",
+      // and `closeAfterResult` refuses any pane with one. After a later prompt the reply is
+      // the pane's word on what is left. Kept as the newest seen so a working pane, which
+      // is not read, does not flicker back.
+      if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
       const hand = handoffFor(meta.cwd, meta.id, now)
-      const open = hand.path ? hand.open : undefined
+      const open = handoffOpenAfter(hand, live.promptAt)
+      const nativeId = resumeIdFor(meta.id)
+      const verified = !!nativeId && !!verifiedPaneHandoff(meta.cwd, meta.id, meta.agent, nativeId, now)?.open
+      if (meta.handoffVerified !== verified) { meta.handoffVerified = verified; changed = true }
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
+        changed = true
+      }
+      // ...and whether the turn that ended left anything for anybody: the card says `done`
+      // rather than `waiting` when its reply asked nothing and listed no step an agent
+      // could take (`shared/doneClose.ts` `replyFinished`).
+      const fin = reply
+        ? replyFinished({ agent: meta.agent, status: meta.status, ask: meta.ask, turnEndedAt: live.footerEndedAt, reply: reply.text, runningAgents: reply.runningAgents })
+        : undefined
+      if (fin !== meta.finished) {
+        meta.finished = fin
         changed = true
       }
       // ...and whether the turn that just ended changed anything at all in this pane's
@@ -4246,6 +5749,9 @@ export class SessionManager extends EventEmitter {
           meta.model = live2
           changed = true
         }
+        // ...and what the chat is CALLED: the CLI's own title for it, or a person's
+        // `/rename` inside it. Same path, only the bytes written since the last look.
+        if (path) this.sweepCliTitle(live, path, now)
         // ...and whether that conversation still has a BACKGROUND AGENT running inside
         // this CLI. The turn is over, the footer is quiet, and ending the process now - a
         // move, a sleep, a close - ends the agent with it (s24-mud0n7wb, 2026-09-22: moved
@@ -4259,6 +5765,13 @@ export class SessionManager extends EventEmitter {
         }
         const agents = meta.status === 'exited' || !live.proc ? undefined : backgroundAgentsFor(meta.id, path, bornAt, now)
         noteBackgroundAgents(meta.id, agents)
+        const workers = meta.status === 'exited' || meta.asleep || !live.proc
+          ? { workers: [], status: 'fresh' as const }
+          : backgroundWorkerReadingFor(meta.id, bornAt, now)
+        if (JSON.stringify(workers) !== JSON.stringify(meta.claudeWorkers)) {
+          meta.claudeWorkers = workers
+          changed = true
+        }
         if (agents !== meta.subagent) {
           meta.subagent = agents
           changed = true
@@ -4269,16 +5782,29 @@ export class SessionManager extends EventEmitter {
       // only ever claimed once the conversation's own log says the turn ran at it. Same
       // seam and the same cost as the model reading above: one cached tail read, and only
       // when the file has actually moved.
-      if (live.effort && meta.agent === 'codex') {
-        const turn = rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))
-        if (!live.effort.ladder?.length) {
-          // Which model, in order: the flag the pane was launched with, else the one the
-          // conversation's own log names - a pane started with no model flag took the
-          // person's own default and this app was never told which that is.
-          const model = meta.model || turn.model
-          const ladder = model ? codexLadders(specFor(meta.agent).bin)[model] : undefined
-          if (ladder?.length) live.effort.ladder = ladder
+      if (meta.agent === 'codex') {
+        const workers = codexWorkersFor(meta.id, resumeIdFor(meta.id), now)
+        if (JSON.stringify(workers) !== JSON.stringify(meta.codexWorkers)) {
+          meta.codexWorkers = workers
+          changed = true
         }
+      }
+      const turn =
+        meta.agent === 'codex'
+          ? rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))
+          : undefined
+      // A Codex card follows `/model` too: the conversation's own log names the model it
+      // switched to, and the launch flag stops being true the moment it does.
+      if (turn?.model && turn.model !== meta.model) {
+        meta.model = turn.model
+        changed = true
+      }
+      if (live.effort && turn) {
+        // Which model: the log's, else the launch flag - a pane started with no model
+        // flag took the person's own default and this app was never told which that is.
+        const model = meta.model
+        const ladder = model ? codexLadders(specFor(meta.agent).bin)[model] : undefined
+        if (ladder?.length && ladder !== live.effort.ladder) live.effort.ladder = ladder
         if (turn.effort && turn.effort !== live.effort.confirmed) {
           live.effort = confirmEffort(live.effort, turn.effort, now)
           logEffort({ id: meta.id, confirmed: turn.effort })
@@ -4355,9 +5881,6 @@ export class SessionManager extends EventEmitter {
       ) {
         this.sweepRecover(live)
       }
-
-      // A pane that asked about `$50 task` and has now been told what that is.
-      if (live.handle && !meta.runSince) this.sweepResolved(live)
 
       // A question with an obvious answer, pressed rather than waited on. Here rather
       // than where the question is READ, for the same reason as recover: the frame
@@ -4457,7 +5980,7 @@ export class SessionManager extends EventEmitter {
     // After the loop: `kill` mutates the map this was iterating.
     for (const id of reap) {
       audit('reap-cwd-gone', { id, cwd: this.sessions.get(id)?.meta.cwd ?? null })
-      this.kill(id)
+      this.kill(id, 'cwd-gone')
     }
     if (changed) this.emitSessions()
   }

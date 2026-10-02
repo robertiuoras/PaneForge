@@ -20,8 +20,10 @@ import {
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { BusyReason } from '../../shared/busy'
+import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
+import type { ReviewRecord } from '../../shared/reviews'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Four MiB raw stays comfortably below wire.ts's eight MiB encrypted frame once base64 encoded. */
@@ -32,7 +34,7 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   log(id: string, bytes: number): string
-  write(id: string, data: string): void
+  write(id: string, data: string, terminalReply?: boolean): void
   /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
   sendPrompt(id: string, text: string): void
   resize(
@@ -86,12 +88,17 @@ export interface HostBackend {
   jobs(): Promise<BackJob[]>
   /** files a guest wants put in front of one of THIS device’s panes */
   attachFiles(files: AttachIn[]): AttachResult
+  /** the same files PASTED into pane `id` as images; paths when they cannot be */
+  pasteImages?(id: string, files: AttachIn[]): Promise<AttachResult>
   /** subscribe to pty output; returns an unsubscribe */
   onData(cb: (id: string, data: string) => void): () => void
   /** A submitted prompt from another input surface, for mirrors that saw no keystrokes. */
   onTyped(cb: (id: string, line: string, origin: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
   onAttention(cb: (s: Session) => void): () => void
+  /** Saved completion reports replicated to authenticated peers. */
+  listReviews?: (cursor?: string) => { list: ReviewRecord[]; cursor?: string }
+  onReview?: (cb: (review: ReviewRecord) => void) => () => void
 }
 
 /** A device currently connected to this one, as the Remote dialog lists it. */
@@ -128,6 +135,8 @@ class GuestConn {
   attached = new Set<string>()
   /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
   xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
+  /** what that machine last said about its own panes and its Discord (`shared/discordRpc.ts`) */
+  desk?: DeskReport
   readonly since = Date.now()
   constructor(readonly conn: Conn) {}
 
@@ -202,6 +211,22 @@ export class RemoteHost extends EventEmitter {
    */
   tellPresence(person: boolean): void {
     for (const g of this.guests) g.conn.send({ t: 'presence', person })
+  }
+
+  /** What this desk last said about itself, re-sent to every guest that joins after. */
+  private desk: DeskReport | undefined
+
+  /** Tell every connected guest this desk's own numbers and whether it reaches Discord. */
+  tellDesk(report: DeskReport): void {
+    this.desk = report
+    for (const g of this.guests) g.conn.send({ t: 'desk', report })
+  }
+
+  /** What each connected guest last said about itself - nothing yet from an older build. */
+  deskReports(): Array<{ id: string; name: string; report?: DeskReport }> {
+    return [...this.guests]
+      .filter((g) => g.conn.peer.id)
+      .map((g) => ({ id: g.conn.peer.id, name: g.conn.peer.name, report: g.desk }))
   }
 
   list(): Guest[] {
@@ -291,11 +316,28 @@ export class RemoteHost extends EventEmitter {
         for (const g of this.guests) g.conn.send({ t: 'attention', session: s })
       })
     )
+    if (this.backend.onReview) this.unhook.push(this.backend.onReview((review) => {
+      for (const g of this.guests) g.conn.send({ t: 'review', review })
+    }))
   }
 
   /** Keep-open belongs to this device's config, so publish its reading with each pane. */
   private withKeepOpen(sessions = this.backend.list()): Session[] {
     return sessions.map((s) => ({ ...s, keepOpen: this.backend.isKeepOpen?.(s.id) ?? s.keepOpen ?? false }))
+  }
+
+  /** Reviews can be numerous after an offline day, so send one bounded page at a time. */
+  private sendReviews(conn: Conn, cursor?: unknown): void {
+    const after = typeof cursor === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(cursor) ? cursor : undefined
+    try {
+      const page = this.backend.listReviews?.(after) ?? { list: [] }
+      conn.send({ t: 'reviews', list: page.list, cursor: page.cursor })
+    } catch (err) {
+      // Review catch-up is supplementary: a damaged old record must not reject a paired
+      // device's whole connection or prevent its sessions from arriving.
+      console.warn(`review peer page failed - ${(err as Error).message}`)
+      conn.send({ t: 'reviews', list: [] })
+    }
   }
 
   private publishSessions(): void {
@@ -393,6 +435,9 @@ export class RemoteHost extends EventEmitter {
     this.guests.add(guest)
     conn.on('msg', (m: Msg) => this.handle(guest, m))
     conn.send({ t: 'sessions', list: this.withKeepOpen() })
+    // A reconnect receives durable records written while the link was down.
+    this.sendReviews(conn)
+    if (this.desk) conn.send({ t: 'desk', report: this.desk })
     this.emit('changed')
   }
 
@@ -412,6 +457,26 @@ export class RemoteHost extends EventEmitter {
   }
 
   private writingGuest: GuestConn | null = null
+
+  /**
+   * Send one frame to a connected guest by device id. Only the screen view uses it: every
+   * other kind the host sends is an answer to something the guest asked.
+   */
+  sendTo(device: string, m: Msg): PeerIdentity | null {
+    for (const g of this.guests) {
+      if (g.conn.ready && g.conn.peer.id === device) {
+        g.conn.send(m)
+        return g.conn.peer
+      }
+    }
+    return null
+  }
+
+  /** The identity a connected guest introduced itself with, or null. */
+  guestIdentity(device: string): { peer: PeerIdentity; address: string } | null {
+    for (const g of this.guests) if (g.conn.ready && g.conn.peer.id === device) return { peer: g.conn.peer, address: g.conn.address }
+    return null
+  }
 
   private handle(guest: GuestConn, m: Msg): void {
     const conn = guest.conn
@@ -447,6 +512,10 @@ export class RemoteHost extends EventEmitter {
           guest.conn.peer.person = typeof m.person === 'boolean' ? m.person : undefined
           this.emit('changed')
           return
+        case 'desk':
+          guest.desk = readDeskReport(m.report)
+          this.emit('desk')
+          return
         case 'detach':
           guest.attached.delete(id)
           // Whatever that guest borrowed goes back to this desk the moment it looks
@@ -465,7 +534,7 @@ export class RemoteHost extends EventEmitter {
         case 'write':
           // The writing viewer already registered this prompt from its own keystrokes.
           this.writingGuest = guest
-          try { this.backend.write(id, String(m.data ?? '')) }
+          try { this.backend.write(id, String(m.data ?? ''), m.terminalReply === true) }
           finally { this.writingGuest = null }
           return
         case 'prompt':
@@ -594,6 +663,9 @@ export class RemoteHost extends EventEmitter {
           }
           return
         }
+        case 'reviews':
+          this.sendReviews(conn, m.cursor)
+          return
         case 'projects':
           this.answer(conn, m, this.backend.projects(), 'projects', (list) => ({ t: 'projects', list }))
           return
@@ -637,13 +709,23 @@ export class RemoteHost extends EventEmitter {
           // sentence in the result rather than a `failed` frame: the caller is a person
           // who just pasted something and wants to be told why, not a stack.
           const files = Array.isArray(m.files) ? (m.files as AttachIn[]) : []
-          conn.send({ t: 'filesdone', rid: m.rid, result: this.backend.attachFiles(files) })
+          const done = (result: AttachResult): void => conn.send({ t: 'filesdone', rid: m.rid, result })
+          // Images go in the way a drop on THIS desk puts them in: onto this machine's
+          // clipboard and the agent's own image key, so the agent shows a picture and not
+          // a path. Anything that is not all images, or an agent that does not read the
+          // clipboard, is saved and answered with paths, as it always was.
+          if (this.backend.pasteImages && id)
+            void this.backend.pasteImages(id, files).then(done, () => done({ ...this.backend.attachFiles(files), pasted: 0 }))
+          else done(this.backend.attachFiles(files))
           return
         }
         case 'ping':
           conn.send({ t: 'pong' })
           return
         default:
+          // The screen view's signalling: offer, answer, candidates, stop, wake. Relayed
+          // to whoever owns the view (main/screenStream.ts); the host only carries them.
+          if (m.t.startsWith('screen:')) this.emit('screen', conn.peer, conn.address, m)
           return
       }
     } catch (err) {

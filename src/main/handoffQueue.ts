@@ -30,7 +30,7 @@ export interface QueueDeps {
   /** the pane is mid-turn or holding a question it drew on screen */
   busy(s: Session): boolean
   /** move it now - the same path the button takes, with the wait already spent */
-  send(id: string, device: string, closeReceiverWhenDone: boolean): Promise<HandoffItem[]>
+  send(id: string, device: string, closeReceiverWhenDone: boolean, automatic?: boolean): Promise<HandoffItem[]>
   /**
    * Paint the pane as on its way, so nothing else closes or moves it.
    *
@@ -83,12 +83,12 @@ export class HandoffQueue {
     return q ? this.deps.deviceName(q.device) : null
   }
 
-  add(id: string, device: string, closeReceiverWhenDone = false): void {
+  add(id: string, device: string, closeReceiverWhenDone = false, automatic = false): void {
     // Re-queueing an id keeps its ORIGINAL wait: pressing the button again while a pane is
     // still working must not push its deadline out for ever.
     const had = this.entries.get(id)
     const since = had?.since ?? this.now()
-    this.entries.set(id, { id, device, since, closeReceiverWhenDone })
+    this.entries.set(id, { id, device, since, closeReceiverWhenDone, automatic })
     this.deps.mark(id, true, since)
     if (!had) this.deps.log(`handoff: ${id} queued for ${this.deps.deviceName(device)} - waiting for the turn to end`)
     this.arm()
@@ -150,19 +150,34 @@ export class HandoffQueue {
       // A background agent still running inside the CLI holds the move exactly as a turn
       // does: the move ends the CLI here and the agent with it (s24-mud0n7wb, 2026-09-22).
       const held = pane?.subagent
+      // ...and so does a prompt the app still owes the pane - an automatic clear counting
+      // down, or its resume prompt. Moving it then carries the conversation over un-cleared
+      // and types the clear into the copy being closed (s60-mulljm2l, 2026-09-28).
+      const owed = Boolean(pane?.owedPrompt)
       const state = pane
         ? {
             // The queue's own reading of busy is the one that decides, not fleetState:
             // `busy` covers a live question as well as a turn, and both must hold the move.
-            state: (this.deps.busy(pane) ? 'working' : 'ready') as 'working' | 'ready',
-            asking: false,
-            subagent: held
+            state: (pane.status === 'exited' ? 'exited' : this.deps.busy(pane) ? 'working' : 'ready') as 'exited' | 'working' | 'ready',
+            asking: !!pane.drafting,
+            subagent: held,
+            backJob: pane.backJob,
+            owedPrompt: pane.owedPrompt,
+            finished: pane.finished,
+            handoffOpen: pane.handoffOpen,
+            handoffVerified: pane.handoffVerified,
+            agent: pane.agent
           }
         : undefined
-      if (held && this.heldSaid.get(q.id) !== held) {
-        this.heldSaid.set(q.id, held)
-        this.deps.log(`handoff: ${q.id} still waiting - ${held} is still running, and moving now would stop it`)
-      } else if (!held) {
+      const holding = held
+        ? `${held} is still running, and moving now would stop it`
+        : owed
+          ? 'an automatic clear or a prompt the app is typing is on its way into it, and moving now would lose it'
+          : undefined
+      if (holding && this.heldSaid.get(q.id) !== holding) {
+        this.heldSaid.set(q.id, holding)
+        this.deps.log(`handoff: ${q.id} still waiting - ${holding}`)
+      } else if (!holding) {
         this.heldSaid.delete(q.id)
       }
       const verdict = queueVerdict(q, pane ? state : undefined, cfg, now)
@@ -180,7 +195,7 @@ export class HandoffQueue {
         // must leave `goAt` alone, or the countdown would never survive its own second
         // tick. Only a pane that went BUSY AGAIN clears it, same as if the turn had never
         // ended - read straight off `busy()` rather than inferred from the verdict.
-        if (q.goAt != null && pane && (this.deps.busy(pane) || held)) {
+        if (q.goAt != null && pane && (this.deps.busy(pane) || held || pane.backJob || pane.owedPrompt || pane.drafting)) {
           this.entries.set(q.id, { ...q, goAt: undefined })
           this.deps.soon?.(q.id, q.device, null)
         }
@@ -197,7 +212,7 @@ export class HandoffQueue {
         this.deps.mark(q.id, false)
         this.deps.soon?.(q.id, q.device, null)
         const mins = Math.round((now - q.since) / 60000)
-        const why = held ? `${held} is still running` : 'still working'
+        const why = held ? `${held} is still running` : owed ? 'an automatic clear or a prompt the app was typing was still on its way into it' : 'still working'
         this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - ${why}, so it stays here`)
         this.deps.notify?.(
           `${this.paneName(q.id, panes)} did not move to ${this.deps.deviceName(q.device)} - ${why} after ${mins} min, so it stays here`
@@ -228,7 +243,7 @@ export class HandoffQueue {
     const name = this.paneName(q.id)
     const where = this.deps.deviceName(q.device)
     void this.deps
-      .send(q.id, q.device, q.closeReceiverWhenDone === true)
+      .send(q.id, q.device, q.closeReceiverWhenDone === true, q.automatic)
       .then((items) => {
         const item = items[0]
         if (item?.ok) {

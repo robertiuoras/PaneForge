@@ -255,6 +255,18 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
   const currentSpan = composerAt(r => current[r] ?? '', 2, { codexCols: 76 });
   eq('Codex 0.155 context footer still closes the draft', currentSpan?.top, 1);
   eq('Codex 0.155 wrapped draft includes its first row', currentSpan?.bottom, 2);
+  // Captured 2026-09-29: the configured native Codex status line is centred.
+  // Requiring exactly two leading spaces hides every row except the cursor's row.
+  const centred = ['', '› alpha beta', '  gamma delta', '  epsilon zeta', '',
+    '                    360K in · 1.04K out · Context 78% left · GPT-6-Astra medium · PaneForge · master',
+    '  ? for shortcuts'];
+  for (const cursor of [1, 2, 3]) {
+    const span = composerAt(r => centred[r] ?? '', cursor, { codexCols: 133 });
+    eq('centred Codex footer proves the first draft row from every cursor row', span?.top, 1);
+    eq('centred Codex footer includes all draft rows', span?.bottom, 3);
+  }
+  eq('centred footer does not opt shell output into editing', composerAt(r => centred[r] ?? '', 2), null);
+  eq('centred status line is outside the editor', composerAt(r => centred[r] ?? '', 5, { codexCols: 133 }), null);
 }
 // Captured live 2026-09-11 off this checkout, Claude Code 2.1.268 and Codex 0.153.4 in a
 // headless dev copy at 77 columns - the frames a person sees when they click around a

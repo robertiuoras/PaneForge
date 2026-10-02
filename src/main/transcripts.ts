@@ -20,7 +20,9 @@
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, sep } from 'node:path'
+import { execFile } from 'node:child_process'
+import { measureMainTask } from './mainPerformance'
 
 /** Claude Code and Antigravity keep transcripts we can name a session from. */
 const SUPPORTED = new Set(['claude', 'antigravity'])
@@ -194,6 +196,8 @@ interface Started {
   at: number
   /** the transcript this pane held when it last said it had moved, if it held one */
   prior?: string
+  /** An explicitly resumed Codex conversation remains authoritative until re-noted. */
+  codexResumeId?: string
 }
 
 const started = new Map<string, Started>()
@@ -201,6 +205,8 @@ const started = new Map<string, Started>()
 const claimed = new Map<string, string>()
 /** paneId -> Codex rollout id, which is not encoded in the rollout filename. */
 const codexClaimed = new Map<string, string>()
+// Avoid rereading a growing rollout once its latest submitted prompt is confirmed.
+const codexConfirmedPrompt = new Map<string, string>()
 /**
  * Transcripts a pane has moved OFF, which nothing may drift onto.
  *
@@ -282,7 +288,7 @@ function transcripts(dir: string): Listed[] {
  * pty bytes pass through, so it was the lag a keystroke felt. `reads.head` counts, so a
  * test can prove a file is not read again for an answer that cannot change.
  */
-export const reads = { head: 0 }
+export const reads = { head: 0, codexProofBytes: 0 }
 const head = Buffer.alloc(HEAD_BYTES)
 function readHead(file: string): string | null {
   let fd = -1
@@ -458,9 +464,11 @@ const openings = new Map<string, Opening>()
  * folder - and take somebody else's.
  */
 export function noteSession(id: string, cwd: string, agent: string, resumeId?: string): void {
-  started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id) })
+  started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id),
+    codexResumeId: agent === 'codex' ? resumeId : undefined })
   claimed.delete(id)
   codexClaimed.delete(id)
+  codexConfirmedPrompt.delete(id)
   settled.delete(id)
   const file = resumeId ? (agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId)) : null
   if (file) {
@@ -475,6 +483,7 @@ export function forgetSession(id: string): void {
   started.delete(id)
   claimed.delete(id)
   codexClaimed.delete(id)
+  codexConfirmedPrompt.delete(id)
   settled.delete(id)
 }
 
@@ -501,19 +510,32 @@ export function transcriptFor(id: string): string | null {
   if (s.agent === 'codex') {
     const mine = claimed.get(id)
     const known = codexClaimed.get(id)
-    if (mine && known && codexMatches(mine, s.cwd, known)) return mine
+    const current = mine && known && codexMatches(mine, s.cwd, known) ? mine : null
+    // A pending receipt is not evidence that an explicitly resumed pane moved. An
+    // older same-folder rollout may contain the identical prompt already; following
+    // that text would hide the delayed receipt in the conversation we actually own.
+    // /new, /clear and /resume re-note the pane; changed metadata invalidates current.
+    if (current && known === s.codexResumeId) return current
+    const submittedLines = submitted.get(id)
+    const latest = submittedLines?.at(-1)
+    if (current && (!latest || codexConfirmedPrompt.get(id) === latest)) return current
+    if (current && latest && codexSaidByPane(current, [latest])) {
+      codexConfirmedPrompt.set(id, latest)
+      return current
+    }
     const taken = new Set([...claimed].filter(([other]) => other !== id).map(([, file]) => file))
-    const lines = submitted.get(id)
+    // /new keeps the terminal. Only the latest prompt can prove the pane has moved.
+    const lines = current && latest ? [latest] : submittedLines
     // Cwd plus a one-minute launch window is not identity: a first pane can be queried
     // after a second pane has already written its rollout. Require a line THIS pane typed.
-    if (!lines?.length) return null
+    if (!lines?.length) return current
     // Shared evidence cannot decide ownership, but a later pane-specific submitted line
     // can. Keep only proof no other live same-folder Codex pane also submitted.
     const uniqueLines = lines.filter((line) => ![...started].some(([other, candidate]) =>
       other !== id && candidate.agent === 'codex' && sameCwd(candidate.cwd, s.cwd) &&
-      !codexClaimed.has(other) && proofsOverlap([line], submitted.get(other) ?? [])
+      (current || !codexClaimed.has(other)) && proofsOverlap([line], submitted.get(other) ?? [])
     ))
-    if (!uniqueLines.length) return null
+    if (!uniqueLines.length) return current
     const matches = codexRollouts(s.at - START_SLACK_MS)
       .map(codexMeta)
       .filter((row): row is CodexMeta => Boolean(row))
@@ -525,12 +547,14 @@ export function transcriptFor(id: string): string | null {
       // `s2-mtwz8uej`). What still bounds the search is `codexRollouts`, which only offers
       // files WRITTEN since this pane started - a rollout this pane is typing into has
       // just been appended to, whenever it was created.
-      .filter((row) => sameCwd(row.cwd, s.cwd) && !taken.has(row.file) && codexSaidByPane(row.file, uniqueLines))
+      .filter((row) => sameCwd(row.cwd, s.cwd) && !taken.has(row.file) && !released.has(row.file) && codexSaidByPane(row.file, uniqueLines))
     // Cwd and time identify a candidate only while they identify exactly one. Two panes
     // launched together in one folder must remain unresumable rather than swap chats.
-    if (matches.length !== 1) return null
+    if (matches.length !== 1) return current
+    if (current && current !== matches[0].file) released.add(current)
     claimed.set(id, matches[0].file)
     codexClaimed.set(id, matches[0].id)
+    if (latest && codexSaidByPane(matches[0].file, [latest])) codexConfirmedPrompt.set(id, latest)
     settled.add(id)
     return matches[0].file
   }
@@ -775,6 +799,20 @@ function movedTo(
   return cand.file
 }
 
+/** The row a live Claude Code keeps at `~/.claude/sessions/<pid>.json`, when it is this pid's. */
+function cliSession(pid: number | undefined): { sessionId: string; cwd: string } | null {
+  if (!pid) return null
+  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
+  try {
+    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
+  } catch {
+    return null
+  }
+  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return null
+  return { sessionId: row.sessionId, cwd: row.cwd }
+}
+
 /**
  * Claim the conversation Claude Code itself says this pane's process is in.
  *
@@ -790,22 +828,255 @@ function movedTo(
  */
 export function claimFromCli(id: string, pid: number | undefined): boolean {
   const s = started.get(id)
-  if (!s || s.agent !== 'claude' || !pid) return false
-  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
-  try {
-    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
-    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
-  } catch {
-    return false
-  }
-  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return false
-  if (!sameCwd(row.cwd, s.cwd)) return false
+  if (!s || s.agent !== 'claude') return false
+  const row = cliSession(pid)
+  if (!row || !sameCwd(row.cwd, s.cwd)) return false
   const file = transcriptPath(s.cwd, row.sessionId)
   if (!file) return false
   claimed.set(id, file)
   settled.add(id)
   released.delete(file)
   return true
+}
+
+/**
+ * Has the Claude Code behind this pid finished starting - its SessionStart hooks run?
+ *
+ * Text typed while they run is not safe, and all three ways it goes wrong were measured
+ * (Claude Code 2.1.281, a folder with AGENTS.md and no CLAUDE.md):
+ * - s113-mufldnmu, 2026-09-24: a brief typed 2.5s in, hooks done at +13s, never drawn in
+ *   the composer and never sent - six returns went into an empty box and it was lost.
+ * - five panes opened at once, 2026-09-25: typed at +1s, drawn at once, but the submit
+ *   waited for the hooks (the transcript's first record came 12-45s in), past the app's
+ *   24s confirm - all five logged LOST while all five were answered.
+ * - the same five with the prompt typed again whenever the box read empty: the first
+ *   copy was still undrawn 4s after it was typed, so four of five went in as ONE message
+ *   holding the prompt 2-3 times. An empty-looking box proves nothing while this runs.
+ *
+ * The CLI writes its SessionStart records to the transcript when its hooks are done
+ * (measured on five fresh panes: file born at +9-15s, the records within a second of it;
+ * its pid file's own `status` already says `idle` at +2s, so that cannot tell), and
+ * `~/.claude/sessions/<pid>.json` names that transcript. The records of one start carry
+ * stamps up to ~4s apart, so the file must also have gone quiet for `STARTUP_SETTLE_MS`.
+ * `started` - both; `starting` - the transcript is there and they are not (yet); `unknown` -
+ * no pid file for this pid, or no transcript on disk yet: nothing to read.
+ *
+ * NO TRANSCRIPT IS NOT "STILL STARTING". Claude Code (2.1.281-2.1.283) often writes no
+ * transcript at all until the first prompt has been submitted - it keeps the SessionStart records in
+ * memory and writes them out with the first user row. Of 178 fresh 2.1.283 sessions on this
+ * Mac whose first prompt came 10s+ after their hooks, 83 had no file before that prompt;
+ * every pane on 2026-09-26/27 whose launch prompt waited the whole 60s had its file born at
+ * +62-67s, right after the app typed anyway (s2, s15, s20, s26, s27; hooks done at +2-11s).
+ * Read as `starting`, a missing file held every such prompt the full minute, and at 05:37Z
+ * two panes sat at an empty box long enough that the prompt was sent again by hand. So it
+ * is `unknown`, which holds only the short `PROMPT_PIDFILE_MS` wait.
+ *
+ * That short wait was then the whole wait: 67 of 72 fresh panes 2026-10-01/02 typed at
+ * +10.0-10.2s with their hooks over at +2-5s. So the process tree answers first
+ * (`hookState`): a pid file plus hooks seen to run and end is `started`; hooks seen still
+ * running are `starting`, held past the short wait. s38-mupyep73 (2026-10-01, a resume at
+ * memory pressure 2): typed at the 10.1s short wait, `SessionStart:resume` at +29-33s,
+ * six returns swallowed, the prompt lost. Hooks this desk runs but not seen yet are
+ * `awaiting` (`hooksAwaited`): at load 50-137 a fresh CLI's first hook started at +11-25s.
+ * A resumed transcript counts only a record stamped since this spawn (`startRecordSince`).
+ */
+const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
+export function claudeStartup(
+  pid: number | undefined,
+  born: number,
+  resumed?: { cwd: string; id?: string }
+): 'started' | 'starting' | 'awaiting' | 'unknown' {
+  const row = cliSession(pid)
+  const hooks = pid === undefined ? 'unseen' : hookState(pid, born)
+  if (hooks === 'over') return 'started'
+  // Seen running is a reading, not a guess: held past the short wait, up to the ceiling.
+  if (hooks === 'running') return 'starting'
+  const file = (row && transcriptPath(row.cwd, row.sessionId)) || (resumed?.id && transcriptPath(resumed.cwd, resumed.id)) || null
+  const record = file ? (resumed ? startRecordSince(file, born) : /"hookName":"SessionStart:/.test(readHead(file) ?? '')) : false
+  if (file && record) {
+    try {
+      return Date.now() - statSync(file).mtimeMs >= STARTUP_SETTLE_MS ? 'started' : 'starting'
+    } catch {
+      return 'starting'
+    }
+  }
+  if (pid && hooksAwaited(pid, born, row !== null, resumed ? 'resume' : 'startup')) return 'awaiting'
+  if (!row || !file) return 'unknown'
+  // A resumed transcript without this start's record says nothing: it is the old file.
+  return resumed ? 'unknown' : 'starting'
+}
+
+/**
+ * HOOKS THAT HAVE NOT STARTED YET ARE STILL TO COME. On a loaded Mac a fresh CLI's first
+ * hook started at +11-25s (2026-10-02, load average 50-137, 5 at once), so at the 10s
+ * short wait nothing had been seen and the prompt went in anyway: 14 of 15 such panes left
+ * it UNSENT and 4 never answered it (rows 0 when closed at +60s). A resumed CLI first
+ * takes in its transcript (s38: hooks at +25-33s). So on a desk whose settings run a
+ * SessionStart hook for this kind of start, none seen yet is `awaiting`: held while there is
+ * no pid file (the CLI has not got that far; at most 3x the short wait) and for the short
+ * wait after it appears - a
+ * hook short enough to fall between two readings must not cost the 60s ceiling. Windows
+ * cannot see hooks, so it never awaits them.
+ */
+const HOOKS_UNSEEN_MS = Number(process.env.PF_PROMPT_PIDFILE_MS ?? 10_000)
+const pidFileSeen = new Map<number, { born: number; at: number }>()
+function hooksAwaited(pid: number, born: number, hasPidFile: boolean, source: 'startup' | 'resume'): boolean {
+  if (process.platform === 'win32' || !sessionStartHooks(source)) return false
+  const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+  // A CLI too old to write pid files, or one writing them somewhere else, would otherwise hold
+  // every prompt to the ceiling. Under load the pid file was born +3-19s in.
+  if (!hasPidFile) return Date.now() - born < 3 * HOOKS_UNSEEN_MS && existsSync(join(base, 'sessions'))
+  let seen = pidFileSeen.get(pid)
+  if (seen?.born !== born) {
+    for (const [p, s] of pidFileSeen) if (Date.now() - s.at > 120_000) pidFileSeen.delete(p)
+    seen = { born, at: Date.now() }
+    pidFileSeen.set(pid, seen)
+  }
+  return Date.now() - seen.at < HOOKS_UNSEEN_MS
+}
+
+/**
+ * A SessionStart record written by the start that began at `born`. A resumed transcript
+ * holds the records of every earlier start, and read as this one's they opened the gate at
+ * the first look: s41-mupyt5ez (2026-10-01, `--resume` at memory pressure 2) was typed at
+ * +4.6s while the CLI was still taking in an old task notification. A fresh file is this
+ * start's own; a resumed one's new records are at the tail.
+ */
+function startRecordSince(file: string, born: number): boolean {
+  for (const text of [readHead(file) ?? '', tail(file)]) {
+    for (const line of text.split('\n')) {
+      if (!line.includes('"hookName":"SessionStart:')) continue
+      if (Date.parse(/"timestamp":"([^"]+)"/.exec(line)?.[1] ?? '') >= born) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Does this desk run a SessionStart hook for a `source` start (`startup`, `resume`)? Only
+ * then is a missing record "still starting"; with none, nothing will ever write one and the
+ * short wait stands. Read from the user's settings.json, kept while its mtime and size hold.
+ */
+let hookDecl: { key: string; on: Record<string, boolean> } | undefined
+function sessionStartHooks(source: 'startup' | 'resume'): boolean {
+  const file = join(process.env.PF_CLAUDE_HOME || join(homedir(), '.claude'), 'settings.json')
+  try {
+    const st = statSync(file)
+    const key = `${st.mtimeMs}:${st.size}`
+    if (hookDecl?.key !== key) {
+      const s = JSON.parse(readFileSync(file, 'utf8')) as { disableAllHooks?: boolean; hooks?: { SessionStart?: { matcher?: string; hooks?: unknown[] }[] } }
+      const groups = s?.disableAllHooks ? [] : Array.isArray(s?.hooks?.SessionStart) ? s.hooks.SessionStart : []
+      const fires = (src: string): boolean =>
+        groups.some((g) => {
+          if (!Array.isArray(g?.hooks) || !g.hooks.length) return false
+          if (!g.matcher || g.matcher === '*') return true
+          try {
+            return new RegExp(`^(?:${g.matcher})$`).test(src)
+          } catch {
+            return g.matcher.includes(src)
+          }
+        })
+      hookDecl = { key, on: { startup: fires('startup'), resume: fires('resume') } }
+    }
+    return hookDecl.on[source]
+  } catch {
+    return false
+  }
+}
+
+const HOOKS_QUIET_MS = Number(process.env.PF_CLAUDE_HOOKS_QUIET_MS ?? 500)
+const HOOKS_PS_MS = Number(process.env.PF_CLAUDE_HOOKS_PS_MS ?? 200)
+type HookWatch = { born: number; asked: number; saw: boolean; quietSince: number; quietAt: number }
+const hookWatch = new Map<number, HookWatch>()
+let hookPsRunning = false
+let hookTimer: NodeJS.Timeout | undefined
+const hooksOver = (w: HookWatch): boolean => w.saw && w.quietSince > 0 && w.quietAt - w.quietSince >= HOOKS_QUIET_MS
+
+/**
+ * Start reading this Claude Code process's hooks now, not at the prompt's first look: that
+ * look comes 2.5s in (PROMPT_START_MS) and an idle desk's hooks are over at +2.2s, so a
+ * watch begun there never saw one and the pane waited the whole 10s anyway (dev copy
+ * 2026-10-02, one pane alone: `typing anyway after 10.1s`, hooks over at +2.2s).
+ */
+export function watchClaudeHooks(pid: number | undefined, born: number): void {
+  // Same pid, another process: a finished watch must not open a new CLI's gate.
+  if (process.platform === 'win32' || !pid || hookWatch.get(pid)?.born === born) return
+  hookWatch.set(pid, { born, asked: 0, saw: false, quietSince: 0, quietAt: 0 })
+  readHookTree()
+}
+
+/**
+ * Has the Claude Code behind this pid run its SessionStart hooks, and have they all ended?
+ *
+ * Claude Code starts every hook in a process group of its own (pgid = the hook's pid, no
+ * terminal) and keeps its MCP servers in the CLI's group. Measured on 2.1.287, a `sleep 5`
+ * SessionStart hook: pgid its own, `??` tty; `cua-driver mcp`: the CLI's pgid and tty. So a
+ * direct child in another group is a hook still running. Done = one was seen, then two
+ * readings `HOOKS_QUIET_MS` apart, and every one between, found none: on this desk's ~35
+ * hooks the gate opened at +2.4s (hooks over at +1.9s), and with a `sleep 4` hook added at
+ * +5.7s. Twelve real launches (1 alone, 5 at once, 2026-10-02) each ran their startup
+ * children as one unbroken stretch - the status line overlaps the hooks - so a quiet gap
+ * inside it was never seen.
+ *
+ * Watched only once the pid file is there: before it the CLI runs short children of its own
+ * (a shell snapshot), and a quiet gap after one of those is not hooks done.
+ * Never seen answers nothing here: `hooksAwaited` says whether they are still to come.
+ * Windows has no process groups.
+ * One `ps -Ao pid=,ppid=,pgid=` (~15ms, no command column) serves every pane asking.
+ */
+function hookState(pid: number, born: number): 'over' | 'running' | 'unseen' {
+  if (process.platform === 'win32') return 'unseen'
+  watchClaudeHooks(pid, born)
+  const w = hookWatch.get(pid)
+  if (!w) return 'unseen'
+  w.asked = Date.now()
+  return hooksOver(w) ? 'over' : w.saw ? 'running' : 'unseen'
+}
+
+/** One `ps` for every pane still being watched, again every HOOKS_PS_MS until each has settled or gone. */
+function readHookTree(): void {
+  if (hookPsRunning || hookTimer) return
+  hookPsRunning = true
+  const at = Date.now()
+  // Only a CLI that has written its pid file is read: see `hookState`.
+  const ready = new Set([...hookWatch.keys()].filter((pid) => cliSession(pid)))
+  execFile('ps', ['-Ao', 'pid=,ppid=,pgid='], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    hookPsRunning = false
+    const end = Date.now()
+    // Past the startup window, or no longer asked about (its prompt went in): stop watching,
+    // whether or not `ps` answered, so a failing `ps` never runs on for ever.
+    for (const [pid, w] of hookWatch) if (end - w.born > 60_000 || (w.asked && end - w.asked > 2000)) hookWatch.delete(pid)
+    // A failed reading is no reading: neither busy nor quiet.
+    if (!error) {
+      const rows: Array<[number, number, number]> = []
+      for (const line of stdout.split('\n')) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line)
+        if (m) rows.push([Number(m[1]), Number(m[2]), Number(m[3])])
+      }
+      const group = new Map(rows.map(([p, , g]) => [p, g]))
+      const running = new Set(rows.filter(([, parent, g]) => hookWatch.has(parent) && g !== group.get(parent)).map(([, parent]) => parent))
+      for (const [pid, w] of hookWatch) {
+        // Gone (the pid may be reused): stop watching.
+        if (!group.has(pid)) hookWatch.delete(pid)
+        else if (!ready.has(pid) || hooksOver(w)) continue
+        else if (running.has(pid)) {
+          w.saw = true
+          w.quietSince = 0
+        } else if (w.saw) {
+          // A hook may have ended just before this reading's snapshot: quiet counts from its end.
+          if (!w.quietSince) w.quietSince = end
+          w.quietAt = at
+        }
+      }
+    }
+    if ([...hookWatch.values()].some((w) => !hooksOver(w))) {
+      hookTimer = setTimeout(() => {
+        hookTimer = undefined
+        readHookTree()
+      }, HOOKS_PS_MS)
+      hookTimer.unref?.()
+    }
+  })
 }
 
 /** The conversation id to resume this pane with - the transcript's own file name. */
@@ -850,13 +1121,14 @@ interface CodexMeta {
   id: string
   cwd: string
   at: number
+  mainCli: boolean
 }
 
 const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Opening metadata can carry a large native rollout payload, but never needs an unbounded read. */
 const CODEX_META_LINE_BYTES = 64 * 1024
-/** A fresh prompt receipt is near the rollout tail; keep the proof bounded on long chats. */
-const CODEX_PROMPT_RECEIPT_BYTES = 2 * 1024 * 1024
+/** A fresh prompt receipt is near the transcript's tail; keep the proof bounded on long chats. */
+const PROMPT_RECEIPT_BYTES = 2 * 1024 * 1024
 
 /** Direct validation of an already uniquely claimed local rollout. */
 function codexMatches(file: string, cwd: string, id: string): boolean {
@@ -908,7 +1180,10 @@ function codexMeta(file: string): CodexMeta | null {
       const cwd = row.payload.cwd
       const timestamp = row.payload.timestamp
       const at = typeof timestamp === 'number' ? timestamp : typeof timestamp === 'string' ? Date.parse(timestamp) : NaN
-      return typeof cwd === 'string' && Number.isFinite(at) ? { file, id, cwd, at } : null
+      return typeof cwd === 'string' && Number.isFinite(at) ? {
+        file, id, cwd, at,
+        mainCli: row.payload.source === 'cli' && row.payload.thread_source === 'user'
+      } : null
     }
   } catch {
     return null
@@ -918,10 +1193,125 @@ function codexMeta(file: string): CodexMeta | null {
   return null
 }
 
+/** Recover an edited-prompt claim from the live native CLI, never cwd or the caller's ID.
+ * Codex also holds its subagents' rollouts open, so only one main CLI rollout qualifies.
+ * Stop walking at the native CLI: its child `codex exec` jobs are not the pane itself.
+ */
+export async function claimCodexFromProcess(id: string, pid: number | undefined): Promise<boolean> {
+  const s = started.get(id)
+  if (process.platform !== 'darwin' || !s || s.agent !== 'codex' || !pid || resumeIdFor(id)) return false
+  const read = (command: string, args: string[]): Promise<string> => new Promise((resolve) => {
+    execFile(command, args, { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => resolve(error ? '' : stdout))
+  })
+  const snapshot = async () => (await read('ps', ['-Ao', 'pid=,ppid=,lstart=,comm=,args=']))
+    .split('\n').flatMap((line) => {
+      const m = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+(\S+)\s+(.*)$/.exec(line)
+      return m ? [{ pid: Number(m[1]), parent: Number(m[2]), born: m[3], exe: m[4], args: m[5] }] : []
+    })
+  const before = await snapshot()
+  const root = before.find((p) => p.pid === pid)
+  if (!root) return false
+  const path: typeof before = []
+  const candidates: typeof before = []
+  const seen = new Set<number>()
+  const walk = (p: typeof root) => {
+    if (seen.has(p.pid)) return
+    seen.add(p.pid); path.push(p)
+    // macOS truncates `comm` to 16 columns even with -ww. The full argv executable
+    // must name codex and agree with the native executable, not a Node wrapper.
+    const executable = /^\S+/.exec(p.args)?.[0] ?? ''
+    if (basename(executable) === 'codex' &&
+      (executable.startsWith(p.exe) || basename(p.exe) === 'codex')) {
+      // Headless jobs and app servers do not own an interactive pane composer.
+      if (!/\s(?:exec|app-server)\b/.test(p.args)) candidates.push(p)
+      return
+    }
+    for (const child of before.filter((child) => child.parent === p.pid)) walk(child)
+  }
+  walk(root)
+  if (candidates.length !== 1) return false
+  const native = candidates[0]
+  const openRollout = async (): Promise<CodexMeta | null> => {
+    const handles = await read('lsof', ['-n', '-p', String(native.pid), '-Ffn'])
+    let field = '', cwd = ''
+    const files = new Set<string>()
+    for (const line of handles.split('\n')) {
+      if (line.startsWith('f')) field = line.slice(1)
+      else if (line.startsWith('n')) {
+        if (field === 'cwd') cwd = line.slice(1)
+        else if (/^\d+$/.test(field) && line.endsWith('.jsonl') &&
+          line.slice(1).startsWith(join(codexHome(), 'sessions') + sep) && basename(line).startsWith('rollout-')) files.add(line.slice(1))
+      }
+    }
+    if (!sameCwd(cwd, s.cwd)) return null
+    const matches = [...files].map(codexMeta).filter((row): row is CodexMeta => Boolean(row))
+      .filter((row) => row.mainCli && sameCwd(row.cwd, s.cwd) &&
+        ![...claimed].some(([other, file]) => other !== id && file === row.file))
+    return matches.length === 1 ? matches[0] : null
+  }
+  const match = await openRollout()
+  if (!match) return false
+  const after = await snapshot()
+  if (!path.every((p) => after.some((q) => q.pid === p.pid && q.parent === p.parent &&
+    q.born === p.born && q.exe === p.exe && q.args === p.args))) return false
+  // The process must still hold this exact rollout after the ancestry check.
+  const stillOpen = await openRollout()
+  if (stillOpen?.file !== match.file || stillOpen.id !== match.id || started.get(id) !== s || resumeIdFor(id) ||
+    [...claimed].some(([other, file]) => other !== id && file === match.file)) return false
+  claimed.set(id, match.file)
+  codexClaimed.set(id, match.id)
+  s.codexResumeId = match.id
+  settled.add(id)
+  released.delete(match.file)
+  return true
+}
+
 /** A Codex user message this pane actually submitted, never a loose text search. */
 function codexSaidByPane(file: string, lines: string[]): boolean {
+  return measureMainTask('codex-proof', () => codexProofIn(file, lines))
+}
+
+// A pending prompt can be asked about several times in each one-second idle sweep.
+// Re-reading and parsing the entire growing rollout on each miss made four actual
+// conversations cost 170ms per pass (2026-09-30). Keep only the current query and its
+// complete-line offset: no agent output or accumulated message index is retained.
+const codexProofs = new Map<string, {
+  dev: number; ino: number; size: number; mtimeMs: number
+  lines: string[]; offset: number; matched: boolean
+}>()
+const CODEX_PROOFS_KEEP = 64
+
+function codexProofIn(file: string, lines: string[]): boolean {
+  let fd = -1
   try {
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const stat = statSync(file)
+    let scan = codexProofs.get(file)
+    if (!scan || scan.dev !== stat.dev || scan.ino !== stat.ino || stat.size < scan.size ||
+      (stat.size === scan.size && stat.mtimeMs !== scan.mtimeMs) ||
+      scan.lines.length !== lines.length || scan.lines.some((line, i) => line !== lines[i])) {
+      scan = { dev: stat.dev, ino: stat.ino, size: 0, mtimeMs: 0, lines: [...lines], offset: 0, matched: false }
+    }
+    codexProofs.delete(file)
+    codexProofs.set(file, scan)
+    while (codexProofs.size > CODEX_PROOFS_KEEP) codexProofs.delete(codexProofs.keys().next().value as string)
+    if (scan.matched) return true
+    if (scan.size === stat.size && scan.mtimeMs === stat.mtimeMs) return false
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(stat.size - scan.offset)
+    const n = readSync(fd, buf, 0, buf.length, scan.offset)
+    reads.codexProofBytes += n
+    // Retry a short read and an unfinished final row. In particular, a UTF-8 codepoint
+    // split across appends must be decoded only once the complete row is available.
+    if (n !== buf.length) return false
+    const end = buf.lastIndexOf(0x0a)
+    scan.size = stat.size
+    scan.mtimeMs = stat.mtimeMs
+    scan.offset += end + 1
+    for (const line of buf.toString('utf8').split('\n')) {
+      // Tool output dominates these files. These literal JSON values are required by
+      // the parsed predicate below; filtering first cannot introduce a false match.
+      if (!line.includes('\\u') && (!line.includes('"response_item"') || !line.includes('"user"') || !line.includes('"input_text"'))) continue
       let row: { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
       try {
         row = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
@@ -933,10 +1323,16 @@ function codexSaidByPane(file: string, lines: string[]): boolean {
       const texts = Array.isArray(content)
         ? content.filter((part): part is { type?: string; text?: string } => typeof part === 'object' && part !== null).filter((part) => part.type === 'input_text' && typeof part.text === 'string').map((part) => part.text as string)
         : []
-      if (texts.some((text) => saidByPane(text, lines))) return true
+      if (texts.some((text) => saidByPane(text, lines))) {
+        scan.matched = true
+        return true
+      }
     }
   } catch {
+    codexProofs.delete(file)
     return false
+  } finally {
+    if (fd >= 0) closeSync(fd)
   }
   return false
 }
@@ -956,6 +1352,9 @@ function hasCodexReply(file: string): boolean {
   }
 }
 
+/** Rollouts already proven for an exact id + folder, so the next ask opens one file. */
+const codexProven = new Map<string, string>()
+
 /** The one rollout that metadata proves belongs to this cwd and exact Codex session id. */
 export function codexTranscriptPath(cwd: string, resumeId: string): string | null {
   if (!cwd || !CODEX_ID.test(resumeId)) return null
@@ -965,8 +1364,22 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
     const file = claimed.get(pane)
     if (conversation === resumeId && file && codexMatches(file, cwd, resumeId)) return file
   }
-  const matches = codexRollouts().map(codexMeta).filter((row): row is CodexMeta => Boolean(row)).filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
-  return matches.length === 1 ? matches[0].file : null
+  const key = `${resumeId}\n${cwd}`
+  const proven = codexProven.get(key)
+  if (proven && codexMatches(proven, cwd, resumeId)) return proven
+  // Codex names every rollout `rollout-<time>-<id>.jsonl` (all 1,827 on this Mac,
+  // 2026-10-01), so only files carrying this id are opened. Opening all of them for their
+  // metadata line - up to 64 KB each, 7.3 GB of rollouts - took 6.7-19 s of the main
+  // thread per call, from callers on a 300 ms tick: the 2026-09-30 hangs.
+  const suffix = `-${resumeId.toLowerCase()}.jsonl`
+  const matches = codexRollouts()
+    .filter((file) => file.toLowerCase().endsWith(suffix))
+    .map(codexMeta)
+    .filter((row): row is CodexMeta => Boolean(row))
+    .filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
+  if (matches.length !== 1) return null
+  codexProven.set(key, matches[0].file)
+  return matches[0].file
 }
 
 /**
@@ -978,40 +1391,237 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
  * because this is only used seconds after Enter was sent.
  */
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
-  const file = transcriptFor(id)
-  if (!file || !prompt) return false
+  return Boolean(codexPromptReceipt(id, prompt, since))
+}
+
+export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
+  return codexReceiptIn(transcriptFor(id), prompt, since)
+}
+
+/** Async acceptance is not an answer. Require the exact still-unanswered native call,
+ * including old calls outside the tail and calls preceding a newer independent question. */
+export function codexQuestionPending(cwd: string, conversationId: string, toolUseId: string, questionCount: number): boolean {
+  const file = codexTranscriptPath(cwd, conversationId)
+  if (!file || !toolUseId.trim() || !Number.isInteger(questionCount) || questionCount < 1) return false
+  let fd = -1, pending = '', matches = false, calls = 0, ended = false
+  let activeTurn: string | undefined, questionTurn: string | undefined
+  const consume = (line: string) => {
+    if (!line.includes('session_meta') && !line.includes('event_msg') && !line.includes(toolUseId) && !line.includes('send_user_message_question_reply')) return
+    try {
+      const row = JSON.parse(line), p = row.payload
+      if (row.type === 'session_meta') { matches = p?.id === conversationId; return }
+      if (row.type === 'event_msg') {
+        const turnId = typeof p?.turn_id === 'string' && p.turn_id.trim() ? p.turn_id : undefined
+        if (p?.type === 'task_started') activeTurn = turnId
+        // The native live editor drops outstanding drafts at the owning turn's end.
+        // An unrelated, truncated or unbound lifecycle row is not closure proof.
+        if ((p?.type === 'task_complete' || p?.type === 'turn_aborted') && turnId && activeTurn === turnId) {
+          if (questionTurn === turnId) ended = true
+          activeTurn = undefined
+        }
+        return
+      }
+      if (row.type !== 'response_item' || !p) return
+      if (p.type === 'function_call' && p.call_id === toolUseId) {
+        if (!/^(?:functions\.)?request_user_input_async$/.test(p.name ?? '')) { ended = true; return }
+        const args = JSON.parse(p.arguments)
+        if (!Array.isArray(args.questions) || args.questions.length !== questionCount) { ended = true; return }
+        calls++
+        const turnId = p.internal_chat_message_metadata_passthrough?.turn_id
+        if (typeof turnId === 'string' && turnId && turnId === activeTurn) questionTurn = turnId
+      }
+      if (p.type === 'function_call_output' && p.call_id === toolUseId) {
+        let result
+        try { result = typeof p.output === 'string' ? JSON.parse(p.output) : p.output } catch { ended = true; return }
+        if (p.is_error || result?.accepted !== true) ended = true
+      }
+      if (p.type !== 'message' || p.role !== 'user' || !Array.isArray(p.content)) return
+      for (const part of p.content) {
+        if (part.type !== 'input_text' || typeof part.text !== 'string') continue
+        const start = '<send_user_message_question_reply>', end = '</send_user_message_question_reply>'
+        if (!part.text.startsWith(start) || !part.text.endsWith(end)) continue
+        const replies = JSON.parse(part.text.slice(start.length, -end.length))
+        if (!Array.isArray(replies)) continue
+        for (const reply of replies) {
+          if (typeof reply.answer !== 'string' || !reply.answer.trim() || typeof reply.questionItemId !== 'string') continue
+          const key = JSON.parse(reply.questionItemId)
+          if (Array.isArray(key) && key.length === 3 && key[0] === 'request_user_input_async' && key[1] === toolUseId &&
+            Number.isInteger(key[2]) && key[2] >= 0 && key[2] < questionCount) ended = true
+        }
+      }
+    } catch { /* A partial or unrelated row cannot prove a pending call. */ }
+  }
+  try {
+    fd = openSync(file, 'r')
+    const chunk = Buffer.alloc(64 * 1024)
+    // Decode complete lines together so a chunk boundary cannot split UTF-8 JSON.
+    let bytes = Buffer.alloc(0), read
+    while ((read = readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      bytes = Buffer.concat([bytes, chunk.subarray(0, read)])
+      let at
+      while ((at = bytes.indexOf(10)) >= 0) {
+        consume(bytes.subarray(0, at).toString('utf8'))
+        bytes = bytes.subarray(at + 1)
+      }
+    }
+    pending = bytes.toString('utf8')
+    if (pending) consume(pending)
+    return matches && calls === 1 && !ended
+  } catch { return false } finally { if (fd >= 0) closeSync(fd) }
+}
+
+/** Recovery must use the original conversation, even when the restored pane changed. */
+export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
+  if (!Number.isFinite(since) || since <= 0) return null
+  return codexReceiptIn(codexTranscriptPath(cwd, conversationId), prompt, since)
+}
+
+// Null is a completed negative scan; undefined is an unavailable read that must be retried.
+function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null | undefined {
+  if (!file || !prompt) return null
+  const lines = tailLines(file, PROMPT_RECEIPT_BYTES)
+  if (lines === null) return undefined
+  for (const line of lines) {
+    let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+    try {
+      row = JSON.parse(line) as typeof row
+    } catch {
+      continue
+    }
+    const at = typeof row.timestamp === 'number' ? row.timestamp : typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
+    if (!Number.isFinite(at) || at < since) continue
+    if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
+    const content = row.payload.content
+    if (!Array.isArray(content)) continue
+    const texts = content.filter((part) => typeof part === 'object' && part !== null &&
+      (part as { type?: string }).type === 'input_text').map((part) => (part as { text?: string }).text)
+    // Codex's composer can omit the paste's final LF in its native user row.
+    // Accept only that one terminator; all other text and whitespace stay exact.
+    if (texts.length === 1 && (texts[0] === prompt ||
+      (prompt.endsWith('\n') && texts[0] === prompt.slice(0, -1)))) return { transcriptAt: at }
+  }
+  return null
+}
+
+/** The whole lines in the last `bytes` of a file (a cut first line dropped); null when unreadable. */
+function tailLines(file: string, bytes: number): string[] | null {
   let fd = -1
   try {
     const size = statSync(file).size
-    const start = Math.max(0, size - CODEX_PROMPT_RECEIPT_BYTES)
+    const start = Math.max(0, size - bytes)
     const buf = Buffer.alloc(size - start)
     fd = openSync(file, 'r')
     const read = readSync(fd, buf, 0, buf.length, start)
+    if (read !== buf.length) return null
     let text = buf.toString('utf8', 0, read)
     if (start > 0) {
       const firstLine = text.indexOf('\n')
-      if (firstLine < 0) return false
+      if (firstLine < 0) return []
       text = text.slice(firstLine + 1)
     }
-    for (const line of text.split('\n')) {
-      let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
-      try {
-        row = JSON.parse(line) as typeof row
-      } catch {
-        continue
-      }
-      const at = typeof row.timestamp === 'number' ? row.timestamp : typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
-      if (!Number.isFinite(at) || at < since) continue
-      if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
-      const content = row.payload.content
-      if (!Array.isArray(content)) continue
-      if (content.some((part) => typeof part === 'object' && part !== null &&
-        (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
-    }
+    return text.split('\n')
   } catch {
-    return false
+    return null
   } finally {
     if (fd >= 0) closeSync(fd)
+  }
+}
+
+/**
+ * Did the Claude Code behind this pid take this prompt as a message after `since`?
+ *
+ * The screen cannot always say. An idle box after the return, or a pane still painting
+ * with no composer on screen, looks the same whether the return went in or was eaten, and
+ * the confirm read both as eaten: 2026-09-24 13:26:18.630Z, pane s105, the resume prompt is
+ * a user row in its transcript and the app logged it LOST; five fresh panes on 2026-09-25
+ * logged 5/5 and then 3/5 LOST while every one was answered. The CLI's own user row is the
+ * receipt, found the way `claudeStartup` finds the transcript (the pid file names it).
+ *
+ * Require the entire payload. A partial or altered paste is not delivery proof. A long
+ * paste is stored as several `<pasted_content>` chunks split at whitespace (2026-10-01,
+ * a 3589-char brief became four ~1050-char chunks), so the comparison drops the tags and
+ * all whitespace: every non-blank character of the prompt, in order, or no receipt.
+ *
+ * A prompt typed while Claude is mid-turn is QUEUED, and no user row is written for it
+ * until the turn absorbs it. Its receipt is the queue's own record, written the moment the
+ * return lands: `{"type":"queue-operation","operation":"enqueue","content":"..."}`, later
+ * joined by a `{"type":"attachment","attachment":{"type":"queued_command","prompt":...}}`.
+ * Shapes measured 2026-09-27 over 3 days of transcripts (2688 enqueues, content always a
+ * string; queued_command prompts a string, or content parts when an image is pasted). Missed,
+ * pane s9-mujbz9vp's queued prompt got five more returns at 04:55:21-37Z that answered an
+ * AskUserQuestion drawn over it, and was logged LOST.
+ */
+/**
+ * Can `claudeAcceptedPrompt` answer for this process at all - does Claude Code's pid file
+ * name its conversation? Then a missing user row means the prompt did not go in, whatever
+ * the screen says; without one only the screen is left to read.
+ */
+export function claudeReceiptReadable(pid: number | undefined): boolean {
+  return cliSession(pid) !== null
+}
+
+const PASTE_TAG = /<\/?pasted_content id="[^"]*">/g
+const receiptText = (text: string): string => text.replace(PASTE_TAG, '').replace(/\s+/g, '')
+/**
+ * A held prompt is asked about every second (`sweepIdle`) and on every queue tick until it
+ * lands, and one read of a 3.4 MB transcript took 12ms median, 55ms p90 on the main thread
+ * (2026-10-01). A no stands until the conversation grows; transcripts only append.
+ */
+const receiptMisses = new Map<string, number>()
+export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, since: number): boolean {
+  const wanted = receiptText(prompt)
+  const row = wanted ? cliSession(pid) : null
+  const file = row && transcriptPath(row.cwd, row.sessionId)
+  if (!file) return false
+  let size = -1
+  try {
+    size = statSync(file).size
+  } catch {
+    return false
+  }
+  const asked = `${file}\0${since}\0${wanted}`
+  if (receiptMisses.get(asked) === size) return false
+  if (claudeReceiptIn(file, wanted, since)) return true
+  if (receiptMisses.size >= 200) receiptMisses.clear()
+  receiptMisses.set(asked, size)
+  return false
+}
+
+function claudeReceiptIn(file: string, wanted: string, since: number): boolean {
+  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES) ?? []) {
+    if (!line.includes('"user"') && !line.includes('"queue-operation"') && !line.includes('"queued_command"')) continue
+    let rec: {
+      type?: string
+      isMeta?: boolean
+      toolUseResult?: unknown
+      timestamp?: string
+      message?: { content?: unknown }
+      operation?: string
+      content?: unknown
+      attachment?: { type?: string; prompt?: unknown; isMeta?: boolean }
+    }
+    try {
+      rec = JSON.parse(line) as typeof rec
+    } catch {
+      continue
+    }
+    const content =
+      rec.type === 'user' && !rec.isMeta && rec.toolUseResult === undefined
+        ? rec.message?.content
+        : rec.type === 'queue-operation' && rec.operation === 'enqueue'
+          ? rec.content
+          : rec.type === 'attachment' && rec.attachment?.type === 'queued_command' && !rec.attachment.isMeta
+            ? rec.attachment.prompt
+            : undefined
+    if (content === undefined) continue
+    const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
+    if (!Number.isFinite(at) || at < since) continue
+    const text = typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((part) => (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('\n')
+        : ''
+    if (receiptText(text).includes(wanted)) return true
   }
   return false
 }

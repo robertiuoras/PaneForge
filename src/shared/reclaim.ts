@@ -89,12 +89,8 @@ export interface ReclaimConfig {
   idleCloseMinutes: number
   /**
    * Stop the agent in a pane nobody has typed into for this many minutes, and keep the
-   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off.
-   *
-   * A NEW key, so an existing config.json simply does not have it and `?? IDLE_SLEEP_MINUTES`
-   * gives every desk the default: none of the `defaultsVN` machinery is needed, because
-   * that exists for a default that was already WRITTEN as a number somebody could have
-   * chosen. Missing is missing.
+   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off, and off is the
+   * default from 2026-09-28 (`migrateReclaimV5`); missing reads as off too.
    */
   idleSleepMinutes?: number
   /**
@@ -118,6 +114,8 @@ export interface ReclaimConfig {
   defaultsV3?: boolean
   /** The same again, ten minutes becoming five - see `migrateReclaimV4`. */
   defaultsV4?: boolean
+  /** The sleep switch going OFF on every desk, once - see `migrateReclaimV5`. */
+  defaultsV5?: boolean
 }
 
 /**
@@ -174,6 +172,13 @@ export const IDLE_CLOSE_MINUTES = 10
  * time, so the churn cost more than the sleep freed. The shortening under a MEASURED
  * memory verdict below is untouched: that is the case where the pane's 190 MB is what the
  * machine is actually short of.
+ */
+/*
+ * From 2026-09-25 this clock runs only under a MEMORY verdict (`idleSleepPlan` returns
+ * nothing at `ok`), so the number is a ceiling the pressure clocks below cut to 1 min / 30s.
+ *
+ * From 2026-09-28 it is only what the Settings switch sets when somebody turns sleep ON:
+ * the default is off (`DEFAULT_RECLAIM`, `migrateReclaimV5`).
  */
 export const IDLE_SLEEP_MINUTES = 30
 /**
@@ -249,10 +254,31 @@ export const DEFAULT_RECLAIM: ReclaimConfig = {
   minIdleMinutes: 15,
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
-  idleSleepMinutes: IDLE_SLEEP_MINUTES,
+  idleSleepMinutes: 0,
   defaultsV2: true,
   defaultsV3: true,
-  defaultsV4: true
+  defaultsV4: true,
+  defaultsV5: true
+}
+
+/**
+ * The sleep switch going OFF, once, on every desk that has it on.
+ *
+ * Robert, 2026-09-28: "its all saying resting to free memory why? and not working properly
+ * id rather they close than sleep". Measured in reclaim.log (27 Sep, 35 min): 13 pressure
+ * sleeps and 13 wakes over 7 panes, one pane slept three times, six wakes of 1.3-3.2s. A
+ * slept pane is refused by the finished-pane close (`doneEnough` refuses `asleep`), so
+ * under memory pressure the sleep always won and a finished pane never went to Review; the
+ * wake queue then brought it back at normal pressure. Off, a finished pane closes into
+ * Review (`shared/doneClose.ts`, quicker under pressure) and an unfinished one stays awake.
+ *
+ * The switch stays - turning it back on sets `IDLE_SLEEP_MINUTES`. Keyed on the SAVED
+ * config's marker for the reason every `defaultsVN` is: `DEFAULT_RECLAIM` carries it, so
+ * the merge answers yes for every config in existence.
+ */
+export function migrateReclaimV5(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
+  if (raw?.defaultsV5) return merged
+  return { ...merged, idleSleepMinutes: 0, defaultsV5: true }
 }
 
 export interface ReclaimPane {
@@ -368,6 +394,17 @@ export interface ReclaimPane {
    */
   backJob?: string | null
   /**
+   * A process closing this pane would stop is holding a listening socket - a dev server,
+   * a preview, anything a browser can reach (`shared/serving.ts`, `Session.serving`).
+   *
+   * Its own reading beside `job` and `backJob` because a server is the one thing that is
+   * quiet on purpose: both of those can miss it (a foreground reading that names the
+   * wrong process, a sampler that stops with a hidden window) and the clock then reads a
+   * server nobody is talking to right now as a pane nobody is using. Robert, 2026-09-29:
+   * "isnt that our dev server on remote pc session that shouldn't close".
+   */
+  serving?: string | null
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -379,8 +416,8 @@ export interface ReclaimPane {
   /**
    * Somebody has said, on this pane, that it is not to be closed for being idle.
    *
-   * `keptUntil` is the hour-long hold the countdown chip arms, and it is the right answer
-   * for "not now". This is the answer for "not ever": a pane holding a long-running thing
+   * The countdown's Keep restarts the pane's close clock (`keptUntil`), and that is the
+   * answer for "not now". This is the answer for "not ever": a pane holding a long-running thing
    * the app cannot see - a watcher, a session being read a paragraph at a time, a build
    * somebody wants to come back to - has no reading that says so, and an hour later the
    * clock starts again. Robert, 2026-08-24: "if you right click session you can make it so
@@ -580,6 +617,7 @@ export function reclaimPlan(
         !p.busy &&
         !p.job &&
         !p.backJob &&
+        !p.serving &&
         !p.pinned &&
         !p.asleep &&
         CLOSEABLE.has(p.state)
@@ -741,7 +779,13 @@ export function idleSleepPlan(
   lead = 0
 ): Reclaim[] {
   if (!cfg.enabled) return []
-  const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
+  // Sleep is for a machine short of MEMORY, and nothing else. Robert, 2026-09-25: "shouldnt
+  // sleep that long just close sessions after a bit of time ... only reserve sleep for
+  // saving memory". With room, a quiet pane is the close clock's (into Review) or stays
+  // because it is waiting on somebody; a sleeping card was a closed pane that still took
+  // a place on the desk.
+  if (pressure === 'ok') return []
+  const minutes = Math.max(0, cfg.idleSleepMinutes ?? 0)
   if (!minutes) return []
   const shortenedMinIdle = pressureSleepMs(minutes, pressure)
   const plainMinIdle = minutes * 60_000
@@ -816,7 +860,14 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // the question like any other pane: it printed what is on its screen during this run,
     // and a turn nobody looked at is not taken off the desk for going quiet. See
     // `bornAsleep`.
-    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
+    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere) &&
+    // A pane BORN asleep is off this clock altogether. It holds no process, so closing it
+    // frees nothing, and its quiet clock started at the relaunch: 2026-09-30 s7/s8 (04:55)
+    // and s6/s8 (11:30) were live chats before the restart and closed ten minutes after it.
+    // It leaves through the asleep sweep instead (`asleepSweep`, thirty minutes from the
+    // first time somebody is at the window), which is what Robert's 2026-09-02 "id rather
+    // them to close than sleep" now rests on.
+    !bornAsleep(p)
   )
 }
 
@@ -880,6 +931,7 @@ function keepable(p: ReclaimPane, personHere = true): boolean {
     !p.busy &&
     !p.job &&
     !p.backJob &&
+    !p.serving &&
     !p.pinned &&
     CLOSEABLE.has(p.state)
   )
@@ -944,6 +996,34 @@ export function idleCloseAt(
   // runs on a minute timer, so `now` is regularly a little past the moment it was due and
   // a chip counting UP from zero reads as a clock that jammed.
   return Math.max(at, now)
+}
+
+/**
+ * The deadline a CHIP may count down to, or null for no chip.
+ *
+ * `idleCloseAt` answers on the desk's own clock, which `shared/away.ts` freezes at the
+ * moment the last person left. The chip that draws the answer - this desk's card and,
+ * forwarded, the paired desk's row - counts WALL time, because a chip on the other
+ * machine has no way of knowing this one's clock has stopped. So a deadline computed
+ * while frozen is a wall-clock moment that arrives on schedule and is then simply past:
+ * the row reads `closes now` and stays there, while the sweep, on the frozen clock, does
+ * not consider the pane due until somebody comes back to this desk. Robert, 2026-09-23,
+ * PC rows on the Mac: "says closes now but its not closing".
+ *
+ * A frozen clock has no moment anybody can count down to, so a frozen desk publishes no
+ * deadline at all; the chip returns, counting from where the clock resumes, when a person
+ * does. The sweep itself is untouched - it was already frozen, which is the point.
+ */
+export function chipCloseAt(
+  pane: ReclaimPane,
+  cfg: ReclaimConfig,
+  wallNow: number,
+  awaySince: number | null,
+  personHere = true,
+  all?: ReclaimPane[]
+): number | null {
+  if (awaySince !== null) return null
+  return idleCloseAt(pane, cfg, wallNow, personHere, all)
 }
 
 /**

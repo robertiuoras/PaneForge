@@ -636,6 +636,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(channels.length > 50, 'the surface channel list was actually parsed', String(channels.length))
   ok(gated.has('admin:enable') && gated.has('admin:disable'), 'elevation is behind the passkey')
   ok(gated.has('pty:choose'), 'answering a question is still behind the passkey')
+  ok(gated.has('pane:answer'), 'conversation-bound answers still require the typing gate')
 
   // The three classes the gate now recognises, spelled out so a reader can check them:
   //  - runs a process here (agents:install, shell:editor, sessions:start, ...)
@@ -647,6 +648,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gated.has('phone:tunnel') && gated.has('remote:pair'), 'the ways in are gated')
   ok(gated.has('clipboard:read') && gated.has('history:delete'), 'exfil and deletion are gated')
   ok(gated.has('prompt:split'), 'reading a long ask starts an agent here, so it is gated')
+  ok(gated.has('prompt:expand'), 'showing a fuller brief starts an agent here too, so it is gated the same way')
 
   // Reviewed 2026-08-16: reads, watches, and the state a phone needs to draw a screen.
   // `board:tasks`/`board:memory` write, but only to the board's own notes - they cannot
@@ -668,6 +670,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // `activity:list` is a READING of things that have already happened - the same words
   // the corner cards said out loud at the time. It types nothing and reaches no pty.
   const REVIEWED_SAFE = new Set([
+    // Receipt metadata only: no answer text, keystrokes, process starts or replay.
+    'pane:answerStatus',
     // Review reads retained history; acknowledgement only changes informational read state.
     // Neither can execute, approve, or close a session. Record/open stay gated.
     'reviews:list', 'reviews:ack', 'review:daily',
@@ -696,6 +700,12 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
+    // Exact client visibility only: no folder, transcript, process or authority changes.
+    'projects:archivedClients', 'projects:archiveClient',
+    // Welcome checklist facts: whether claude and git are on PATH and whether the CLI is
+    // signed in, as booleans. Reads `~/.claude.json` for one key's presence; returns no
+    // token, types nothing, reaches no pty.
+    'setup:check',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',
@@ -734,10 +744,6 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // A read of the process table, filtered to dev servers. `devs:stop` is the other half
     // and is GATED - it kills a process on this desk.
     'devs:list',
-    // Reviewed 2026-09-03. A read of the sign-in requests waiting on the desk - site,
-    // which computer, and whether one is open. The two that ACT (`login:need` puts the
-    // card up, `login:open` opens the connection) are GATED, as is `login:input`.
-    'login:list',
     // Reviewed 2026-08-23. A read of the /clear countdowns in flight - what is pending and
     // when it is due. The two channels that START or SKIP one (`autoclear:ask`,
     // `autoclear:answer`) are GATED: both end in keystrokes reaching a pane.
@@ -772,7 +778,6 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gatedSend.has('app:relaunchAsAdmin'), 'relaunching elevated is behind the passkey')
   ok(gatedSend.has('restore:answer'), 'accepting a deskful of panes is behind the passkey')
   ok(gatedSend.has('pane:tell'), 'handing a pane a line is typing, so it costs a passkey touch')
-  ok(gatedSend.has('login:done'), 'and so does the Done that reports it back to the pane that asked')
   // Reviewed 2026-08-16: pane geometry, visibility, bells and the stash's own text - the
   // things a phone touches constantly and none of which start anything.
   const REVIEWED_SAFE_SEND = new Set([
@@ -782,12 +787,15 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:take', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
     
-    'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
+    'prompt:used', 'prompt:expandChose', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
     // Reviewed 2026-08-25: one line in this desk's own reclaim log saying why a pane was
     // or was not closed. It starts nothing and answers nothing - the worst a phone reaches
     // is a bigger log file.
     'reclaim:log',
     'pane:fixlog',
+    // Reviewed 2026-10-01: one `sweep: ` line in this desk's own handoff log saying why the
+    // move sweep moved nothing. Other text is dropped; it starts and types nothing.
+    'handoff:log',
     // Reviewed 2026-09-23: stamps when a person last pressed a pane, which only HOLDS the
     // finished-pane sweep. It starts, stops and types nothing.
     'sessions:touched',
@@ -797,12 +805,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Reviewed 2026-09-01: "leave that dev server alone". It writes one pid into a
     // never-offer-again set for this app run. It starts nothing and stops nothing - the
     // worst a phone reaches is that a leaked dev server keeps leaking.
-    'devs:keep',
-    // Reviewed 2026-09-03. The sign-in view's own housekeeping: `login:ack` says a frame
-    // is on screen (and is what asks for the next one), `login:size` says how big the view
-    // is, and the two closers put the view away. None of them types, and none of them
-    // opens a connection - `login:open` does that and is gated, as is `login:input`.
-    'login:ack', 'login:size', 'login:close', 'login:dismiss'
+    'devs:keep'
   ])
   const unclassifiedSend = sends.filter(
     (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)

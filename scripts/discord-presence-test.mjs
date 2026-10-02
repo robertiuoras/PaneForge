@@ -9,7 +9,7 @@
 //   node scripts/discord-presence-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -48,6 +48,9 @@ const {
   chosenRows,
   migrateRows,
   needsTokens,
+  togglePhrase,
+  TOKEN_PHRASES,
+  PRESET_ROWS,
   DEFAULT_DISCORD_STYLE,
   DEFAULT_ROWS,
   MAX_BUTTONS,
@@ -58,10 +61,21 @@ const {
   OP_HANDSHAKE,
   OP_FRAME,
   countPresence,
-  folderName
+  folderName,
+  readDeskReport,
+  readStyle,
+  newerSettings,
+  withLook,
+  pickLook,
+  DISCORD_PRESETS,
+  presenceAllowed,
+  wholeDesk
 } =
   req(outShared)
 const { DiscordPresence } = req(outMain)
+// The card every profile had before the ready-made looks: numbers, then project names.
+// What the row engine below is exercised with, since those are the rows it was built on.
+const CLASSIC = { ...DEFAULT_DISCORD_STYLE, preset: 'custom', rows: DEFAULT_ROWS }
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -97,25 +111,35 @@ function check(name, ok, extra = '') {
 {
   const base = { appStart: 1000 }
   check('activity: empty desk is a clear, not "0/0"', buildActivity({ running: 0, total: 0, names: [], ...base }) === null)
-  const busy = buildActivity({ running: 3, total: 6, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base })
+  const busy = buildActivity({ running: 3, total: 6, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base }, CLASSIC)
   check('activity: 3/6 sessions running', busy.details === '3/6 sessions running', busy.details)
   check('activity: names on the second line', busy.state === 'on PaneForge, Toolstash', busy.state)
   check('activity: elapsed anchors on the oldest running turn', busy.timestamps.start === 500)
-  const idle = buildActivity({ running: 0, total: 2, names: [], ...base })
+  const idle = buildActivity({ running: 0, total: 2, names: [], ...base }, CLASSIC)
   check('activity: idle desk says idle', idle.details === '2 sessions idle', idle.details)
   check('activity: idle elapsed anchors on app start', idle.timestamps.start === 1000)
   // The mark is the one part of the card that is not a preference: an application's
   // icon names the header, so without `assets` Discord draws no artwork at all.
   check('activity: the card carries the PaneForge mark', busy.assets?.large_image === 'icon', JSON.stringify(busy.assets))
   check('activity: the mark is on the idle card too', idle.assets?.large_image === 'icon', JSON.stringify(idle.assets))
-  const one = buildActivity({ running: 1, total: 1, names: ['x'], ...base })
+  const one = buildActivity({ running: 1, total: 1, names: ['x'], ...base }, CLASSIC)
   check('activity: singular noun', one.details === '1/1 session running', one.details)
+  // The Discord tab builds lines from buttons: a chip adds its phrase, a second press takes it out.
+  check('chips: add to an empty line with no separator', togglePhrase('', '{tokens} tokens today') === '{tokens} tokens today')
+  check('chips: add after existing text', togglePhrase('{running} running', 'on {projects}') === '{running} running · on {projects}')
+  check('chips: second press removes it', togglePhrase('{running} running · on {projects}', 'on {projects}') === '{running} running')
+  check('chips: every token has a plain-word button', TOKEN_PHRASES.every((t) => t.label && !/[{}]/.test(t.label) && t.phrase.includes(t.token)))
+  check('presets: every ready-made line fills in', PRESET_ROWS.every((r) => buildActivity({ running: 1, total: 2, asleep: 1, names: ['x'], tokensToday: 1200, tokensWeek: 9000, ...base }, { ...DEFAULT_DISCORD_STYLE, rows: [{ id: 'p', text: r.text, when: 'always', on: true }] })?.details && !/[{}]/.test(buildActivity({ running: 1, total: 2, asleep: 1, names: ['x'], tokensToday: 1200, tokensWeek: 9000, ...base }, { ...DEFAULT_DISCORD_STYLE, rows: [{ id: 'p', text: r.text, when: 'always', on: true }] }).details)))
+  // 2026-09-23: the PC's desk of one pane put "1/1 session running" on the profile over the
+  // Mac's 7/15. A desk whose panes another connected desk already counts sends a clear.
+  check('activity: a desk counted by another desk says nothing',
+    buildActivity({ running: 1, total: 1, names: ['x'], ...base, countedBy: 'MacBook' }) === null)
   const many = buildActivity({
     running: 9,
     total: 9,
     names: [...Array(30)].map((_, i) => `some-quite-long-project-name-${i}`),
     ...base
-  })
+  }, CLASSIC)
   check('activity: name list capped under Discord\'s 128', many.state.length <= 128, String(many.state.length))
   check('activity: capped list says how many were dropped', / \+\d+ more$/.test(many.state), many.state)
 }
@@ -126,12 +150,75 @@ function check(name, ok, extra = '') {
   const desk = { running: 2, total: 5, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base }
   const style = (over) => ({ ...DEFAULT_DISCORD_STYLE, ...over })
 
-  // An untouched config sends what it has always sent - the rows arrived as a
-  // rearrangement of the wording, not a change to it.
+  // The default card is counts only: a profile is public, so project names are a look
+  // somebody picks (Robert, 2026-09-27).
   const plain = buildActivity(desk)
-  check('rows: the default card is the numbers then the projects',
-    plain.details === '2/5 sessions running' && plain.state === 'on PaneForge, Toolstash',
+  check('looks: the default card is the numbers and nothing else',
+    plain.details === '2 running · 3 idle' && plain.state === undefined,
     JSON.stringify([plain.details, plain.state]))
+  const look = (preset, idle, tokens) => withLook(DEFAULT_DISCORD_STYLE, { preset, idle, tokens })
+  const card = (c, st) => {
+    const a = buildActivity(c, st)
+    return a ? [a.details, a.state].filter(Boolean).join(' | ') : null
+  }
+  const quietDesk = { running: 0, total: 5, names: [], ...base }
+  const expect = [
+    ['counts', true, false, '2 running · 3 idle', '5 sessions idle'],
+    ['counts', false, false, '2 running', '5 sessions open'],
+    ['fraction', true, false, '2/5 sessions running · 3 idle', '5 sessions idle'],
+    ['fraction', false, false, '2/5 sessions running', '5 sessions open'],
+    ['projects', true, false, '2 running · 3 idle | on PaneForge, Toolstash', '5 sessions idle'],
+    ['counts', true, true, '2 running · 3 idle | 1.5M tokens today', '5 sessions idle | 1.5M tokens today'],
+    ['projects', false, true, '2 running | on PaneForge, Toolstash · 1.5M tokens today', '5 sessions open | 1.5M tokens today']
+  ]
+  for (const [preset, idle, tokens, busyCard, quietCard] of expect) {
+    const st = look(preset, idle, tokens)
+    const got = [card({ ...desk, tokensToday: 1_480_000 }, st), card({ ...quietDesk, tokensToday: 1_480_000 }, st)]
+    check(`looks: ${preset}${idle ? ' +idle' : ''}${tokens ? ' +tokens' : ''} reads as intended`,
+      got[0] === busyCard && got[1] === quietCard, JSON.stringify(got))
+  }
+  check('looks: every look is counts only unless it says it names projects',
+    DISCORD_PRESETS.filter((p) => p.id !== 'projects').every((p) => !card(desk, look(p.id, true, true)).includes('PaneForge')))
+  check('looks: the tokens switch is the only thing that asks for the disk walk',
+    DISCORD_PRESETS.every((p) => !needsTokens(look(p.id, true, false)) && needsTokens(look(p.id, true, true))))
+  const handWritten = { ...DEFAULT_DISCORD_STYLE, preset: 'custom', rows: [{ id: 'x', text: 'mine', when: 'always', on: true }] }
+  check('looks: a hand-written card keeps its lines when a switch moves',
+    withLook(handWritten, { idle: false }).rows[0].text === 'mine')
+  check('looks: picking a look replaces hand-written lines',
+    withLook(handWritten, { preset: 'counts' }).rows[0].text === '{running} running · {idle} idle')
+
+  // Configs written before the looks existed.
+  const untouchedOld = migrateRows({ rows: DEFAULT_ROWS.map((r) => ({ ...r })), elapsed: true, buttons: [] })
+  check('old config: lines nobody changed become the new default (no project names)',
+    untouchedOld.preset === 'counts' && card(desk, untouchedOld) === '2 running · 3 idle', JSON.stringify(untouchedOld))
+  // Robert's Mac on 2026-09-27: fraction line, a switched-off tokens line, the idle line.
+  const robert = migrateRows({
+    rows: [
+      { id: 'running', text: '{running}/{total} {sessions} running', when: 'running', on: true },
+      { id: 'projects', text: 'used {tokens}', when: 'running', on: false },
+      { id: 'idle', text: '{total} {sessions} idle', when: 'idle', on: true }
+    ],
+    elapsed: true,
+    buttons: [{ id: 'link', label: 'toolstash.xyz/paneforge', url: 'https://toolstash.xyz/paneforge', on: true }]
+  })
+  check('old config: lines somebody wrote are kept exactly, as their own',
+    robert.preset === 'custom' && card(desk, robert) === '2/5 sessions running' && robert.rows.length === 3, JSON.stringify(robert))
+  check('old config: a saved look is rebuilt from the look, not from stale lines',
+    migrateRows({ preset: 'fraction', idle: false, tokens: false, rows: [{ id: 'x', text: 'stale', when: 'always', on: true }], elapsed: true, buttons: [] }).rows[0].text === '{running}/{total} {sessions} running')
+
+  // Settings cross the device link: whatever arrives is rebuilt from checked parts.
+  check('wire: a style that is not one is nothing', readStyle(null) === undefined && readStyle({ rows: 'x' }) === undefined && readStyle({ rows: [{ text: 1 }] }) === undefined)
+  const wired = readStyle({ preset: 'bogus', rows: [{ id: 'a', text: 'hi', when: 'sometimes', on: 'yes' }], buttons: [{ id: 'b', label: 'x'.repeat(99), url: 'https://a.b' }, { id: 'c' }], elapsed: 0 })
+  check('wire: an unknown look is a hand-written card, odd fields made safe',
+    wired.preset === 'custom' && wired.rows[0].when === 'always' && wired.rows[0].on === true && wired.buttons.length === 1 && wired.buttons[0].label.length === 32 && wired.elapsed === true,
+    JSON.stringify(wired))
+  const mine = { on: true, style: DEFAULT_DISCORD_STYLE, at: 100 }
+  const said = (at, on = false) => ({ id: 'PC', name: 'PC', report: { counts: { running: 0, total: 0, asleep: 0, names: [] }, discord: false, settings: { on, style: look('fraction', false, false), at } } })
+  check('settings: a newer change on the other machine is taken', newerSettings(mine, [said(200)])?.style.preset === 'fraction')
+  check('settings: an older one, or the same moment, is not', newerSettings(mine, [said(50)]) === undefined && newerSettings(mine, [said(100)]) === undefined)
+  check('settings: switching it off travels too', newerSettings(mine, [said(300, false)])?.on === false)
+  const roundTrip = readDeskReport(JSON.parse(JSON.stringify(said(200).report)))
+  check('settings: they survive the wire', roundTrip.settings?.at === 200 && roundTrip.settings.style.rows[0].text === '{running}/{total} {sessions} running', JSON.stringify(roundTrip))
 
   const rows = (list) => ({ ...DEFAULT_DISCORD_STYLE, rows: list })
   const row = (over) => ({ id: 'r', text: '', when: 'always', on: true, ...over })
@@ -217,6 +304,22 @@ function check(name, ok, extra = '') {
     old.buttons.length === 1 && old.buttons[0].label === 'Site' && old.buttons[0].url === 'https://x.dev')
   check('old config: one that already has rows is left alone',
     migrateRows({ rows: [row({ id: 'z', text: 'kept' })], elapsed: false, buttons: [] }).rows[0].id === 'z')
+
+  // ---------- leaving "Your own lines" is not a delete ----------
+  // A click on a ready-made look rebuilds the lines; the hand-written ones must come back
+  // when "Your own lines" is picked again, on this machine and on one the setting reached.
+  {
+    const own = [row({ id: 'mine', text: 'shipping {project}', when: 'running' })]
+    const mineStyle = { ...DEFAULT_DISCORD_STYLE, preset: 'custom', rows: own }
+    const away = pickLook(mineStyle, 'counts')
+    check('pick a look: the lines become the look', away.preset === 'counts' && away.rows[0].text === '{running} running · {idle} idle')
+    const back = pickLook(away, 'custom')
+    check('pick own lines again: the hand-written lines come back', back.preset === 'custom' && JSON.stringify(back.rows) === JSON.stringify(own), JSON.stringify(back.rows))
+    const wired = readStyle(JSON.parse(JSON.stringify(away)))
+    check('own lines kept through the device link', JSON.stringify(pickLook(wired, 'custom').rows) === JSON.stringify(own))
+    check('own lines kept through a reload', JSON.stringify(pickLook(migrateRows(away), 'custom').rows) === JSON.stringify(own))
+    check('own lines from a look with none: start from the look', JSON.stringify(pickLook(DEFAULT_DISCORD_STYLE, 'custom').rows) === JSON.stringify(DEFAULT_DISCORD_STYLE.rows))
+  }
 
   // ---------- the buttons ----------
   // A URL in a text row is drawn as text, so the only clickable thing a rich presence
@@ -312,7 +415,7 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('reconnect: retry finds a Discord that arrived late', got.length >= 1, String(got.length))
   const first = got[0]
   check('reconnect: frame is SET_ACTIVITY with our pid', first?.payload.cmd === 'SET_ACTIVITY' && first?.payload.args.pid === process.pid)
-  check('reconnect: activity carried the pre-connect counts', first?.payload.args.activity?.details === '1/2 session running' || first?.payload.args.activity?.details === '1/2 sessions running', first?.payload.args.activity?.details)
+  check('reconnect: activity carried the pre-connect counts', first?.payload.args.activity?.details === '1 running · 1 idle', first?.payload.args.activity?.details)
   // Not just built - actually written down the pipe. The button is the only part of
   // the presence a person can press, and it is worth nothing if the client drops it
   // between buildActivity and the frame.
@@ -336,7 +439,7 @@ const counts = (running, total, names = ['PaneForge']) => ({
   await sleep(120)
   const details = got.map((f) => f.payload.args.activity?.details)
   check('throttle: burst collapsed', got.length <= 2, JSON.stringify(details))
-  check('throttle: trailing state wins', details[details.length - 1] === '5/6 sessions running', JSON.stringify(details))
+  check('throttle: trailing state wins', details[details.length - 1] === '5 running · 1 idle', JSON.stringify(details))
 
   // Identical desk shape must not spend rate-limit budget.
   got.length = 0
@@ -361,7 +464,7 @@ const counts = (running, total, names = ['PaneForge']) => ({
   const discord2 = await fakeDiscord((f) => got2.push(f))
   await sleep(150)
   check('drop: reconnected after Discord died', got2.length >= 1, String(got2.length))
-  check('drop: fresh READY re-sends current counts', got2[0]?.payload.args.activity?.details === '2/3 sessions running', got2[0]?.payload.args.activity?.details)
+  check('drop: fresh READY re-sends current counts', got2[0]?.payload.args.activity?.details === '2 running · 1 idle', got2[0]?.payload.args.activity?.details)
 
   // The switch: off clears and disconnects; on comes back.
   got2.length = 0
@@ -373,7 +476,7 @@ const counts = (running, total, names = ['PaneForge']) => ({
   p.configure(true)
   p.update(counts(1, 1))
   await sleep(150)
-  check('on: presence resumes after re-enable', got2.some((f) => f.payload.args.activity?.details === '1/1 session running'))
+  check('on: presence resumes after re-enable', got2.some((f) => f.payload.args.activity?.details === '1 running · 0 idle'))
 
   p.dispose()
   await discord2.close()
@@ -427,7 +530,7 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('status: the account Discord handed over is named', s.user === 'Tester', String(s.user))
   check('status: the header is what Discord resolved, not what we hoped', s.appName === 'PaneForge', String(s.appName))
   check('status: the accepted time is real', typeof s.acceptedAt === 'number' && s.acceptedAt > 0)
-  check('status: the lines are the ones Discord stored', s.lines[0] === '1/2 sessions running', JSON.stringify(s.lines))
+  check('status: the lines are the ones Discord stored', s.lines[0] === '1 running · 1 idle', JSON.stringify(s.lines))
   check('status: nothing refused', s.error === null, String(s.error))
   check('status: the renderer was told', seen.length >= 1, String(seen.length))
   // An empty desk is a CLEAR, and a clear is a success - it must not read as a failure
@@ -593,6 +696,201 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('counts: a pane running a background job is running, like the sidebar says', backJobs.running === 2, JSON.stringify(backJobs))
   check('counts: ...and its job start dates the clock', backJobs.oldestRunSince === 700, String(backJobs.oldestRunSince))
   check('counts: ...and a finished pane with nothing running is not', !backJobs.names.includes('bar') && !backJobs.names.includes('old'))
+}
+
+// ---------- two desks, one Discord profile ----------
+// Measured 2026-09-27 with `pf call discord:status` on both machines: the Mac ran 14 panes
+// with work going in several, the PC ran none of its own and mirrored ONE of the Mac's
+// (an asleep one). The Mac said `countedBy: DESKTOP-CMSUCM1` and sent a clear; the PC sent
+// "1 session idle", and that was the profile. A desk that mirrors a few panes does not
+// count the rest - so "the other desk already counts mine" was never true.
+{
+  const MAC = 'e8a289e1e7d70116'
+  const PC = 'e38080cc645760c5'
+  // Robert's own card that day: running line, tokens line switched off, idle line.
+  const style = {
+    rows: [
+      { id: 'running', text: '{running}/{total} {sessions} running', when: 'running', on: true },
+      { id: 'projects', text: 'used {tokens}', when: 'running', on: false },
+      { id: 'idle', text: '{total} {sessions} idle', when: 'idle', on: true }
+    ],
+    elapsed: true,
+    buttons: [{ id: 'link', label: 'toolstash.xyz/paneforge', url: 'https://toolstash.xyz/paneforge', on: true }]
+  }
+  const pane = (id, status, extra = {}) => ({ id, status, cwd: `/Users/r/Projects/${id}`, ...extra })
+  const macPanes = [
+    pane('s26', 'working', { runSince: 1_000 }),
+    pane('s44', 'idle', { backJob: 'rbuild.mjs', backJobSince: 2_000 }),
+    pane('s59', 'working', { runSince: 3_000 }),
+    pane('s60', 'working', { runSince: 4_000 }),
+    pane('s61', 'working', { runSince: 5_000 }),
+    pane('s51', 'idle'),
+    pane('s57', 'idle'),
+    pane('s58', 'idle'),
+    pane('s62', 'idle'),
+    pane('s41', 'exited'),
+    pane('s46', 'exited'),
+    pane('s52', 'exited'),
+    pane('s54', 'exited'),
+    pane('s55', 'exited')
+  ]
+  const now = 10_000
+  // What each machine would put on the profile, given what each one knows.
+  const desks = ({ macDiscord = true, pcDiscord = true, pcReports = true, macIsClient = true } = {}) => {
+    const reportOf = (local, discord) => ({ counts: countPresence(local, 0), discord })
+    const mac = wholeDesk(
+      { id: MAC, discord: macDiscord, own: countPresence(macPanes, 1) },
+      [
+        {
+          id: PC,
+          name: 'DESKTOP-CMSUCM1',
+          guest: true,
+          ...(pcReports ? { report: reportOf([], pcDiscord) } : {}),
+          ...(macIsClient ? { panes: [] } : {})
+        }
+      ]
+    )
+    const pc = wholeDesk(
+      { id: PC, discord: pcDiscord, own: countPresence([], 1) },
+      [
+        {
+          id: MAC,
+          name: 'Roberts-MacBook-Pro',
+          guest: macIsClient,
+          report: reportOf(macPanes, macDiscord),
+          panes: macPanes.map((p) => ({ ...p, watched: p.id === 's54' }))
+        }
+      ]
+    )
+    const sent = []
+    if (macDiscord) sent.push(['mac', buildActivity(mac, style, now)])
+    if (pcDiscord && pcReports) sent.push(['pc', buildActivity(pc, style, now)])
+    return { mac, pc, speaking: sent.filter(([, a]) => a) }
+  }
+
+  const both = desks()
+  check('two desks: exactly one of them puts a card on the profile',
+    both.speaking.length === 1, both.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  check('two desks: and it counts every pane on both machines',
+    both.speaking[0]?.[1].details === '5/14 sessions running', both.speaking[0]?.[1].details)
+  check('two desks: the quiet one names the one that speaks',
+    [both.mac, both.pc].filter((c) => c.countedBy).length === 1)
+  check('two desks: both desks agree on the numbers',
+    both.mac.running === both.pc.running && both.mac.total === both.pc.total, `${both.mac.running}/${both.mac.total} vs ${both.pc.running}/${both.pc.total}`)
+
+  const macOnly = desks({ pcDiscord: false })
+  check('Discord open on the Mac only: the Mac says the whole desk',
+    macOnly.speaking.length === 1 && macOnly.speaking[0][0] === 'mac' && macOnly.speaking[0][1].details === '5/14 sessions running',
+    macOnly.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  const pcOnly = desks({ macDiscord: false })
+  check('Discord open on the PC only: the PC says the whole desk',
+    pcOnly.speaking.length === 1 && pcOnly.speaking[0][0] === 'pc' && pcOnly.speaking[0][1].details === '5/14 sessions running',
+    pcOnly.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  // The PC connects to the Mac but the Mac was never paired back: the Mac has no pane list
+  // for the PC, only what the PC says about itself.
+  const oneWay = wholeDesk(
+    { id: MAC, discord: true, own: countPresence(macPanes.slice(0, 4), 1) },
+    [{ id: PC, name: 'PC', guest: true, report: { counts: countPresence([pane('p1', 'working', { runSince: 1 }), pane('p2', 'idle')], 0), discord: false } }]
+  )
+  check('one-way pairing: the machine Discord is on still counts the other one',
+    oneWay.running === 5 && oneWay.total === 6 && !oneWay.countedBy, JSON.stringify(oneWay))
+  // A PC still on a build from before desks reported themselves says nothing about its
+  // Discord; the Mac counts it from the pane list it already has, and speaks.
+  const older = wholeDesk(
+    { id: MAC, discord: true, own: countPresence(macPanes, 1) },
+    [{ id: PC, name: 'PC', guest: true, panes: [pane('p1', 'working', { runSince: 1 })] }]
+  )
+  check('older build on the other desk: counted from its pane list, and this desk speaks',
+    older.running === 6 && older.total === 15 && !older.countedBy, JSON.stringify(older))
+  // Linked both ways, the same machine is two links: counted once.
+  const twice = wholeDesk(
+    { id: MAC, discord: true, own: countPresence([], 1) },
+    [
+      { id: PC, name: 'PC', report: { counts: countPresence([pane('p1', 'working', { runSince: 1 })], 0), discord: false }, panes: [pane('p1', 'working', { runSince: 1 })] },
+      { id: PC, name: 'PC', guest: true, report: { counts: countPresence([pane('p1', 'working', { runSince: 1 })], 0), discord: false } }
+    ]
+  )
+  check('a machine linked both ways is counted once', twice.running === 1 && twice.total === 1, JSON.stringify(twice))
+}
+
+// ---------- a desk report, as it lands off the wire ----------
+{
+  check('report: not a report is nothing', readDeskReport(null) === undefined && readDeskReport({ discord: true }) === undefined && readDeskReport({ counts: { running: -1, total: 3 } }) === undefined)
+  const r = readDeskReport({ counts: { running: 9, total: 4, asleep: 7, names: ['a', 3, 'b'], oldestRunSince: 'x' }, discord: 'yes' })
+  check('report: running and asleep never exceed the total', r.counts.running === 4 && r.counts.asleep === 4, JSON.stringify(r))
+  check('report: only real names, and Discord only when it says true', r.counts.names.join() === 'a,b' && r.discord === false && r.counts.oldestRunSince === undefined, JSON.stringify(r))
+}
+
+// ---------- desk reports cross the device link, both ways ----------
+{
+  const entry = join(work, 'remote-entry.ts')
+  const from = (p) => JSON.stringify(join(root, p).replace(/\\/g, '/'))
+  writeFileSync(entry, [
+    `export { RemoteHost } from ${from('src/main/remote/host.ts')}`,
+    `export { RemoteClient } from ${from('src/main/remote/client.ts')}`,
+    `export { newCode } from ${from('src/main/remote/wire.ts')}`
+  ].join('\n'))
+  const outRemote = join(work, 'remote.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', logLevel: 'warning', outfile: outRemote })
+  const { RemoteHost, RemoteClient, newCode } = req(outRemote)
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const until = async (cond, ms = 5_000) => {
+    for (const stop = Date.now() + ms; Date.now() < stop; await wait(20)) if (cond()) return true
+    return false
+  }
+  const port = await new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port
+      srv.close(() => resolve(p))
+    })
+  })
+  const sessions = [{ id: 's1', title: 'a', cwd: '/w/a', agent: 'claude', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }]
+  const none = () => () => {}
+  const backend = {
+    list: () => sessions, buffer: () => '', log: () => '', write() {}, resize() {}, returnSize() {}, redraw() {},
+    setBusy() {}, clearAttention() {}, kill() {}, restart: () => null, rename() {}, switchAgent: () => null,
+    startSession: () => sessions[0], projects: async () => [], agents: async () => [], jobs: async () => [],
+    onData: none, onTyped: none, onSessions: none, onAttention: none
+  }
+  const code = newCode()
+  const host = new RemoteHost(backend, () => ({ id: 'HOSTID', name: 'PC', platform: 'win32', version: '0' }), () => code)
+  const hostSaid = { counts: { running: 0, total: 1, asleep: 0, names: [] }, discord: true }
+  // Both ends say their piece BEFORE the link exists; each must still reach the other.
+  host.tellDesk(hostSaid)
+  host.start(port)
+  await until(() => host.listening)
+  const client = new RemoteClient(
+    { id: 'HOSTID', name: 'PC', address: '127.0.0.1', port, code, watch: [] },
+    () => ({ id: 'GUESTID', name: 'Mac', platform: 'darwin', version: '0' })
+  )
+  client.sendDesk({ counts: { running: 5, total: 14, asleep: 5, names: ['PaneForge'], oldestRunSince: 1000 }, discord: false })
+  client.connect()
+  check('link: the guest comes online', await until(() => client.status === 'online'), client.error)
+  check('link: the host\'s report reaches a guest that joined after it was said',
+    await until(() => client.peerDesk?.discord === true && client.peerDesk.counts.total === 1), JSON.stringify(client.peerDesk))
+  check('link: the guest\'s report, said before the link came up, reaches the host',
+    await until(() => host.deskReports()[0]?.report?.counts.total === 14), JSON.stringify(host.deskReports()))
+  host.tellDesk({ ...hostSaid, discord: false })
+  check('link: Discord closing on the host reaches the guest', await until(() => client.peerDesk?.discord === false))
+  client.sendDesk({ counts: { running: 6, total: 14, asleep: 5, names: ['PaneForge'] }, discord: true })
+  check('link: a turn starting on the guest reaches the host',
+    await until(() => host.deskReports()[0]?.report?.counts.running === 6 && host.deskReports()[0].report.discord === true))
+  client.disconnect()
+  check('link: a machine that went away has said nothing', await until(() => client.peerDesk === undefined && host.deskReports().length === 0))
+  host.stop()
+}
+
+// A test copy is not the desk: it must never reach the profile, whatever its switch says
+// (2026-10-01: a copy's own idle panes read "8 sessions idle" while 18 turns ran).
+{
+  check('copy: the installed app speaks when switched on', presenceAllowed(true, '') === true)
+  check('copy: the installed app stays quiet when switched off', presenceAllowed(false, '') === false)
+  check('copy: a named test copy stays quiet with the switch on', presenceAllowed(true, 'dev-f') === false)
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const raw = main.match(/presence\.configure\(\s*next\.discordPresence|enabled:\s*getConfig\(\)\.discordPresence/g) ?? []
+  check('copy: every place the app turns Discord on asks presenceAllowed', raw.length === 0, raw.join(' | '))
+  check('copy: ...and there are three of them', (main.match(/presenceAllowed\(/g) ?? []).length === 3)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')

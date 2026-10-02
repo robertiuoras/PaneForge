@@ -20,6 +20,8 @@ export interface WakeQueueDeps {
    */
   sleep?: (id: string, reason?: string) => void
   pressure: () => Pressure
+  /** Agents the memory budget still fits (`Verdict.roomFor`); null when it cannot say. */
+  room?: () => number | null
 }
 
 /**
@@ -54,7 +56,7 @@ export function startWakeQueue(deps: WakeQueueDeps): { stop(): void } {
       }
     }
 
-    const toWake = wakePlan(panes, { pressure }, now)
+    const toWake = wakePlan(panes, { pressure, room: deps.room?.() ?? undefined }, now)
     for (const id of toWake) {
       deps.wake(id)
       logReclaim({ kind: 'wake', id, pressure })

@@ -129,6 +129,53 @@ check('third session gets its own port', third.port === 5102, String(third.port)
 const again = (await lanes.laneExtras(lane.cwd, 'a'))
 check('restored lane keeps the same port', again.port === 5101, String(again.port))
 
+// Claude Code writes its own untrusted default entry the first time it runs in a folder.
+// Once it exists the lane was never seeded again, so every pane there stopped on the trust
+// prompt (research-lab-d, 2026-09-27). The repo is trusted: the lane gains trust and keeps
+// the rest of its own entry.
+const claudeJson = join(home, '.claude.json')
+const patchClaude = (fn) => {
+  const d = JSON.parse(readFileSync(claudeJson, 'utf8'))
+  fn(d.projects)
+  writeFileSync(claudeJson, JSON.stringify(d))
+}
+const cliDefault = { hasTrustDialogAccepted: false, allowedTools: [], enabledMcpServers: ['computer-use'] }
+patchClaude((p) => {
+  p[resolve(lane.cwd)] = { ...cliDefault }
+})
+await lanes.laneExtras(lane.cwd, 'a')
+let own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[resolve(lane.cwd)]
+check('an untrusted lane entry under a trusted repo becomes trusted', own?.hasTrustDialogAccepted === true, JSON.stringify(own))
+check('and keeps its own allowedTools', JSON.stringify(own?.allowedTools) === '[]', JSON.stringify(own))
+check('and its own other settings', JSON.stringify(own?.enabledMcpServers) === '["computer-use"]', JSON.stringify(own))
+
+// An untrusted repo grants nothing, even to a lane that has an entry.
+patchClaude((p) => {
+  p[resolve(repo)].hasTrustDialogAccepted = false
+  p[resolve(lane.cwd)] = { ...cliDefault }
+})
+await lanes.laneExtras(lane.cwd, 'a')
+own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[resolve(lane.cwd)]
+check('an untrusted repo leaves the lane untrusted', own?.hasTrustDialogAccepted === false, JSON.stringify(own))
+patchClaude((p) => {
+  p[resolve(repo)].hasTrustDialogAccepted = true
+})
+
+// A lane whose memory folder is a real directory (it kept its own transcripts, so memory
+// is not shared) still gets the repo's trust: trust has nothing to do with memory.
+const thirdKey = join(projects, key(third.cwd))
+rmSync(thirdKey, { recursive: true, force: true })
+mkdirSync(thirdKey)
+patchClaude((p) => {
+  delete p[resolve(third.cwd)]
+  delete p[resolve(third.cwd).replace(/\\/g, '/')]
+})
+const unshared = await lanes.laneExtras(third.cwd, 'b')
+check('removing the lane\'s link left the original transcripts alone', existsSync(join(projects, key(repo), 'transcript.jsonl')))
+check('a lane with its own memory folder does not share memory', unshared.sharedMemory === false, String(unshared.sharedMemory))
+own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[resolve(third.cwd)]
+check('and still gets the repo\'s trust', own?.hasTrustDialogAccepted === true, JSON.stringify(own))
+
 // A folder nobody else is in is left exactly as it was.
 const untouched = (await lanes.resolveLane(repo, []))
 check('unclashed launch is not moved', untouched.cwd === repo && !untouched.lane)

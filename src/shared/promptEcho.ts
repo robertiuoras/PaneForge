@@ -77,6 +77,12 @@ export interface PromptEchoLine {
   boldChevron?: boolean
   /** This row belongs to the live composer containing the cursor. */
   active?: boolean
+  /**
+   * Whether something is drawn in this row's last two cells. `false` means its content
+   * stops short of the edge, so a `wrapped` flag on the row BELOW is not this text
+   * running on - see `seedPrompts`. Unknown (a plain string) keeps the old reading.
+   */
+  edge?: boolean
 }
 
 /** The same paint evidence for seeding, re-anchoring and clicking a prompt tag. */
@@ -86,6 +92,9 @@ export function promptRow(line: IBufferLine | undefined): PromptEchoLine {
   const chevron = prompt ? text.indexOf('›') : -1
   return {
     text,
+    // `trimRight` drops only cells nothing was written to; ConPTY WRITES its padding, so
+    // the spaces are trimmed here or every padded row would read as reaching the edge.
+    edge: line ? line.translateToString(false, Math.max(0, line.length - 2)).trim() !== '' : undefined,
     background: line?.getCell(0)?.getBgColor(),
     boldChevron: chevron >= 0 && Boolean(line?.getCell(chevron)?.isBold()) &&
       !line?.getCell(prompt![0].length - 1)?.isBold()
@@ -120,11 +129,22 @@ export function seedPrompts(
 ): SeededPrompt[] {
   // xterm represents a wrapped terminal line as several buffer rows. A prompt that spans
   // them is still one submitted ask, and the marker belongs on its first row.
+  //
+  // ...but only when the row above really ran into the edge. Windows' ConPTY paints every
+  // row padded with spaces to the full width, and a pad that reaches the last column
+  // leaves xterm's pending wrap set, so the NEXT row is flagged wrapped too. Measured on
+  // the PC's own s8 transcript at its 130x55 grid, 2026-09-23: `❯ Continue the handoff`
+  // sat under a padded blank row, was glued onto it and never tagged, and one copy of
+  // the first ask swallowed a padded continuation, so its text stopped matching the
+  // other copy and the one-tag-per-prompt rule drew two. That is why only the PC's
+  // mirrored panes had a rail "in the wrong place, not spread out".
   const logical: Array<{ line: number; text: string; background?: number; boldChevron?: boolean; active: boolean }> = []
   for (let i = 0; i < lines.length; i++) {
     const row = lines[i]
     const text = typeof row === 'string' ? row : row.text
-    if (typeof row !== 'string' && row.wrapped && logical.length) {
+    const above = lines[i - 1]
+    const ranOn = typeof above === 'string' || above?.edge !== false
+    if (typeof row !== 'string' && row.wrapped && logical.length && ranOn) {
       const previous = logical[logical.length - 1]
       previous.text += text
       previous.active ||= Boolean(row.active)

@@ -27,7 +27,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { EXITED_REMOVE_MS, exitedSweep, clearFinishedNow, finishedCount } =
+const { EXITED_REMOVE_MS, ASLEEP_REMOVE_MS, asleepSweep, exitedSweep, clearFinishedNow, finishedCount } =
   createRequire(import.meta.url)(outfile)
 
 let pass = 0
@@ -149,6 +149,54 @@ function dead(overrides = {}) {
 {
   const panes = [dead({ id: 'a' }), dead({ id: 'b', asleep: NOW }), dead({ id: 'c', remote: true })]
   check('finishedCount matches', finishedCount(panes) === 1)
+}
+
+// --- asleepSweep: a sleeping pane nobody touched leaves the card list too (2026-09-24) ---
+{
+  const T = 10_000_000
+  const old = T - ASLEEP_REMOVE_MS - 1
+  const nap = (over) => ({ id: 'z', status: 'exited', asleep: old, lastKeyboard: old - 5000, ...over })
+  check('an untouched pane asleep 30+ min leaves', asleepSweep([nap({})], T).length === 1)
+  check('asleep under 30 min stays', asleepSweep([nap({ asleep: T - 60_000 })], T).length === 0)
+  check('Keep open stays', asleepSweep([nap({ keepOpen: true })], T).length === 0)
+  check('touched since it fell asleep stays', asleepSweep([nap({ lastKeyboard: old + 1000 })], T).length === 0)
+  check('a remote pane is not ours to remove', asleepSweep([nap({ remote: true })], T).length === 0)
+  check('a question on screen stays', asleepSweep([nap({ ask: { q: 'x' } })], T).length === 0)
+  check('an awake pane is not this rule', asleepSweep([nap({ asleep: undefined, status: 'idle' })], T).length === 0)
+  check('the dead-pane sweep still never takes a sleeping one', exitedSweep([nap({ exitedAt: 1 })], T).length === 0)
+  // 2026-10-02: six crash-restored panes asleep with their "continue" owed were swept and
+  // the prompts logged LOST. Owed work keeps the card, asleep or dead.
+  check('a sleeping pane still owed a prompt stays', asleepSweep([nap({ owed: true })], T).length === 0)
+  check('a dead pane still owed a prompt stays', exitedSweep([dead({ owed: true })], NOW).length === 0)
+  check('and Clear finished leaves it too', clearFinishedNow([dead({ owed: true })]).length === 0)
+}
+
+// --- A pane a restart brought back asleep waits for somebody to be at the window (2026-10-01) ---
+// 2026-09-30: s7/s8 (04:55Z) and s6/s8 (11:30Z) were live before a relaunch and closed 10 min
+// after it, with nobody at the desk. A restored pane's clock starts at `seenAt`, the first
+// time a person is at the window this launch; null = nobody yet.
+{
+  const T = 10_000_000_000
+  const relaunch = T - 5 * 3_600_000 // asleep since the relaunch, hours ago
+  const back = (over) => ({ id: 'r', status: 'exited', asleep: relaunch, restored: true, ...over })
+  check('restored: held while nobody has been at the window, however long since relaunch', asleepSweep([back({})], T, null).length === 0)
+  const seen = T - 10_000
+  check('restored: held just after somebody arrives', asleepSweep([back({})], seen + ASLEEP_REMOVE_MS - 1, seen).length === 0)
+  const out = asleepSweep([back({})], seen + ASLEEP_REMOVE_MS, seen)
+  check('restored: swept once ASLEEP_REMOVE_MS has passed since seenAt', out.length === 1 && out[0].id === 'r')
+  check('restored: a keystroke after seenAt still holds it', asleepSweep([back({ lastKeyboard: seen + 1 })], seen + ASLEEP_REMOVE_MS, seen).length === 0)
+  // Not restored (slept for memory): the clock is its own sleep stamp, seenAt changes nothing.
+  const own = (over) => ({ id: 'n', status: 'exited', asleep: T - ASLEEP_REMOVE_MS, ...over })
+  check('not restored: swept 30 min after it slept', asleepSweep([own({})], T, null).length === 1)
+  check('not restored: swept the same whatever seenAt is', asleepSweep([own({})], T, T - 1000).length === 1)
+  check('not restored: still held under 30 min', asleepSweep([own({ asleep: T - ASLEEP_REMOVE_MS + 1 })], T, null).length === 0)
+}
+
+// --- Keep open holds a dead pane too, against the clock and the button (2026-09-29) ---
+{
+  check('a kept dead pane is not swept', exitedSweep([dead({ keepOpen: true })], NOW).length === 0)
+  check('Clear finished leaves a kept pane', clearFinishedNow([dead({ keepOpen: true })]).length === 0)
+  check('and does not count it', finishedCount([dead({ id: 'a' }), dead({ id: 'k', keepOpen: true })]) === 1)
 }
 
 console.log(`exited-sweep-test: ${pass} passed`)

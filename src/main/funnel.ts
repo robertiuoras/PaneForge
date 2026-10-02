@@ -26,7 +26,14 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { funnelArgs, funnelDenied, funnelHost, funnelOffArgs, servingHost } from '../shared/funnel'
+import {
+  funnelArgs,
+  funnelDenied,
+  funnelHost,
+  funnelOffArgs,
+  funnelProxyPort,
+  servingHost
+} from '../shared/funnel'
 
 /** Where the CLI lives when it is not on PATH. The Mac app ships its own copy. */
 const KNOWN = [
@@ -52,12 +59,14 @@ export function findTailscale(): string {
   return ''
 }
 
-async function runReal(
+/** One tailscale CLI call. Never throws, never blocks: a timeout is a non-zero code. */
+export async function runTailscale(
   binary: string,
-  args: string[]
+  args: string[],
+  timeout = CALL_MS
 ): Promise<{ out: string; err: string; code: number }> {
   return await new Promise((resolve) => {
-    execFile(binary, args, { windowsHide: true, timeout: CALL_MS }, (err, out, stderr) => {
+    execFile(binary, args, { windowsHide: true, timeout }, (err, out, stderr) => {
       const code = err && typeof (err as { code?: number }).code === 'number' ? (err as { code: number }).code : err ? 1 : 0
       resolve({ out: String(out ?? ''), err: String(stderr ?? ''), code })
     })
@@ -66,6 +75,8 @@ async function runReal(
 
 export class Funnel {
   private host = ''
+  /** the port this run put on 443; 0 until a start succeeds */
+  private port = 0
   constructor(private deps: FunnelDeps = {}) {}
 
   private get binary(): string {
@@ -73,7 +84,7 @@ export class Funnel {
   }
 
   private run(args: string[]): Promise<{ out: string; err: string; code: number }> {
-    const run = this.deps.run ?? runReal
+    const run = this.deps.run ?? runTailscale
     return run(this.binary, args)
   }
 
@@ -102,20 +113,35 @@ export class Funnel {
     // would be an address nobody can reach shown as if it worked.
     const served = servingHost((await this.run(['funnel', 'status'])).out) || servingHost(said)
     this.host = served || host
+    this.port = port
     return { url: `https://${this.host}`, denied: false, error: '' }
   }
 
+  /** The local port 443 forwards to: a number, 0 when nothing is on 443, null when unreadable. */
+  async proxyPort(): Promise<number | null> {
+    if (!this.binary) return null
+    const { out, code } = await this.run(['funnel', 'status', '--json'])
+    return code === 0 ? funnelProxyPort(out) : null
+  }
+
   /**
-   * Take it back off the internet.
+   * Take it back off the internet - but only if 443 is still pointing at THIS app.
    *
    * This is a configuration change owned by tailscaled, not a child process, so nothing
    * undoes it when the app dies - quitting has to say so explicitly, and so does turning
    * the switch off. A funnel left up is a public address into a port with nothing behind
    * it, which is not dangerous but is a promise the app is no longer keeping.
+   *
+   * The opposite mistake is the expensive one: a machine has ONE 443, so a second copy of
+   * the app (`npm run try`) quitting used to remove the installed app's address while the
+   * funnel pointed at a different port. Unreadable status counts as "not ours".
    */
   async stop(): Promise<void> {
-    if (!this.binary) return
+    const port = this.port
     this.host = ''
+    this.port = 0
+    if (!this.binary || !port) return
+    if ((await this.proxyPort().catch(() => null)) !== port) return
     await this.run(funnelOffArgs()).catch(() => ({ out: '', err: '', code: 1 }))
   }
 }

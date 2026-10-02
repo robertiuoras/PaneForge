@@ -23,7 +23,7 @@ try {
   const out = join(work,'continuation.cjs')
   buildSync({absWorkingDir:process.cwd(),entryPoints:['src/main/continuation.ts'],bundle:true,platform:'node',format:'cjs',outfile:out,logLevel:'silent'})
   const {startContinuation} = createRequire(import.meta.url)(out)
-  const source = {id,cwd,agent:'codex',model:'test-model',role:'reviewer',lane:'a',title:'Task',status:'idle',engaged:true,lastKeyboard:0}
+  const source = {id,cwd,agent:'codex',model:'test-model',role:'reviewer',lane:'a',title:'Task',autoTitled:'agent',status:'idle',engaged:true,lastKeyboard:0}
   const spec = {scrollbackId:id,resumeId:'r',cwd,laneEnv:{LANE:'a'}}
   function fixture({sleep=true,throwStart=false}={}) {
     const calls = []
@@ -39,7 +39,7 @@ try {
   let deps = fixture()
   eq(startContinuation(deps,id,now).id,'new','valid continuation starts')
   eq(deps.calls,['sleep','start'],'source saved before new writer')
-  eq(deps.request,{cwd,title:source.title,agent:source.agent,model:source.model,role:source.role,lane:source.lane,laneEnv:spec.laneEnv,prompt:doc},'preserve selected provider and worktree; fresh request contains no resume id')
+  eq(deps.request,{cwd,title:source.title,autoTitled:source.autoTitled,agent:source.agent,model:source.model,role:source.role,lane:source.lane,laneEnv:spec.laneEnv,prompt:doc},'preserve selected provider, worktree and who named it; fresh request contains no resume id')
   deps = fixture({sleep:false})
   eq(startContinuation(deps,id,now).ok,false,'sleep refusal blocks continuation')
   eq(deps.calls,['sleep'],'no new writer after refusal')
@@ -101,7 +101,7 @@ try {
   writeFileSync(customPath, `<!-- paneforge-handoff ${JSON.stringify(customMeta)} -->\n` +
     ['Objective','Constraints','Completed','Next steps','Verification','Running jobs'].map(h=>`# ${h}\nx\n`).join(''))
   clearHandoffCache()
-  eq(verifiedPaneHandoff(prepared.pane.cwd, prepared.pane.id, prepared.pane.agent, 'prepare-resume', now)?.path, customPath, 'verifier reads the exact custom-state file prepare requested')
+  eq(verifiedPaneHandoff(prepared.pane.cwd, prepared.pane.id, prepared.pane.agent, 'prepare-resume', Date.now())?.path, customPath, 'verifier reads the exact custom-state file prepare requested')
   delete process.env.PF_CLAUDE_HOME
   prepared = prepare()
   eq(pathInPrompt(prepared.prompts[0]?.text), handoffCandidates(prepared.pane.cwd, prepared.pane.id, join(homedir(), '.claude'), () => false)[0], 'actual prepare handler falls back to the default Claude home')

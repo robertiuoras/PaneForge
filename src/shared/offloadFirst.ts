@@ -56,7 +56,7 @@
  * not "send it regardless", because the refusals are the things that would lose the work
  * rather than merely move it.
  */
-import type { Pressure } from './capacity'
+import { projectNameOf, type Pressure } from './capacity'
 
 export type PreferRemote = 'auto' | 'always' | 'never'
 
@@ -118,6 +118,20 @@ export interface PlaceInput {
    * confirmed it, and a device asked for by name is refused rather than guessed onto.
    */
   deviceHasProject?: boolean
+  /**
+   * The named device's own name for itself (`DESKTOP-CMSUCM1`), when `device` was given as
+   * an id. A refusal is read by a person, and `e38080cc645760c5 does not have this project`
+   * named nothing they could recognise (offload.log, 2026-10-01).
+   */
+  deviceName?: string
+  /**
+   * The reason the named device's project list could not be read, when it could not. Set,
+   * a missing project is NOT evidence the device lacks it: on 2026-10-01 the PC took 10-15 s
+   * to send its list against a 15 s limit, the failed ask became an empty list, and `pf open
+   * --on` was refused with "does not have this project" for research-lab, clients and
+   * claude-memory - all three on the PC's disk.
+   */
+  deviceUnanswered?: string
   /**
    * What this machine says about itself right now: the memory verdict and the lag band,
    * worse of the two (`worstPressure`). Absent reads as `normal` - an unmeasured desk is
@@ -246,9 +260,13 @@ export function placeNewPane(i: PlaceInput): Placement {
   // doc comment on `StartSessionRequest`. It never falls back to this machine: a refusal
   // here means no pane opens anywhere, decided by the caller reading `refused`.
   if (i.device) {
-    const name = i.device
+    const name = i.deviceName || i.device
     if (!i.deviceOnline) {
       const why = `${name} is not online`
+      return { where: 'local', reason: why, refused: why }
+    }
+    if (i.deviceHasProject !== true && i.deviceUnanswered) {
+      const why = `${name} did not say which projects it has (${i.deviceUnanswered}), so nothing was opened there. Try again in a minute, or open it on this machine`
       return { where: 'local', reason: why, refused: why }
     }
     if (i.deviceHasProject !== true) {
@@ -320,4 +338,71 @@ export function placeNewPane(i: PlaceInput): Placement {
   if (pressure === 'critical') return { where: 'remote', reason: 'this machine is out of memory' }
   if (pressure === 'warn') return local('this machine is getting low on memory, but idle panes are being paused to make room')
   return local('this machine has room for it')
+}
+
+/**
+ * How long a device's project list may answer "yes, it has that project" without asking
+ * again. Asking costs 10-15 s on the PC (measured 2026-10-01: 9.8 s, 12.1 s, and one that
+ * ran past the 15 s limit), on every `pf open --on` and every dialog press that looks for
+ * a peer. A project that appeared over there is not in an old list, so a miss always asks;
+ * one deleted over there since is refused by that machine when the pane starts, in words.
+ */
+export const PROJECTS_FRESH_MS = 10 * 60_000
+
+/** A device's last project list, and when it arrived. */
+export interface KnownProjects {
+  list: { name: string; path: string }[]
+  at: number
+}
+
+/** Whether `known` is fresh enough to say this device has `project` without asking it. */
+export function knownToHave(known: KnownProjects | undefined, project: string, now: number): boolean {
+  if (!known || !project || now - known.at > PROJECTS_FRESH_MS) return false
+  const want = project.toLowerCase()
+  return known.list.some((p) => p.name.toLowerCase() === want)
+}
+
+/**
+ * The toast and log sentence for a new session that did not open, whoever asked for it:
+ * the New session dialog, `pf open`, an agent, the phone. Until 2026-10-01 a refusal to a
+ * caller that was not the window - `pf open --on`, an agent's helper pane - was an error
+ * string in that caller's terminal and nothing at all in the app, so the person watching
+ * the desk saw a pane simply never arrive.
+ */
+export function openFailedLine(project: string, why: string): string {
+  const reason = why.trim().replace(/[.\s]+$/, '') || 'it gave no reason'
+  return `No new session opened${project ? ` for ${project}` : ''}: ${reason}.`
+}
+
+/**
+ * What one failed open turns into: the reason in plain words, the offload.log line, and the
+ * toast - which the window skips when the window asked, because it already shows the
+ * row's `why` itself (`App.tsx` `start`) and two toasts for one press is noise.
+ */
+export function openFailure(
+  req: { cwd: string; device?: string },
+  err: unknown,
+  fromWindow: boolean
+): { why: string; log: Record<string, unknown>; toast?: string } {
+  const message = (err as { message?: unknown } | null | undefined)?.message
+  const raw = typeof message === 'string' ? message : typeof err === 'string' ? err : ''
+  const why = raw.replace(/^Error:\s*/, '').trim() || 'it would not open'
+  const project = projectNameOf(req.cwd)
+  return {
+    why,
+    log: { event: 'failed', project, cwd: req.cwd, device: req.device, why, via: fromWindow ? 'window' : 'api' },
+    toast: fromWindow ? undefined : openFailedLine(project, why)
+  }
+}
+
+/**
+ * What a client row in the New session dialog says when it went to the chat already open
+ * there instead of opening a second one. That is the rule (`NewSessionDialog`: a client is
+ * one place), and it was the one outcome of a press that said nothing at all: the dialog
+ * closed, the existing chat came to the front, and "why can't I open a new PIA Team
+ * session" was the only reading left (2026-10-01).
+ */
+export function reusedLine(title: string): string {
+  const name = title.trim() || 'That client'
+  return `${name} already has a chat open, so you were taken to it instead of a second one. A client keeps one chat.`
 }

@@ -45,6 +45,20 @@ export interface ExitedFact {
   handingOff?: boolean
   /** Epoch ms of the most recent keystroke/click into this pane. */
   lastKeyboard?: number
+  /** The person asked for this pane to stay (the card's Keep open). */
+  keepOpen?: boolean
+  /**
+   * Asleep only because a restart brought it back that way (`asleepReason: 'restored'`):
+   * it was a live chat a minute before the relaunch, and its sleep clock is the relaunch.
+   */
+  restored?: boolean
+  /**
+   * The app still owes this pane a prompt (`Session.owedPrompt`). 2026-10-02 4:44am: six
+   * panes a crash had cut mid-turn came back asleep holding their "continue", and the
+   * close sweep took all six ten minutes later - `queued-prompts.log` "LOST (gone: the pane
+   * closed before it was typed)" six times. A card holding unfinished work is never swept.
+   */
+  owed?: boolean
 }
 
 export interface ExitedRemoval {
@@ -63,8 +77,11 @@ function isFinished(p: ExitedFact): boolean {
   // The one guard the whole feature exists to get right: an app-slept pane also reads
   // `exited`, and must never be swept or counted as finished.
   if (p.asleep) return false
+  // Kept open by hand: its last screen is what the person kept it for (Robert, 2026-09-29).
+  if (p.keepOpen) return false
   if (p.ask) return false
   if (p.handingOff) return false
+  if (p.owed) return false
   if (!p.exitedAt) return false
   // Touched (typed into, clicked) after it died holds the clock, the same way
   // `closeAfterResult` refuses a pane with newer user input than the moment it judged.
@@ -87,6 +104,47 @@ export function exitedSweep(panes: ExitedFact[], now: number): ExitedRemoval[] {
     // inheriting a clock from before it was ever touched.
     if (now - p.exitedAt! < EXITED_REMOVE_MS) continue
     out.push({ id: p.id, reason: `finished ${Math.round((now - p.exitedAt!) / 60_000)} min ago, nobody touched it` })
+  }
+  return out
+}
+
+/**
+ * How long a SLEEPING pane nobody has touched sits before it leaves the card list too.
+ *
+ * Robert, 2026-09-24: finished chats should "remove from paneforge and of course easily
+ * can see in review what it did ... just if we want to continue later". Three had to be
+ * closed by hand that night - all asleep, two of them put to sleep by the restart itself
+ * and never looked at again. A sleeping pane holds no process; the card is the only thing
+ * it costs, and the Review row the caller writes first keeps the reply and a Continue.
+ * Long enough that a pane put to sleep for memory while its owner is at lunch is still
+ * there when they are back.
+ */
+export const ASLEEP_REMOVE_MS = 30 * 60_000
+
+/**
+ * Sleeping panes old enough to leave the card list. Same refusals as a dead pane (remote,
+ * a question on screen, mid-handoff, touched since), plus the card's own Keep open.
+ */
+/**
+ * `seenAt` is when a person was first at the window after this launch (null = not yet).
+ *
+ * A pane the restart brought back asleep starts its clock THERE, not at the relaunch.
+ * 2026-09-30: s7/s8 were live chats before the 04:45Z update and closed at 04:55 for being
+ * quiet since the restore; s6/s8, live before the 11:20Z relaunch, went at 11:30. Nobody
+ * had been at the window to see them come back. Robert's 2026-09-24 rule still holds - a
+ * pane put to sleep by the restart and never looked at leaves into Review - it just gets
+ * the same thirty minutes in front of somebody that every other sleeping pane gets.
+ */
+export function asleepSweep(panes: ExitedFact[], now: number, seenAt: number | null = 0): ExitedRemoval[] {
+  const out: ExitedRemoval[] = []
+  for (const p of panes) {
+    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff || p.owed) continue
+    if (p.restored && seenAt === null) continue
+    const slept = typeof p.asleep === 'number' ? p.asleep : 0
+    const since = p.restored && slept ? Math.max(slept, seenAt ?? 0) : slept
+    if (!since || now - since < ASLEEP_REMOVE_MS) continue
+    if (p.lastKeyboard && p.lastKeyboard > since) continue
+    out.push({ id: p.id, reason: `asleep ${Math.round((now - since) / 60_000)} min, nobody touched it` })
   }
   return out
 }

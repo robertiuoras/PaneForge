@@ -21,16 +21,20 @@ import {
   writeFileSync
 } from 'node:fs'
 import { open, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
 // time, and two copies of "what counts as an escape sequence" drift in exactly the way
 // nobody notices - a transcript and its tee disagreeing about the same run.
 import { stripAnsi as strip } from '../shared/ansi'
 import { gistOf, noteAskInto } from '../shared/gist'
+import { humanTitle } from '../shared/cliTitle'
+import { projectOf } from '../shared/place'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
 import { logProblem } from './crash'
 import { firstAskIn } from './promptArchive'
+import { TerminalModes } from '../shared/terminalModes'
 
 /** Stop one runaway pane filling the disk; the newest output is what matters. */
 const MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -220,11 +224,12 @@ export function chatNameFor(resumeId: string): { title: string; about?: string }
         if (!f.endsWith('.json')) continue
         try {
           const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
-          if (!e.resumeId || !e.title) continue
+          const title = e.title && humanTitle(e.title)
+          if (!e.resumeId || !title) continue
           const at = e.endedAt ?? e.startedAt ?? 0
           const was = map.get(e.resumeId)
           if (was && was.at >= at) continue
-          map.set(e.resumeId, { title: e.title, about: e.gist, at })
+          map.set(e.resumeId, { title, about: e.gist, at })
         } catch {
           /* one unreadable row must not blank the rest */
         }
@@ -326,6 +331,19 @@ export function recordData(id: string, chunk: string): void {
 export function recordEnd(id: string, resumeId?: string): void {
   flushSync()
   writeEnd(id, resumeId)
+}
+
+/**
+ * Whether this pane's History row says it ended. Only half a proof on its own - quitting
+ * stamps every open pane, and restore brings them back under the same id - so it is read
+ * only for a pane that is no longer on the desk (`holdIsOver`, `shared/laneTaken.ts`).
+ */
+export function ended(id: string): boolean {
+  try {
+    return typeof (JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry).endedAt === 'number'
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -521,12 +539,34 @@ export function list(): HistoryEntry[] {
           const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
           const log = logFile(e.id)
           e.bytes = existsSync(log) ? statSync(log).size : 0
-          // Not stored - a folder can come back, and a stale `gone` in a metadata file
-          // would outlive the truth. One stat per row, next to the one already being made.
-          const exists = Boolean(e.cwd && existsSync(e.cwd))
-          const baseRepo = e.cwd ? e.cwd.replace(/-(w\d+|[a-z])$/, '') : ''
-          const baseExists = Boolean(baseRepo && baseRepo !== e.cwd && existsSync(baseRepo))
-          e.gone = !exists && !baseExists
+          // A swept copy can contain client subfolders. Recover the same relative
+          // folder in its permanent project only when the recorded lane branch proves
+          // this was a copy. Leave a surviving copy alone, even if its client is missing.
+          // This is read-time recovery: keep the saved path and conversation untouched.
+          if (e.cwd && !existsSync(e.cwd)) {
+            for (let folder = e.cwd; dirname(folder) !== folder; folder = dirname(folder)) {
+              const copy = folder.match(/^(.+)-(w\d+|[a-z])$/)
+              if (!copy || existsSync(folder)) continue
+              const git = join(copy[1], '.git')
+              const target = join(copy[1], relative(folder, e.cwd))
+              if (!existsSync(git) || !existsSync(target)) continue
+              try {
+                if (!statSync(git).isDirectory() || !statSync(target).isDirectory()) continue
+                const ref = `refs/heads/lane-${copy[2]}`
+                const packed = join(git, 'packed-refs')
+                const recorded = existsSync(join(git, ref)) ||
+                  (existsSync(packed) && readFileSync(packed, 'utf8').split('\n')
+                    .some((line) => line.trim().split(/\s+/)[1] === ref))
+                if (!recorded) continue
+                e.cwd = target
+                break
+              } catch {
+                /* an unreadable project stays missing; do not lose its History row */
+              }
+            }
+          }
+          // Not stored: a folder can come back, so `gone` must reflect current state.
+          e.gone = !Boolean(e.cwd && existsSync(e.cwd))
           // A row written with the whole agent SPEC where its id belongs. Two are on this
           // machine; every later reader (the logo, the `a.id === e.agent` lookup) expects a
           // string. Repaired on the way out rather than migrated - the file is a nicety and
@@ -546,8 +586,28 @@ export function list(): HistoryEntry[] {
       // back to when it started, which keeps it at the top where it belongs.
       .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
       .map(backfill)
+      .map(readable)
   } catch {
     return []
+  }
+}
+
+/**
+ * A row's title with its ids taken out, read-time like the folder recovery above: a chat
+ * closed before `humanTitle` existed still says `auto-close bug in s42-mupfazgj` in its file.
+ * Another chat it names by id is named by that chat's own title where History has it.
+ */
+function readable(e: HistoryEntry, _i: number, all: HistoryEntry[]): HistoryEntry {
+  const title = humanTitle(e.title, (id) => (id === e.id ? undefined : all.find((o) => o.id === id)?.title))
+  return title === e.title ? e : { ...e, title: title || projectOf(e.cwd) }
+}
+
+/** The title History saved for a pane, as written; undefined when it has no row. */
+export function titleOf(id: string): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry).title || undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -654,24 +714,32 @@ export function tail(id: string, bytes: number): string {
   flushSync()
   let fd: number | undefined
   try {
-    // The LAST `bytes`, read as the last `bytes` - not as the whole file with the front
-    // thrown away. A pane's log is capped at 8 MB (LOG_LIMIT) and a restore asks every
-    // reopened pane for its tail, all in one tick, on the main process: measured on this
-    // Mac 2026-08-21, `readFileSync(8 MB, 'utf8')` plus the slice is **22.7ms** against
-    // **1.2ms** for an fd read of the last 400 KB - so nine restored panes were 200ms of
-    // blocked main process, which on Windows is the busy cursor and here is a desk that
-    // does not answer while it comes back.
+    // Keep only the requested tail in memory. The discarded prefix is scanned in small
+    // chunks for terminal modes: Codex enters its alternate screen and enables mouse
+    // reporting only at startup. Replaying a tail without those modes after RIS makes
+    // the pane swallow scrolling and interpret native screen updates as normal output.
     fd = openSync(logFile(id), 'r')
     const size = fstatSync(fd).size
     const want = Math.min(bytes, size)
     const buf = Buffer.alloc(want)
     readSync(fd, buf, 0, want, size - want)
-    const cut = buf.toString('utf8')
-    if (size <= bytes) return cut
+    if (size <= bytes) return buf.toString('utf8')
+    const modes = new TerminalModes()
+    const decoder = new StringDecoder('utf8')
+    const skipped = Buffer.alloc(Math.min(64 * 1024, size - want))
+    for (let offset = 0; offset < size - want;) {
+      const got = readSync(fd, skipped, 0, Math.min(skipped.length, size - want - offset), offset)
+      if (!got) break
+      modes.consume(decoder.write(skipped.subarray(0, got)))
+      offset += got
+    }
+    const cut = decoder.end(buf)
     const nl = cut.indexOf('\n')
+    if (nl !== -1) modes.consume(cut.slice(0, nl + 1))
     // No newline in the whole tail: the read may have started inside a UTF-8 sequence, and
     // the decoder leaves that as one replacement character at the very front.
-    return nl === -1 ? cut.replace(/^\uFFFD+/, '') : cut.slice(nl + 1)
+    const retained = nl === -1 ? cut.replace(/^\uFFFD+/, '') : cut.slice(nl + 1)
+    return modes.restorePrefix(retained) + retained
   } catch {
     return ''
   } finally {

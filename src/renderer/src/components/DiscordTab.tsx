@@ -4,14 +4,21 @@ import {
   DEFAULT_DISCORD_STYLE,
   DEFAULT_LINK_LABEL,
   DEFAULT_LINK_URL,
-  DISCORD_TOKENS,
+  DISCORD_PRESETS,
   MAX_BUTTONS,
   NO_PRESENCE_STATUS,
   PRESENCE_IMAGE_TEXT,
+  PRESET_ROWS,
+  TOKEN_PHRASES,
   VISIBLE_ROWS,
   buildActivity,
+  buildButtons,
   newRowId,
+  pickLook,
   chosenRows,
+  togglePhrase,
+  visibleRows,
+  withLook,
   type DiscordButton,
   type DiscordRow,
   type DiscordStyle,
@@ -24,7 +31,7 @@ import { Segmented, Switch } from './Controls'
 const api = window.api
 
 /**
- * The Discord tab: what the profile says, and a picture of it while you write it.
+ * The Discord tab: what the profile says, and a picture of it while you choose.
  *
  * Its own file rather than another block inside `SettingsDialog.tsx` because the rows
  * editor is a list with its own state-free arithmetic, and because the preview is the
@@ -32,6 +39,11 @@ const api = window.api
  * sampled from its own dark profile card. The rest of the app derives every colour from
  * the accent (`shared/theme.ts`); a replica that did the same would be a picture of
  * PaneForge, which is the one thing it must not be.
+ *
+ * The order is the order of the decisions: on or off, which look, the four things a look
+ * may add, what that comes out as. Writing lines by hand is under Advanced, closed, because
+ * it is the one part that needs the reader to know what a template is (Robert, 2026-09-27:
+ * "make it a lot easier to edit and change in settings").
  *
  * `scripts/settings-index.mjs` reads this file whole and files every setting in it under
  * the `discord` tab, so the search box finds these rows exactly like the ones that
@@ -44,14 +56,14 @@ interface Props {
 }
 
 /**
- * A desk that stands in for yours while you edit the wording. Fixed numbers rather than
- * the live ones on purpose: the point of the preview is that a template can be judged
- * with an empty desk and no Discord open, and real counts of 0/0 would render every
- * template as the same nothing.
+ * A desk that stands in for yours while you choose. Fixed numbers rather than the live
+ * ones on purpose: the point of the preview is that a look can be judged with an empty
+ * desk and no Discord open, and real counts of 0/0 would render every look as the same
+ * nothing. Five of seven is the shape of the desk this tab was rebuilt for.
  */
 const SAMPLE_BUSY: PresenceCounts = {
-  running: 2,
-  total: 5,
+  running: 5,
+  total: 7,
   names: ['PaneForge', 'Toolstash', 'Manic-s-Auction-House'],
   oldestRunSince: 0,
   asleep: 1,
@@ -61,7 +73,7 @@ const SAMPLE_BUSY: PresenceCounts = {
 }
 const SAMPLE_IDLE: PresenceCounts = {
   running: 0,
-  total: 5,
+  total: 7,
   names: [],
   asleep: 2,
   appStart: 0,
@@ -72,17 +84,24 @@ const SAMPLE_IDLE: PresenceCounts = {
 const WHEN_OPTIONS: { value: RowWhen; label: string }[] = [
   { value: 'always', label: 'Always' },
   { value: 'running', label: 'Working' },
-  { value: 'idle', label: 'Idle' }
+  { value: 'idle', label: 'Waiting' }
 ]
 
 export default function DiscordTab({ config, onChange }: Props): JSX.Element {
   // Which half of the preview is on screen. The idle wording is the half nobody would
-  // otherwise see until the desk went quiet, which is too late to edit it.
+  // otherwise see until the desk went quiet, which is too late to change it.
   const [preview, setPreview] = useState<'busy' | 'idle'>('busy')
   const style = config.discordStyle
+  const custom = style.preset === 'custom'
+  // Controlled rather than left to the browser so picking "Your own lines" can open it.
+  const [advanced, setAdvanced] = useState(false)
   const setStyle = (patch: Partial<DiscordStyle>): void =>
     onChange({ discordStyle: { ...style, ...patch } })
-  const setRows = (rows: DiscordRow[]): void => setStyle({ rows })
+  const setLook = (patch: Partial<Pick<DiscordStyle, 'preset' | 'idle' | 'tokens'>>): void =>
+    onChange({ discordStyle: withLook(style, patch) })
+  // Any hand edit to a line makes the card the person's own: a look would otherwise
+  // rebuild the lines on the next switch flip and throw the edit away.
+  const setRows = (rows: DiscordRow[]): void => setStyle({ rows, preset: 'custom' })
   const patchRow = (i: number, patch: Partial<DiscordRow>): void =>
     setRows(style.rows.map((r, n) => (n === i ? { ...r, ...patch } : r)))
   const moveRow = (i: number, by: number): void => {
@@ -95,6 +114,18 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
   const setButtons = (buttons: DiscordButton[]): void => setStyle({ buttons })
   const patchButton = (i: number, patch: Partial<DiscordButton>): void =>
     setButtons(style.buttons.map((b, n) => (n === i ? { ...b, ...patch } : b)))
+  const [addingLine, setAddingLine] = useState(false)
+  // On means a button actually reaches the card: one with a broken link is dropped before
+  // sending, and a switch saying on over no button would be the old lie in a new place.
+  const linkOn = buildButtons(style).length > 0
+  // Turning it on brings back the first button only - a second one somebody switched off
+  // stays off.
+  const setLink = (on: boolean): void =>
+    setButtons(
+      on && !style.buttons.length
+        ? [{ id: 'link', label: DEFAULT_LINK_LABEL, url: DEFAULT_LINK_URL, on: true }]
+        : style.buttons.map((b, i) => (on ? (i === 0 ? { ...b, on } : b) : { ...b, on }))
+    )
 
   const counts = preview === 'busy' ? SAMPLE_BUSY : SAMPLE_IDLE
   // Which rows this sample desk would actually put on the card, so a row that is
@@ -108,13 +139,80 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
       <Switch
         checked={config.discordPresence}
         onChange={(v) => onChange({ discordPresence: v })}
-        label="Show what the desk is doing on Discord"
-        hint="Rich presence on your profile, refreshed as turns start and finish. Counts, project folder names and your own token totals - never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all."
+        label="Show what your chats are doing on Discord"
+        hint="Puts a short line on your Discord profile saying how many chats are working. Numbers only, unless you pick the look with project names - never a word of what a chat says. Needs the Discord app open. Your other computer, if it is linked to this one, uses the same choices and is counted too."
       />
 
       {config.discordPresence && (
         <>
           <DiscordStatus />
+
+          <div className="setting">
+            <label>Look</label>
+            <div className="look-cards" role="radiogroup" aria-label="Look">
+              {DISCORD_PRESETS.map((p) => (
+                <LookCard
+                  key={p.id}
+                  name={p.label}
+                  hint={p.hint}
+                  sample={visibleRows(SAMPLE_BUSY, withLook(style, { preset: p.id }))}
+                  on={style.preset === p.id}
+                  onPick={() => onChange({ discordStyle: pickLook(style, p.id) })}
+                />
+              ))}
+              <LookCard
+                name="Your own lines"
+                hint={
+                  custom
+                    ? 'Written by hand under Advanced. Pick another look and they wait here for when you come back.'
+                    : 'Start from the look you have now and change the words yourself, under Advanced.'
+                }
+                sample={custom ? visibleRows(SAMPLE_BUSY, style) : []}
+                on={custom}
+                onPick={() => {
+                  if (!custom) onChange({ discordStyle: pickLook(style, 'custom') })
+                  setAdvanced(true)
+                }}
+              />
+            </div>
+          </div>
+
+          {custom && (
+            <div className="hint">
+              Your own lines decide what the card says, so the switches for waiting chats and
+              tokens are put away. Pick one of the other looks to get them back.
+            </div>
+          )}
+          <div className="switches">
+            {!custom && (
+              <Switch
+                checked={style.idle}
+                onChange={(v) => setLook({ idle: v })}
+                label="Say how many are waiting"
+                hint={'Adds how many chats are waiting beside the ones working: "5 running · 2 idle" rather than "5 running".'}
+              />
+            )}
+            <Switch
+              checked={style.elapsed}
+              onChange={(v) => setStyle({ elapsed: v })}
+              label="Show how long it has been going"
+              hint="A clock under the lines, counting from the chat that has been working longest - or from when PaneForge opened, while every chat is waiting."
+            />
+            {!custom && (
+              <Switch
+                checked={style.tokens}
+                onChange={(v) => setLook({ tokens: v })}
+                label="Show tokens used today"
+                hint="How much every agent on your computers has used since midnight, from the logs Claude Code and Codex already keep."
+              />
+            )}
+            <Switch
+              checked={linkOn}
+              onChange={setLink}
+              label="Show the link button"
+              hint="A button under the card that opens the PaneForge page. Discord shows it to everyone except you, so your own profile will not have it."
+            />
+          </div>
 
           <div className="setting">
             <div className="setting-row">
@@ -123,74 +221,207 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                 value={preview}
                 onChange={(v) => setPreview(v as 'busy' | 'idle')}
                 options={[
-                  { value: 'busy', label: 'A turn running' },
-                  { value: 'idle', label: 'Nothing running' }
+                  { value: 'busy', label: 'Chats working' },
+                  { value: 'idle', label: 'All waiting' }
                 ]}
               />
             </div>
             <DiscordPreview style={style} counts={counts} />
+            <div className="hint dim">
+              Made-up numbers - five of seven chats working - so you can judge a look with
+              nothing open. A change reaches Discord within fifteen seconds.
+            </div>
           </div>
 
-          <div className="setting">
-            <div className="setting-row">
-              <label>Lines</label>
-              <button
-                className="ghost small"
-                onClick={() =>
-                  setRows([
-                    ...style.rows,
-                    { id: newRowId(style.rows), text: '', when: 'always', on: true }
-                  ])
-                }
-              >
-                Add a line
-              </button>
-            </div>
-            <div className="hint">
-              Discord draws two lines and no more, so the first two that have something to
-              say are the ones on the card. Drag order decides which: move a line up to put
-              it on top, switch one off to hand its place to the one under it. A line whose
-              words come out empty - "on {'{projects}'}" with nothing running - takes no
-              space either.
-            </div>
-            <div className="row-list">
-              {style.rows.map((row, i) => {
-                const text = row.text.trim()
-                const drawn = shown.indexOf(row.id)
-                return (
-                  <div className={'row-edit' + (row.on ? '' : ' off')} key={row.id}>
+          <details
+            className="discord-advanced"
+            open={advanced}
+            onToggle={(e) => setAdvanced((e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary>Advanced: write your own lines</summary>
+            <div className="da-body">
+              <div className="setting">
+                <div className="setting-row">
+                  <label>Lines</label>
+                  <button className="ghost small" onClick={() => setAddingLine((v) => !v)}>
+                    {addingLine ? 'Never mind' : 'Add a line'}
+                  </button>
+                </div>
+                <div className="hint">
+                  Discord draws two lines and no more, so the first two that have something to
+                  say are the ones on the card. Move a line up to put it on top, switch one off
+                  to hand its place to the one under it. A line whose words come out empty -
+                  "on {'{projects}'}" with nothing running - takes no space either. Changing a
+                  line here makes the look "Your own lines".
+                </div>
+                {addingLine && (
+                  <div className="pickrow discord-presets">
+                    {PRESET_ROWS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        className="chip pick"
+                        onClick={() => {
+                          setRows([
+                            ...style.rows,
+                            { id: newRowId(style.rows), text: preset.text, when: preset.when, on: true }
+                          ])
+                          setAddingLine(false)
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                    <button
+                      className="chip pick"
+                      onClick={() => {
+                        setRows([
+                          ...style.rows,
+                          { id: newRowId(style.rows), text: '', when: 'always', on: true }
+                        ])
+                        setAddingLine(false)
+                      }}
+                    >
+                      Blank line to write myself
+                    </button>
+                  </div>
+                )}
+                <div className="row-list">
+                  {style.rows.map((row, i) => {
+                    const text = row.text.trim()
+                    const drawn = shown.indexOf(row.id)
+                    return (
+                      <div className={'row-edit' + (row.on ? '' : ' off')} key={row.id}>
+                        <div className="re-top">
+                          <Switch
+                            checked={row.on}
+                            onChange={(v) => patchRow(i, { on: v })}
+                            label={`Line ${i + 1}`}
+                          />
+                          <Segmented
+                            value={row.when}
+                            onChange={(v) => patchRow(i, { when: v as RowWhen })}
+                            options={WHEN_OPTIONS}
+                          />
+                          <div className="re-moves">
+                            <button
+                              className="ghost small"
+                              title="Move up"
+                              disabled={i === 0}
+                              onClick={() => moveRow(i, -1)}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              className="ghost small"
+                              title="Move down"
+                              disabled={i === style.rows.length - 1}
+                              onClick={() => moveRow(i, 1)}
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className="ghost small"
+                              title="Remove this line"
+                              onClick={() => setRows(style.rows.filter((_, n) => n !== i))}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          className="search"
+                          value={row.text}
+                          placeholder="Write what this line says"
+                          spellCheck={false}
+                          onChange={(e) => patchRow(i, { text: e.target.value })}
+                        />
+                        <div className="pickrow discord-chips">
+                          {TOKEN_PHRASES.map((t) => {
+                            const kept = rowHasPhrase(row.text, t.phrase)
+                            return (
+                              <button
+                                key={t.token}
+                                className={'chip pick' + (kept ? ' on' : '')}
+                                title={
+                                  kept
+                                    ? `Remove ${t.label.toLowerCase()} from this line`
+                                    : `Add ${t.label.toLowerCase()} to this line`
+                                }
+                                onClick={() => patchRow(i, { text: togglePhrase(row.text, t.phrase) })}
+                              >
+                                {t.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div className="hint dim">
+                          {!row.on
+                            ? 'Switched off - nothing on the card.'
+                            : !text
+                              ? 'Empty, so it takes no room on the card.'
+                              : drawn >= 0
+                                ? `On the card now, as line ${drawn + 1}.`
+                                : `Not on the card right now - ${
+                                    row.when === 'running'
+                                      ? 'this one only shows while a chat is working.'
+                                      : row.when === 'idle'
+                                        ? 'this one only shows while every chat is waiting.'
+                                        : `Discord only draws ${VISIBLE_ROWS} lines and two above it got there first.`
+                                  }`}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="hint">
+                  The buttons on each line build the wording for you - click one to add that
+                  bit, click it again to take it back out. The box itself still works if you
+                  want to type your own words around them, but nothing here needs it. Discord
+                  cuts a line off past 128 characters, so a long project list drops its tail
+                  for a "+2 more" rather than being chopped mid-word.
+                </div>
+              </div>
+
+              <div className="setting">
+                <div className="setting-row">
+                  <label>Buttons</label>
+                  {style.buttons.length < MAX_BUTTONS && (
+                    <button
+                      className="ghost small"
+                      onClick={() =>
+                        setButtons([
+                          ...style.buttons,
+                          {
+                            id: newRowId(style.buttons),
+                            label: DEFAULT_LINK_LABEL,
+                            url: DEFAULT_LINK_URL,
+                            on: true
+                          }
+                        ])
+                      }
+                    >
+                      Add a button
+                    </button>
+                  )}
+                </div>
+                <div className="hint">
+                  Discord draws the lines as plain text, so a link written into one is not
+                  clickable. A button is the only clickable thing a Discord profile card has,
+                  and it takes two of them.
+                </div>
+                {style.buttons.map((b, i) => (
+                  <div className={'row-edit' + (b.on ? '' : ' off')} key={b.id}>
                     <div className="re-top">
                       <Switch
-                        checked={row.on}
-                        onChange={(v) => patchRow(i, { on: v })}
-                        label={`Line ${i + 1}`}
-                      />
-                      <Segmented
-                        value={row.when}
-                        onChange={(v) => patchRow(i, { when: v as RowWhen })}
-                        options={WHEN_OPTIONS}
+                        checked={b.on}
+                        onChange={(v) => patchButton(i, { on: v })}
+                        label={`Button ${i + 1}`}
                       />
                       <div className="re-moves">
                         <button
                           className="ghost small"
-                          title="Move up"
-                          disabled={i === 0}
-                          onClick={() => moveRow(i, -1)}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          className="ghost small"
-                          title="Move down"
-                          disabled={i === style.rows.length - 1}
-                          onClick={() => moveRow(i, 1)}
-                        >
-                          ↓
-                        </button>
-                        <button
-                          className="ghost small"
-                          title="Remove this line"
-                          onClick={() => setRows(style.rows.filter((_, n) => n !== i))}
+                          title="Remove this button"
+                          onClick={() => setButtons(style.buttons.filter((_, n) => n !== i))}
                         >
                           ✕
                         </button>
@@ -198,142 +429,82 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                     </div>
                     <input
                       className="search"
-                      value={row.text}
-                      placeholder="Write what this line says"
+                      value={b.label}
+                      placeholder={DEFAULT_LINK_LABEL}
                       spellCheck={false}
-                      onChange={(e) => patchRow(i, { text: e.target.value })}
+                      maxLength={32}
+                      onChange={(e) => patchButton(i, { label: e.target.value })}
+                    />
+                    <input
+                      className="search"
+                      value={b.url}
+                      placeholder={DEFAULT_LINK_URL}
+                      spellCheck={false}
+                      onChange={(e) => patchButton(i, { url: e.target.value.trim() })}
                     />
                     <div className="hint dim">
-                      {!row.on
-                        ? 'Switched off - nothing on the card.'
-                        : !text
-                          ? 'Empty, so it takes no room on the card.'
-                          : drawn >= 0
-                            ? `On the card now, as line ${drawn + 1}.`
-                            : `Not on the card right now - ${
-                                row.when === 'running'
-                                  ? 'this one only shows while a turn is running.'
-                                  : row.when === 'idle'
-                                    ? 'this one only shows while nothing is running.'
-                                    : `Discord only draws ${VISIBLE_ROWS} lines and two above it got there first.`
-                              }`}
+                      Must start with http:// or https:// - Discord throws the whole card away
+                      over a broken link, not just the button. Text is cut at 32 characters.
                     </div>
                   </div>
-                )
-              })}
-            </div>
-          </div>
+                ))}
+              </div>
 
-          <div className="setting">
-            <div className="hint">
-              Write whatever you like around these, which stand in for the numbers:
-            </div>
-            <div className="token-legend">
-              {DISCORD_TOKENS.map(([token, what]) => (
-                <div key={token}>
-                  <code>{token}</code>
-                  <span>{what}</span>
-                </div>
-              ))}
-            </div>
-            <div className="hint">
-              Discord cuts a line off past 128 characters, so a long project list drops its
-              tail for a "+2 more" rather than being chopped mid-word. The token totals are
-              every agent on this machine, counted from the transcripts Claude Code and
-              Codex already write - cache included, which is what a token counter shows.
-            </div>
-          </div>
-
-          <div className="switches">
-            <Switch
-              checked={style.elapsed}
-              onChange={(v) => setStyle({ elapsed: v })}
-              label="Show the elapsed clock"
-              hint="Discord counts up from the oldest running turn, or from when PaneForge started while everything is idle."
-            />
-          </div>
-
-          <div className="setting">
-            <div className="setting-row">
-              <label>Buttons</label>
-              {style.buttons.length < MAX_BUTTONS && (
+              <div className="setting">
                 <button
                   className="ghost small"
-                  onClick={() =>
-                    setButtons([
-                      ...style.buttons,
-                      {
-                        id: newRowId(style.buttons),
-                        label: DEFAULT_LINK_LABEL,
-                        url: DEFAULT_LINK_URL,
-                        on: true
-                      }
-                    ])
-                  }
+                  onClick={() => onChange({ discordStyle: cloneStyle(DEFAULT_DISCORD_STYLE) })}
                 >
-                  Add a button
+                  Reset to default
                 </button>
-              )}
-            </div>
-            <div className="hint">
-              Discord draws the lines above as plain text, so a link written into one is not
-              clickable. A button is the only clickable thing a rich presence has, it takes
-              two of them, and Discord shows them to everyone except you - so your own
-              profile will not have them.
-            </div>
-            {style.buttons.map((b, i) => (
-              <div className={'row-edit' + (b.on ? '' : ' off')} key={b.id}>
-                <div className="re-top">
-                  <Switch
-                    checked={b.on}
-                    onChange={(v) => patchButton(i, { on: v })}
-                    label={`Button ${i + 1}`}
-                  />
-                  <div className="re-moves">
-                    <button
-                      className="ghost small"
-                      title="Remove this button"
-                      onClick={() => setButtons(style.buttons.filter((_, n) => n !== i))}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-                <input
-                  className="search"
-                  value={b.label}
-                  placeholder={DEFAULT_LINK_LABEL}
-                  spellCheck={false}
-                  maxLength={32}
-                  onChange={(e) => patchButton(i, { label: e.target.value })}
-                />
-                <input
-                  className="search"
-                  value={b.url}
-                  placeholder={DEFAULT_LINK_URL}
-                  spellCheck={false}
-                  onChange={(e) => patchButton(i, { url: e.target.value.trim() })}
-                />
-                <div className="hint dim">
-                  Must start with http:// or https:// - Discord throws the whole presence
-                  away over a malformed button, not just the button. Text is cut at 32
-                  characters.
-                </div>
               </div>
-            ))}
-          </div>
-
-          <div className="setting">
-            <button
-              className="ghost small"
-              onClick={() => onChange({ discordStyle: cloneStyle(DEFAULT_DISCORD_STYLE) })}
-            >
-              Back to the default wording
-            </button>
-          </div>
+            </div>
+          </details>
         </>
       )}
     </>
+  )
+}
+
+/**
+ * One look to pick, with the line it would put on the card under its name - the words
+ * themselves, because "Out of all" means nothing until you read "5/7 sessions running".
+ * A radio, not a button: exactly one is on, and arrow-key users get told which.
+ */
+function LookCard({
+  name,
+  hint,
+  sample,
+  on,
+  onPick
+}: {
+  name: string
+  hint: string
+  sample: string[]
+  on: boolean
+  onPick: () => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      className={'look-card' + (on ? ' on' : '')}
+      onClick={onPick}
+    >
+      <span className="lc-top">
+        <span className="lc-dot" aria-hidden="true" />
+        <span className="lc-name">{name}</span>
+      </span>
+      {sample.length > 0 && (
+        <span className="lc-sample">
+          {sample.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
+        </span>
+      )}
+      <span className="lc-hint">{hint}</span>
+    </button>
   )
 }
 
@@ -346,13 +517,22 @@ function cloneStyle(style: DiscordStyle): DiscordStyle {
   }
 }
 
+/** Whether a line's own words already include a chip's phrase - so the chip can show as pressed. */
+function rowHasPhrase(text: string, phrase: string): boolean {
+  return text
+    .split(' · ')
+    .map((p) => p.trim())
+    .includes(phrase)
+}
+
 /**
  * What Discord itself last said, rather than what the app meant to send.
  *
  * Every other answer here is a guess dressed up as a fact. This one answers the question
- * anyone actually asks, which is "is this on my profile". The last line closes the rest
- * of it: everything up to Discord can be right and other people can still see nothing,
- * because hiding it is Discord's own switch and no application can read or change it.
+ * anyone actually asks, which is "is this on my profile" - down to the two lines Discord
+ * stored, as it echoed them back. The last line closes the rest of it: everything up to
+ * Discord can be right and other people can still see nothing, because hiding it is
+ * Discord's own switch and no application can read or change it.
  */
 function DiscordStatus(): JSX.Element {
   const [status, setStatus] = useState<PresenceStatus>(NO_PRESENCE_STATUS)
@@ -363,30 +543,42 @@ function DiscordStatus(): JSX.Element {
   const at = status.acceptedAt ? new Date(status.acceptedAt).toLocaleTimeString() : ''
   return (
     <div className="setting">
-      {!status.connected ? (
+      {status.countedBy ? (
+        <div className="hint">
+          Your Discord profile is showing {status.countedBy}&apos;s count, which already
+          includes the chats on this computer, so this computer stays quiet.
+        </div>
+      ) : !status.connected ? (
         <div className="hint">
           No Discord to talk to. PaneForge looks for it again every minute, so starting
           Discord is enough - nothing here needs touching.
         </div>
       ) : status.error ? (
-        <div className="hint warn">Discord refused the last presence: {status.error}</div>
+        <div className="hint warn">Discord refused the last card: {status.error}</div>
       ) : status.cleared ? (
         <div className="hint">
           Connected{status.user ? <> as <b>{status.user}</b></> : null} - and told Discord to
-          show nothing, because the desk is empty.
+          show nothing, because no chat is open.
         </div>
       ) : status.acceptedAt ? (
         <div className="hint">
           Discord accepted this at <b>{at}</b>
           {status.user ? <> for <b>{status.user}</b></> : null}
-          {status.appName ? <>, under <b>{status.appName}</b></> : null}.
+          {status.appName ? <>, under <b>{status.appName}</b></> : null}
+          {status.lines.length ? (
+            <>
+              {' '}
+              - your profile says <b className="discord-said">{status.lines.join(' / ')}</b>
+            </>
+          ) : null}
+          .
         </div>
       ) : (
-        <div className="hint">Connected to Discord, waiting to send the first presence.</div>
+        <div className="hint">Connected to Discord, waiting to send the first card.</div>
       )}
       <div className="hint dim">
         Nobody can see it? That is not something this app can tell you, and if the line
-        above says accepted, it is one of Discord's own switches: Discord → Settings →
+        above says accepted, it is one of Discord&apos;s own switches: Discord → Settings →
         Activity Privacy, with both <b>Share your activity</b> and the per-server toggle on.
       </div>
     </div>

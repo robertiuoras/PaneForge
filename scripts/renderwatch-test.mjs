@@ -24,7 +24,10 @@ const {
   afterGiveUp,
   noteWedge,
   MAX_GIVE_UP_REBUILDS,
-  noteRecovered
+  noteRecovered,
+  goneWhy,
+  SLEEP_GAP_MS,
+  afterGap
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -58,6 +61,25 @@ ok(
   decide(w({ probeSentAt: T - PROBE_DEAD_MS }), T) === 'reload',
   `probe dead at ${PROBE_DEAD_MS}ms`
 )
+// 2026-10-01 01:41/01:52Z: two reloads inside a five-hour sleep, "no answer to the liveness
+// probe for 1021965ms". The probe is stamped on the awake clock and judged on it, so the
+// hours the machine slept are not hours the renderer failed to answer in.
+const A = 5_000_000
+ok(
+  'a probe sent before a sleep is not judged on the hours slept',
+  decide(w({ probeSentAt: A - 3_000 }), T, A) === 'wait',
+  'wall gap irrelevant, 3 s awake'
+)
+ok('...but 20 s of awake silence is still a spin', decide(w({ probeSentAt: A - PROBE_DEAD_MS }), T, A) === 'reload')
+{
+  const slept = afterGap(w({ probeSentAt: A - 1000, unresponsiveSince: T - GRACE_MS }), SLEEP_GAP_MS)
+  ok(
+    'a tick that arrives after a sleep-sized gap drops the outstanding probe and the unresponsive clock',
+    slept.probeSentAt === 0 && slept.unresponsiveSince === 0 && decide(slept, T, A) === 'wait'
+  )
+  const busy = w({ probeSentAt: A - 1000 })
+  ok('...and an ordinary late tick keeps them', afterGap(busy, SLEEP_GAP_MS - 1) === busy)
+}
 ok(
   'a dead renderer is REBUILT, not reloaded - there is no page left',
   decide(w({ gone: true }), T) === 'recreate'
@@ -162,6 +184,11 @@ ok(
   /getOSProcessId\(\)/.test(main) && /cpu-time/.test(main)
 )
 ok('every action leaves a line in paneforge-errors.log', /logProblem\(/.test(main))
+ok(
+  'the probe is stamped and judged on the awake clock, and a sleep-sized tick gap skips the tick',
+  /process\.hrtime\.bigint\(\)/.test(main) && /const sent = awake/.test(main) &&
+    /decide\(state, now, awake\)/.test(main) && /gap >= SLEEP_GAP_MS[\s\S]{0,80}afterGap\(state, gap\)[\s\S]{0,20}return/.test(main)
+)
 ok('the wedge is counted where Chromium reports it', /noteWedge\(state, Date\.now\(\)\)/.test(main))
 const giveUp = main.slice(main.indexOf("act === 'give-up'"), main.indexOf("const why = state.gone"))
 ok(
@@ -258,6 +285,16 @@ ok(
   ok('one reload clears both incident histories', s.wedges === 0 && s.lastWedgeAt === 0 && s.spins === 0 && s.firstSpinAt === 0)
 }
 
+// ---- why the renderer went, in words (2026-09-24: `pkill -f "cat"` in another chat) ----
+// A renderer ended by a signal from outside is not a window that "stopped answering", and
+// the notice said it was. The exit code Chromium hands over is the signal number.
+ok('SIGTERM from outside is named as another program', /another program/.test(goneWhy('killed', 15, 'darwin')) && /SIGTERM/.test(goneWhy('killed', 15, 'darwin')), goneWhy('killed', 15, 'darwin'))
+ok('SIGKILL names the system too (jetsam kills with it)', /SIGKILL/.test(goneWhy('killed', 9, 'darwin')) && /system/.test(goneWhy('killed', 9, 'darwin')), goneWhy('killed', 9, 'darwin'))
+ok('out of memory says so', /out of memory/.test(goneWhy('oom', 0, 'darwin')), goneWhy('oom', 0, 'darwin'))
+ok('a crash keeps its exit code', /crashed/.test(goneWhy('crashed', 11, 'linux')) && /11/.test(goneWhy('crashed', 11, 'linux')), goneWhy('crashed', 11, 'linux'))
+ok('on Windows an exit code is not a signal name', !/SIG/.test(goneWhy('killed', 15, 'win32')), goneWhy('killed', 15, 'win32'))
+ok('an unknown reason is passed through, not dropped', /launch-failed/.test(goneWhy('launch-failed', 1, 'darwin')), goneWhy('launch-failed', 1, 'darwin'))
+
 const main2 = readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8')
 ok(
   "the 'responsive' handler is what counts a spin - nothing else sees one end",
@@ -274,6 +311,11 @@ ok(
   activate !== '' && /if \(!alive\(\)\) return createWindow\(\)/.test(activate),
   JSON.stringify(activate.slice(0, 90))
 )
+
+// The recreate line was `pid 0 (no metrics)` (2026-09-23, 2026-09-24): a dead renderer's
+// getOSProcessId() is 0, so the pid has to be the one remembered while it was alive.
+ok('the pid is remembered while the renderer is alive', /lastPid = /.test(main2))
+ok("a gone renderer's line names that pid, not 0", /already exited/.test(main2) && /goneWhy\(/.test(main2))
 
 console.log(failed ? `\n${failed} failed` : '\nrender watch: all good')
 process.exit(failed ? 1 : 0)

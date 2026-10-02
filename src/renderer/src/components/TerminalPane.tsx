@@ -1,22 +1,37 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuietState } from '../quietState'
-import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import {
+  bestFont,
+  borrowGrid,
+  MIN_COLS,
+  MIN_FONT,
+  MIN_ROWS,
+  mirrorFit as mirrorSize,
+  placeGrid,
+  roomFor,
+  type Box,
+  type Cell
+} from '@shared/mirrorFit'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { allAgents, pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, continuesOnBackslash, imagePasteKey, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
 import {
+  imagePathsInText,
+  OLDER_DESK,
+  olderDeskTypedPaths,
   pasteImageDrop,
   splitDropUris,
-  type AttachIn
+  type AttachIn,
+  type AttachResult
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
-import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
+import { GRANT_GRACE_MS, nextResize, ptyOwed } from '../../../shared/shrinkFirst'
 import { readsBusy } from '../../../shared/busy'
 import { whenWords } from '../../../shared/elapsed'
 import { busyEvidence, readsElapsedMs, type BusyReason } from '../../../shared/busy'
@@ -30,7 +45,7 @@ import {
   type CopyCtx,
   type CopyState
 } from '../../../shared/copyMode'
-import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import { composerWipe, enterContinues, feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import type { InputRow } from '../../../shared/cursorMove'
 import {
   cellAt,
@@ -44,7 +59,10 @@ import {
 } from '../../../shared/cursorMove'
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
-import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
+import { realignCursorUp } from '../../../shared/cursorUpRealign'
+import { keepPushedOffRows } from '../../../shared/pushedOffTop'
+import { rewrapOnShrink } from '../../../shared/wordRewrap'
+import { fileRows, rowsToFile } from '../../../shared/screenLoss'
 import { forceKeys } from '../../../shared/forceSelect'
 import {
   anchorMark,
@@ -59,6 +77,7 @@ import {
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, composerText, frameAt, inputEnd, inputStart, leadingBlanks, pickerBelow, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
+import { continues, MAX_RUN_ROWS, wrappedPathLinks } from '../wrappedPath'
 import { completedSlash, seedPrompts, promptRow } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { fixSignature } from '../../../shared/fixSign'
@@ -204,9 +223,10 @@ interface Props {
   /**
    * Which CLI is running in this pane.
    *
-   * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
-   * clipboard when it gets a ^V, so it can be handed the picture itself; the other twelve
-   * read a path off the prompt and would see nothing at all from a paste.
+   * Only used to decide what a dropped IMAGE becomes: Claude Code, Codex and
+   * Antigravity read an image off the clipboard when they get a ^V, so they can be
+   * handed the picture itself; other CLIs read a path off the prompt and would see
+   * nothing at all from a paste.
    */
   agent?: string
   /** Say something happened, in the window's own toast. */
@@ -327,7 +347,7 @@ function AskCountdown({
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
-import { isMac } from '../platform'
+import { isMac, isWindows } from '../platform'
 import { isPhoneClient, viewerName } from '../client'
 
 /**
@@ -572,6 +592,31 @@ const glLive = new Set<string>()
 const GL_BUDGET = 16
 
 /**
+ * Take a pane off the GPU renderer and give its WebGL context back NOW.
+ *
+ * xterm's `WebglAddon.dispose()` only takes the canvas out of the page; the context and the
+ * IOSurfaces behind it live on until the garbage collector happens to collect the canvas,
+ * and nothing tells V8 those few JS objects are holding hundreds of MB in another process.
+ * Since the context follows visibility, every switch between panes left one behind.
+ * Measured 2026-10-01 on the installed app after ~5h of use: GPU helper 1615 MB, of it
+ * IOSurface 1.3 GB in 612 regions; a window reload (same panes) dropped it to 381 MB and
+ * 150 MB in 156 regions. Losing the context on purpose frees it the moment the pane goes.
+ *
+ * `_renderer._gl` is private to the addon; if a later xterm renames it this degrades to the
+ * plain dispose() it replaced, never to an error.
+ */
+function dropGl(gl: WebglAddon | null): void {
+  if (!gl) return
+  const ctx = (gl as unknown as { _renderer?: { _gl?: WebGL2RenderingContext } })._renderer?._gl
+  gl.dispose()
+  try {
+    ctx?.getExtension('WEBGL_lose_context')?.loseContext()
+  } catch {
+    /* already lost - nothing left to give back */
+  }
+}
+
+/**
  * How long a restored pane's output must be quiet before it repairs itself. Long enough
  * that a CLI still printing its resume banner is not poked mid-paint, short enough that
  * nobody reaches for the Fix button first.
@@ -602,8 +647,129 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
  */
 
 /**
- * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
- * the largest font at or below the user's own at which that grid still fits here.
+ * The cells this pane's renderer draws, per font - measured once each, because measuring
+ * one means setting that font. Keyed by everything that changes a cell without changing
+ * the font: the renderer (WebGL rounds the cell to whole device pixels, the DOM renderer
+ * does not), the screen's pixel ratio, and the font face. See `bestFont` in
+ * shared/mirrorFit.ts for the numbers that made this necessary.
+ */
+/** renderer + screen + face -> font -> cell. Every key is kept: a pane swaps renderer on every
+ *  hide and show, and re-measuring each font after each swap is a font set per font per show. */
+type CellCache = Map<string, Map<number, Cell>>
+
+/**
+ * The cell the renderer is drawing at right now, CSS px - the very number the fit addon
+ * divides by (`proposeDimensions` reads the same private field). null if a later xterm
+ * renames it, and then a mirror falls back to the ratio walk below rather than failing.
+ */
+function cellNow(t: Terminal): Cell | null {
+  const c = (t as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } })
+    ._core?._renderService?.dimensions?.css?.cell
+  return c && c.width > 0 && c.height > 0 ? { w: c.width, h: c.height } : null
+}
+
+/**
+ * The box the fit addon would fill: the host's width less the terminal's padding and the
+ * scrollbar, its height less the padding. Same reads, same `parseInt`, so the room this
+ * gives a mirror is the grid a local pane of this size is given.
+ */
+function usableBox(t: Terminal): Box | null {
+  const el = t.element
+  const parent = el?.parentElement
+  if (!el || !parent) return null
+  const ps = getComputedStyle(parent)
+  const es = getComputedStyle(el)
+  const px = (v: string): number => parseInt(v) || 0
+  const sb =
+    t.options.scrollback === 0
+      ? 0
+      : ((t as unknown as { _core?: { viewport?: { scrollBarWidth?: number } } })._core?.viewport?.scrollBarWidth ?? 0)
+  const w = Math.max(0, px(ps.width)) - px(es.paddingLeft) - px(es.paddingRight) - sb
+  const h = px(ps.height) - px(es.paddingTop) - px(es.paddingBottom)
+  return w > 0 && h > 0 ? { w, h } : null
+}
+
+/**
+ * A mirrored pane: take the host's grid exactly, draw it at the largest font at or below
+ * the user's own at which it fits HERE, and centre what is left over.
+ *
+ * Exact, not walked. The room at a font is the fit addon's arithmetic over the cell this
+ * renderer really draws at that font (`cells`), so the answer is the same from whatever
+ * font the pane happens to be at, and a renderer swap or a move to another screen - both
+ * change the cell without changing the font - is a new key and a fresh answer. The ask to
+ * the owner is that same room at the user's font, so a lent grid needs no shrinking at all.
+ * Falls back to the ratio walk (`ratioFit`) only when the cell cannot be read.
+ */
+function mirrorFit(
+  t: Terminal,
+  f: FitAddon,
+  pinned: boolean,
+  mirror: { cols: number; rows: number },
+  maxFont: number,
+  host: HTMLElement | null,
+  cells: CellCache,
+  gl: boolean,
+  ask?: (cols: number, rows: number) => void
+): boolean {
+  const cols = t.cols
+  const rows = t.rows
+  const entry = t.options.fontSize ?? maxFont
+  const box = usableBox(t)
+  const now = cellNow(t)
+  if (!host || !box || !now) return ratioFit(t, f, pinned, mirror, maxFont, host, ask)
+  const o = t.options
+  const key = [gl ? 'gl' : 'dom', window.devicePixelRatio, o.fontFamily, o.fontWeight, o.lineHeight, o.letterSpacing].join('|')
+  let at = cells.get(key)
+  if (!at) cells.set(key, (at = new Map()))
+  // A face that finished loading, or anything else the key cannot see, shows up here first:
+  // the cell at the font that is set right now is not the one on record.
+  const had = at.get(entry)
+  if (had && (Math.abs(had.w - now.w) > 0.001 || Math.abs(had.h - now.h) > 0.001)) at.clear()
+  at.set(entry, now)
+  const known = at
+  const cellAt = (font: number): Cell | null => {
+    const hit = known.get(font)
+    if (hit) return hit
+    t.options.fontSize = font
+    const c = cellNow(t)
+    if (c) known.set(font, c)
+    return c
+  }
+  const roomAt = (font: number): { cols: number; rows: number } | null => {
+    const c = cellAt(font)
+    return c ? roomFor(box, c) : null
+  }
+  const hostCols = Math.max(MIN_COLS, mirror.cols)
+  const hostRows = Math.max(MIN_ROWS, mirror.rows)
+  // The grid to ask the owner for: exactly what fits here at the user's font. Unconditional;
+  // whether it is worth asking for is `shouldAsk`'s question.
+  if (ask) {
+    // At the font `bestFont` would start from, and never under the floors main records a
+    // borrow at (20x5): an ask below them is never "settled" and would be re-sent every fit.
+    const want = roomAt(Math.max(MIN_FONT, Math.floor(maxFont)))
+    if (want) ask(Math.max(MIN_COLS, want.cols), Math.max(MIN_ROWS, want.rows))
+  }
+  const font = bestFont({ hostCols, hostRows, maxFont, roomAt }) ?? entry
+  // Measuring may have left another font set; this is the one that is drawn.
+  if (t.options.fontSize !== font) t.options.fontSize = font
+  t.resize(hostCols, hostRows)
+  const place = placeGrid({ box, cols: hostCols, rows: hostRows, cell: cellAt(font) ?? now })
+  const move = place.x || place.y ? `translate(${place.x}px, ${place.y}px)` : ''
+  const zoom = place.scale < 1 ? `scale(${place.scale.toFixed(3)})` : ''
+  const want = [move, zoom].filter(Boolean).join(' ')
+  let moved = false
+  if (host.style.transform !== want) {
+    host.style.transformOrigin = 'top left'
+    host.style.transform = want
+    moved = true
+  }
+  if (pinned) t.scrollToBottom()
+  return t.cols !== cols || t.rows !== rows || font !== entry || moved
+}
+
+/**
+ * The fallback walk, for an xterm whose cell cannot be read: pick the largest font at or
+ * below the user's own at which the host's grid still fits here, one ratio step at a time.
  *
  * Self-correcting rather than exact. `proposeDimensions()` answers for the font that is
  * set right now, so the ratio it implies is one step towards the right size, not the
@@ -611,7 +777,7 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
  * two converge in a frame or two. Solving it in one go would mean reading xterm's
  * internal cell metrics, which are stale for a frame after any font change anyway.
  */
-function mirrorFit(
+function ratioFit(
   t: Terminal,
   f: FitAddon,
   pinned: boolean,
@@ -914,7 +1080,7 @@ function TerminalPane({
   autoAnswerN,
   autoAnswerHeld,
   agent,
-  onToast
+  onToast,
 }: Props): JSX.Element {
   // How many times each pane has rendered, where a probe can read it.
   //
@@ -978,6 +1144,8 @@ function TerminalPane({
    * is the bug this exists to fix, arriving from the other side.
    */
   const replaying = useRef(false)
+  /** The app itself is putting this terminal back to its size (not a layout change) - see `rewrapOnShrink`. */
+  const appResizing = useRef(false)
   /**
    * The question this pane is sitting on, where the mouse handlers can see it.
    *
@@ -1048,6 +1216,8 @@ function TerminalPane({
    * and the measurement behind them are in `shared/borrowAsk.ts`.
    */
   const borrowRef = useRef<BorrowAsk | null>(null)
+  /** the cell each font draws at, for a pane drawn at somebody else's grid - see `mirrorFit` */
+  const cells = useRef<CellCache>(new Map())
   const askBorrow = (cols: number, rows: number): void => {
     const m = mirrorRef.current
     const out = shouldAsk({
@@ -1059,7 +1229,9 @@ function TerminalPane({
       state: borrowRef.current
     })
     borrowRef.current = out.state
-    if (out.ask) api.resize(sessionId, cols, rows, true)
+    // Named, like every other borrow: a mirror's ask with no viewer was filed as a PHONE's,
+    // so the real phone putting the pane down (`pty:return`) took the window's borrow too.
+    if (out.ask) api.resize(sessionId, cols, rows, true, viewerName())
   }
   /**
    * The phone's shape of the same ask, while a person at the desk is holding the pty at
@@ -1108,7 +1280,7 @@ function TerminalPane({
     if (replaying.current) return false
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0)
-      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, askBorrow)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, cells.current, glRef.current !== null, askBorrow)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
@@ -1123,6 +1295,8 @@ function TerminalPane({
         g,
         fontRef.current,
         host.current,
+        cells.current,
+        glRef.current !== null,
         isPhoneClient() ? askHeld : undefined
       )
     // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
@@ -1171,16 +1345,44 @@ function TerminalPane({
     // simply won and never gave it back - the desk went on drawing a full-width pane whose
     // every line wrapped a third of the way across, for as long as it took somebody to
     // resize the window by hand. See `resize` in main/sessions.ts.
-    if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
+    //
+    // ...and ALSO when the terminal did not move but the pty is at some other grid. A shrink
+    // asked for above leaves the terminal alone until it is granted; a box that grew back
+    // in the meantime fits to the size the terminal already had, so `changed` is false and
+    // the pty was left at the transient grid for good - 29x16 under a 130x55 pane, every
+    // frame the agent drew wrapped a quarter of the way across. See `ptyOwed`.
+    if (changed || ptyOwed({ cols: t.cols, rows: t.rows }, ptyRef.current))
+      api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
     return changed
+  }
+  const resizeRepaint = useRef<number | undefined>(undefined)
+  const queueResizeRepaint = (rewrapped: boolean): void => {
+    window.clearTimeout(resizeRepaint.current)
+    resizeRepaint.current = window.setTimeout(() => {
+      if (!autoFixRef.current || Date.now() - mountAt.current < 3000) return
+      if (!host.current?.offsetParent) return
+      if (mirrorRef.current && !rewrapped) return
+      api.redraw(sessionId)
+      try {
+        const active = term.current
+        if (active) active.refresh(0, active.rows - 1)
+      } catch {
+        /* detached */
+      }
+    }, 400)
   }
   // The pty has just reported a new grid. A pane holding a shrink back was waiting for
   // exactly this, so it applies now instead of at the end of the grace.
+  // A pty that lands at a grid this terminal is not at, with nothing outstanding, is
+  // re-decided too: `reshape` puts it back at the terminal's grid unless the pane is being
+  // drawn at somebody else's (a mirror, a borrow), which it checks first.
   useEffect(() => {
-    if (!asked.current) return
     const t = term.current
     const f = fit.current
-    if (t && f) reshape(t, f)
+    if (!t || !f) return
+    if (!asked.current && !ptyOwed({ cols: t.cols, rows: t.rows }, pty ?? null)) return
+    const wasCols = t.cols
+    if (reshape(t, f)) queueResizeRepaint(t.cols !== wasCols)
   }, [pty?.cols, pty?.rows])
 
   /**
@@ -1339,7 +1541,7 @@ function TerminalPane({
   //
   // So both ends are read off the viewport's real box: where its right edge actually is,
   // plus however wide its scrollbar actually is at the scale it is actually drawn at.
-  const [track, setTrack] = useState({ top: 7, height: 0, right: 17 })
+  const [track, setTrack] = useState({ top: 7, height: 0, right: 17, scale: 1 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
   /**
@@ -1480,6 +1682,12 @@ function TerminalPane({
     typePaths(paths)
   }
 
+  /** A mirrored pane's images typed as paths because the far desk is too old to paste them. */
+  const sayIfOlderDesk = (names: string[], res: AttachResult): void => {
+    if (olderDeskTypedPaths({ agent: agentRef.current, sessionId, names, res }, pastesClipboardImage))
+      toast.current?.(OLDER_DESK)
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -1498,6 +1706,7 @@ function TerminalPane({
     if (!payload.length) return
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
+    sayIfOlderDesk(payload.map((p) => p.name), res)
     typePaths(res.paths)
   }
 
@@ -1519,10 +1728,15 @@ function TerminalPane({
    * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
    * names and MIME types, and only a decode knows.
    */
-  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+  const pasteImages = async (
+    items: { file?: File; path?: string }[],
+    instead?: () => void
+  ): Promise<void> => {
     /** What this drop does when anything at all goes wrong. Never silent, never partial. */
     const fallBack = async (why?: string): Promise<void> => {
       if (why) toast.current?.(why)
+      // A pasted path that would not decode goes back in as the text that was pasted.
+      if (instead) return instead()
       const files = items.map((i) => i.file).filter((f): f is File => !!f)
       const paths = items.map((i) => i.path).filter((p): p is string => !!p)
       if (files.length) await sendFiles(files)
@@ -1564,7 +1778,7 @@ function TerminalPane({
     for (let i = 0; i < loaded.length; i++) {
       try {
         if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
-        api.write(sessionId, RAW_PASTE)
+        api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
       } catch {
         return fallBack('That image reached the clipboard but the pane could not paste it.')
       }
@@ -1654,12 +1868,14 @@ function TerminalPane({
       // ...and the height is the DRAWN height for the same reason `top` is: `clientHeight`
       // answers the unscaled box, which stretched a mirror's track past its own screen.
       height: vb.height,
-      right: wb.right - vb.right + bar
+      right: wb.right - vb.right + bar,
+      scale
     }
     setTrack((p) =>
       Math.abs(p.top - next.top) < 0.5 &&
       Math.abs(p.height - next.height) < 0.5 &&
-      Math.abs(p.right - next.right) < 0.5
+      Math.abs(p.right - next.right) < 0.5 &&
+      Math.abs(p.scale - next.scale) < 0.001
         ? p
         : next
     )
@@ -2035,8 +2251,12 @@ function TerminalPane({
       // 80, and every byte a resumed CLI prints before the first fit is drawn at the
       // PTY's width - into whatever grid this terminal happens to be. Clamped, and no
       // repaint can undo it.
-      cols: START_COLS,
-      rows: START_ROWS,
+      // ...so it opens at the pty's own grid when main has one on record (a pane spawned
+      // at the desk's size, or a restored one at the size it was painted at), and only
+      // falls back to START when it has not. A terminal born at 120x30 under a 133x55
+      // pty re-flowed every restored or hidden pane twice on its way to its real size.
+      cols: ptyRef.current?.cols || START_COLS,
+      rows: ptyRef.current?.rows || START_ROWS,
       // An OSC 8 hyperlink - the kind Claude Code prints around a path or a URL - has no
       // handler of its own in xterm 5: its fallback is `window.open()` with no URL and
       // the address set on the blank page after, and this app denies every window a
@@ -2065,6 +2285,27 @@ function TerminalPane({
         selectionBackground: '#2f5d8a'
       }
     })
+    // Before any byte is written: Claude Code paints word gaps as cursor jumps over cells it
+    // believes are blank, and one cursor-up past the top put a whole repaint a row too high
+    // - stale letters in every gap. See shared/cursorUpRealign.ts. And a repaint from the top
+    // paints over the rows it moves off the screen instead of scrolling them away - a hole in
+    // a finished reply (shared/pushedOffTop.ts). In this order: xterm runs the handler
+    // installed LAST first, and the realign has to land before the screen is copied.
+    if (agent === 'claude') {
+      // Rows it put back are rows the wipe check below would otherwise file a second time.
+      keepPushedOffRows(t, dropWipeSnap)
+      realignCursorUp(t)
+      // A pane that gets narrower (a pane opened beside it) breaks the reply lines above
+      // the screen between words, and joins a paragraph back up, instead of xterm's cut
+      // through the middle of a word. See shared/wordRewrap.ts.
+      //
+      // Only for a shrink a person can see: a pane on screen, narrowed by the layout. The
+      // app's own resizes - a restore or Fix replaying history wide and putting it back,
+      // a hidden pane being sized - are temporary, and a rewrap turns xterm's reversible
+      // soft wraps into hard breaks for good (s7-muig449b, 2026-09-26: 133 -> 120 -> 133
+      // left 1810 rows different from a straight render; plain xterm left 0).
+      rewrapOnShrink(t, () => !replaying.current && !appResizing.current && Boolean(host.current?.offsetParent))
+    }
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
      * the previous turn with it - `CSI 2 J` plus `CSI 3 J` in the CLIs that still send
@@ -2083,9 +2324,16 @@ function TerminalPane({
       return out
     }
     // The screen as it was when a wipe started, held until the redraw that follows has
-    // settled and can be compared with it. See `wipeSettled`.
-    let wipeSnap: string[] | null = null
+    // settled and can be compared with it: its rows, the caret's row, and a marker on the
+    // line its top row was on, so rows scrolled away since are found where they went.
+    // See `wipeSettled`.
+    let wipeSnap: { rows: string[]; cursor: number; top: IMarker | undefined } | null = null
     let wipeTimer: number | undefined
+    function dropWipeSnap(): void {
+      window.clearTimeout(wipeTimer)
+      wipeSnap?.top?.dispose()
+      wipeSnap = null
+    }
     /**
      * The redraw after a wipe has gone quiet: decide whether it was a repaint or a clear.
      *
@@ -2103,12 +2351,17 @@ function TerminalPane({
       wipeSnap = null
       wipeTimer = undefined
       if (!snap || dead) return
-      // What is filed is what the redraw did NOT put back. A repaint hands every row back
-      // and this is empty; a clear hands none back and this is the whole screen; a CLI
-      // re-rendering its view a line or two further on hands back everything except the
-      // lines that fell off the top - which are the ones nothing else would have kept.
-      const lost = lostRows(snap, screenNow())
-      if (!screenLost(snap, screenNow())) return
+      const top = snap.top && !snap.top.isDisposed ? snap.top.line : 0
+      snap.top?.dispose()
+      // What is filed is what the redraw did NOT put back, anywhere from the old screen's
+      // top down: a repaint hands every row back and this is empty, a clear hands none back
+      // and this is the screen above the composer, and a turn that kept going scrolled its
+      // rows up the ordinary way and they are found there. See shared/screenLoss.ts.
+      const b = t.buffer.active
+      const after: string[] = []
+      for (let y = top; y < b.length; y++) after.push(b.getLine(y)?.translateToString(true) ?? '')
+      const lost = rowsToFile(snap.rows, snap.cursor, after)
+      if (!lost.length) return
       // The bytes are built in the shared file so the test drives the shipped ones against
       // a real terminal rather than a copy of them.
       const bytes = fileRows(lost, t.rows)
@@ -2139,7 +2392,8 @@ function TerminalPane({
       // find out - see `wipeSettled`.
       () => {
         if (readingSnapshot || wipeSnap) return
-        wipeSnap = screenNow()
+        const cursor = t.buffer.active.cursorY
+        wipeSnap = { rows: screenNow(), cursor, top: t.registerMarker(-cursor) }
         armWipeCheck()
       }
     )
@@ -2236,37 +2490,44 @@ function TerminalPane({
           return { text: text.trimEnd(), cells, first, last }
         }
         const line = logicalLine(row - 1)
-        const candidates = [{ ...line, joinedAt: -1 }]
-        // A hard-wrapped continuation is indented by Codex. Try both a word break and
-        // a split inside a filename; only an exact existing target may win this guess.
-        for (const [before, after] of [
-          line.first > 0 ? [logicalLine(line.first - 1), line] : [],
-          line.last + 1 < buffer.length ? [line, logicalLine(line.last + 1)] : []
-        ]) {
-          if (!before || !after) continue
-          const indent = after.text.length - after.text.trimStart().length
-          if (!indent) continue
-          for (const separator of ['', ' ']) candidates.push({
-            ...before,
-            text: before.text + separator + after.text.slice(indent),
-            cells: [...before.cells.slice(0, before.text.length), ...(separator ? [before.cells[before.text.length - 1]] : []), ...after.cells.slice(indent)],
-            joinedAt: before.text.length
-          })
+        // Claude Code and Codex hard-wrap a long path onto indented rows, as many as it
+        // takes. Gather the indented run around this line - the lines above while this one
+        // is a continuation, the indented ones below - and let `wrappedPathLinks` rebuild
+        // the path across every cut, the disk picking each join. Hovering ANY row of it
+        // gathers the same run, so every row offers the same link.
+        const run = [line]
+        while (run.length < MAX_RUN_ROWS && continues(run[0]) && run[0].first > 0) {
+          const above = logicalLine(run[0].first - 1)
+          if (!above.text.trim()) break
+          run.unshift(above)
         }
-        void Promise.all(
-          candidates.flatMap(candidate => findPathTokens(candidate.text).map(async (tok): Promise<ILink | null> => {
+        const hovered = run.length - 1
+        while (run.length - hovered < MAX_RUN_ROWS && run[run.length - 1].last + 1 < buffer.length) {
+          const below = logicalLine(run[run.length - 1].last + 1)
+          if (!continues(below)) break
+          run.push(below)
+        }
+        const wrapped = wrappedPathLinks(run, hovered, row, (token) => kindOf(dir, token)).then((links) =>
+          links.map((l): ILink => ({
+            range: { start: { x: l.start.x, y: l.start.y }, end: { x: l.end.endX, y: l.end.y } },
+            text: l.text,
+            activate: () => api.reveal(l.target.abs)
+          }))
+        )
+        void Promise.all([
+          wrapped,
+          ...findPathTokens(line.text).map(async (tok): Promise<ILink | null> => {
             // A filename with spaces in it has no shape prose does not also have, so the
             // token arrives as several readings of the same run, longest first, and the
             // DISK picks: the first one that is really there wins. `~/Work/Clients/Sonia/
             // Sonia 21st Birthday V9.mp4` used to link only as far as the folder, because
             // the matcher stopped at the first space and the folder happens to exist.
             for (const reading of [tok, ...(tok.alts ?? [])]) {
-              if (candidate.joinedAt >= 0 && (reading.start >= candidate.joinedAt || reading.end <= candidate.joinedAt || !/^(?:[\\/]|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reading.text))) continue
-              const start = candidate.cells[reading.start]
-              const end = candidate.cells[reading.end - 1]
+              const start = line.cells[reading.start]
+              const end = line.cells[reading.end - 1]
               if (!start || !end || row < start.y || row > end.y) continue
               const target = await kindOf(dir, reading.text)
-              if (!target || (candidate.joinedAt >= 0 && target.ancestor)) continue
+              if (!target) continue
               return {
                 // xterm columns are 1-based and its end is inclusive.
                 range: {
@@ -2278,14 +2539,15 @@ function TerminalPane({
               }
             }
             return null
-          }))
-        ).then((found) => {
+          })
+        ]).then((found) => {
           // Candidates starting at different words can cover the same cells - "Ignore
           // Sonia 21st Birthday final V9.mp4" offers a reading from every word in it, and
           // more than one of them can be a file that exists. Longest wins, and anything
           // overlapping what has already been taken is dropped: two links on one cell is
           // xterm picking for us, at random.
           const links = found
+            .flat()
             .filter((l): l is ILink => l !== null)
             .sort((a, b) => b.text.length - a.text.length)
           const taken: ILink[] = []
@@ -2356,7 +2618,7 @@ function TerminalPane({
         // while the CLI is still painting at another width.
         pty: () => ptyRef.current,
         dropWebgl: () => {
-          glRef.current?.dispose()
+          dropGl(glRef.current)
           glRef.current = null
           glLive.delete(sessionId)
         },
@@ -2736,7 +2998,7 @@ function TerminalPane({
       }
     }
     const feedInput = (d: string): void => {
-      const r = feedDraft(pending, d)
+      const r = feedDraft(pending, d, { backslashNewline: continuesOnBackslash(agentRef.current) })
       pending = r.state
       publishDraft(sessionId, r.state)
       for (const line of r.submitted) noteSubmitted(line)
@@ -2906,7 +3168,7 @@ function TerminalPane({
       const fromKeyboard = keyboardData === d
       keyboardData = null
       if (!fromKeyboard && isTerminalReply(d)) {
-        if (!asleepRef.current) api.write(sessionId, d)
+        if (!asleepRef.current) api.write(sessionId, d, true)
         return
       }
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.
@@ -2989,6 +3251,31 @@ function TerminalPane({
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
+        // A copied image PATH (a screenshot's location out of a popup, a Finder path) is
+        // the picture to an agent that reads the clipboard, never the path. A mirrored
+        // pane sends the file over and the other desk pastes it there; a path on this
+        // desk would mean nothing to an agent running on that one.
+        const shots = text ? imagePathsInText(text) : null
+        // A mirrored shell or a CLI that reads no clipboard gets the text it was pasted.
+        if (shots && sessionId.startsWith('@') && pastesClipboardImage(agentRef.current)) {
+          void api
+            .attachPaths(sessionId, shots)
+            .then((res) => {
+              if (res.error) toast.current?.(res.error)
+              sayIfOlderDesk(shots, res)
+              if (res.paths.length) typePaths(res.paths)
+              else if (res.error) t.paste(text)
+            })
+            .catch(() => t.paste(text))
+          return
+        }
+        if (shots && pastesClipboardImage(agentRef.current)) {
+          void pasteImages(
+            shots.map((path) => ({ path })),
+            () => t.paste(text)
+          ).catch(() => t.paste(text))
+          return
+        }
         if (text) {
           t.paste(text)
           return
@@ -3000,12 +3287,15 @@ function TerminalPane({
         // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
         // and not this one.
         if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
-          api.write(sessionId, RAW_PASTE)
+          api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
           return
         }
         // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
+          // The other desk pasted it as a picture: another ^V would paste it twice.
+          if (res.pasted) return
           if (res.paths.length) {
+            sayIfOlderDesk(['clipboard.png'], res)
             typePaths(res.paths)
             return
           }
@@ -3285,7 +3575,7 @@ function TerminalPane({
      */
     const inputRows = (): { top: number; rows: InputRow[] } | null => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
+      if (b.type === 'alternate' && agent !== 'codex') return null
       const cursorRow = b.baseY + b.cursorY
       const comp = composerAt(rowText, cursorRow, {
         codexCols: agent === 'codex' ? t.cols : undefined,
@@ -3315,6 +3605,9 @@ function TerminalPane({
         }
         return { top: comp.top, rows }
       }
+      // Codex now draws its native composer in the alternate screen. Only a proven
+      // composer is editable there; never treat a menu's cursor row as shell input.
+      if (b.type === 'alternate') return null
       let top = cursorRow
       while (top > 0 && b.getLine(top)?.isWrapped) top--
       let bottom = cursorRow
@@ -3398,7 +3691,7 @@ function TerminalPane({
      */
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
-      if (!pos || t.buffer.active.type === 'alternate') return 'no'
+      if (!pos) return 'no'
       // A run of backspaces into a chooser is the same mistake as a run of arrows, and
       // there is no line being edited to delete from anyway - see `askRef`.
       if (askRef.current) return 'no'
@@ -3471,7 +3764,7 @@ function TerminalPane({
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) {
         return clickNote('pointer-travelled')
       }
-      if (t.buffer.active.type === 'alternate') return clickNote('alternate-screen')
+      if (t.buffer.active.type === 'alternate' && agent !== 'codex') return clickNote('alternate-screen')
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null
       if (!screen) return clickNote('no-screen')
       const r = screen.getBoundingClientRect()
@@ -3522,6 +3815,7 @@ function TerminalPane({
         }
         clickNote('outside-the-composer', { top: span.top, bottom, cursorRow, clickRow })
       } else clickNote('no-composer-found', { cursorRow, clickRow })
+      if (b.type === 'alternate') return clickNote('alternate-screen')
       if (t.getSelection()) return clickNote('selection-held', { cursorRow, clickRow })
       if (!sameLine(cursorRow, clickRow)) return clickNote('other-line', { cursorRow, clickRow })
       // Past the end of what is written is the end of what is written. Without this, a
@@ -3789,7 +4083,21 @@ function TerminalPane({
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(prep(split.before), () => {
-        t.resize(back, backRows)
+        if (split.afterCols && split.after) {
+          // The pane's own output, drawn wider than the pane is now: it was narrowed since
+          // (a pane opened beside it, a mirror's borrow). Written at that width and narrowed
+          // once, still `replaying`, so xterm re-wraps it rather than clamping every line
+          // into the right edge - which is where a mirror's doubled footers came from.
+          t.resize(split.afterCols, backRows)
+          t.write(prep(split.after), () => {
+            t.resize(back, backRows)
+            replaying.current = false
+            reshape(t, f)
+            done()
+          })
+          return
+        }
+        t.resize(back, backRows) // still `replaying`: not a narrowing to rewrap
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
         // refused, and because a pane put back by hand is only right until the next one.
@@ -3858,8 +4166,12 @@ function TerminalPane({
     let staleTries = 0
     let lastNudge = 0
     let settle2: number | undefined
-    /** How long a `false` must hold before it is believed. See the grace below. */
+    /** Confirm weak counter-only evidence before starting a turn. */
     const BUSY_SETTLE_MS = 1200
+    // Codex briefly removes its footer between tool/output bursts. Live audit readings
+    // went idle and back to working less than 1.3s later even with the old 1.2s grace.
+    // Keep the turn and its place in Running through a short pause. Questions bypass it.
+    const IDLE_SETTLE_MS = 8000
     /** How far past the grace the re-check is armed, so it cannot land a tick short. */
     const BUSY_SETTLE_STEP_MS = 350
     const checkBusy = (): void => {
@@ -3950,19 +4262,23 @@ function TerminalPane({
           return
         }
       } else onSince = 0
-      if (!now && busy) {
+      // Read the whole chooser before delaying completion: an actual question must
+      // reach main immediately, including changes to the selected answer.
+      const wide = now ? '' : screenText(t, ASK_ROWS)
+      const sig = wide ? askSignature(wide) : ''
+      if (!now && busy && !sig) {
         if (!offSince) offSince = at
-        if (at - offSince < BUSY_SETTLE_MS) {
+        if (at - offSince < IDLE_SETTLE_MS) {
           // ...and the confirming tick has to be ARMED, because every other check in
           // here is driven by output and a finished turn prints nothing more. The
-          // after-the-burst timer fires at 900ms, which is inside this 1200ms grace, so
-          // it deferred a second time and nothing ever asked again: the last thing main
+          // after-the-burst timer fires at 900ms, inside even the former 1200ms grace.
+          // Without this timer it deferred again and nothing ever asked: the last thing main
           // heard about the pane was `true`, its run clock kept counting, and the card
           // said Running for the rest of the day. Measured 2026-08-26 on this desk -
           // `attention-audit.log` has PaneForge at quietMs 1507149 with
           // busyOnScreen:true over the frame `✻ Baked for 7m 57s · done 3:08 PM`.
           window.clearTimeout(settle2)
-          settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
+          settle2 = window.setTimeout(checkBusy, IDLE_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
           return
         }
       }
@@ -3980,15 +4296,6 @@ function TerminalPane({
       // a turn boundary the app read wrong is only corrected on the next one of these.
       const clock = now ? readsElapsedMs(text, true) : null
       const restate = clock ? 15_000 : BUSY_RESTATE
-      // A question's own frame, wide enough to hold the whole chooser. Only while the
-      // pane is idle - a chooser and a running agent are never on screen together, and
-      // this is the one place a wider translate would be paid for every tick of a turn.
-      const wide = now ? '' : screenText(t, ASK_ROWS)
-      // The SELECTION is part of the signature, not only the question. Answering walks
-      // the arrow from where it is now, so a person who arrowed at the desk while a
-      // phone was looking at the same pane would otherwise have the phone's button pick
-      // the wrong row - silently, and only ever by the distance they moved it.
-      const sig = wide ? askSignature(wide) : ''
       if (now === busy && sig === lastAsk && !(now && at - lastReport > restate)) return
       busy = now
       lastAsk = sig
@@ -4044,6 +4351,9 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
+    // Set by `redrawHistory` while its snapshot is on the way: widen when it LANDS, not
+    // when it is asked for. See there.
+    let widenForReset: (() => void) | null = null
     const receiveReset = (id: string, snapshot: string): void => {
       if (id !== sessionId) return
       if (dead) return
@@ -4051,6 +4361,9 @@ function TerminalPane({
         replayEvents.push(() => receiveReset(id, snapshot))
         return
       }
+      const widen = widenForReset
+      widenForReset = null
+      widen?.()
       if (initialReplay) {
         const settle = initialReplay
         initialReplay = undefined
@@ -4062,8 +4375,7 @@ function TerminalPane({
         }
         for (const m of list.splice(0)) m.marker.dispose()
         publish()
-        window.clearTimeout(wipeTimer)
-        wipeSnap = null
+        dropWipeSnap()
         keep = makeKeeper()
         replayEvents = []
         pendingDataWrites++
@@ -4103,8 +4415,7 @@ function TerminalPane({
       // Queue the reset with its exact snapshot. An imperative reset can run
       // before old queued writes, and an async buffer read can include new deltas
       // that onData already wrote. RIS goes through xterm's ordered write queue.
-      window.clearTimeout(wipeTimer)
-      wipeSnap = null
+      dropWipeSnap()
       keep = makeKeeper()
       readingSnapshot = true
       let bytes: string
@@ -4118,6 +4429,11 @@ function TerminalPane({
       writeStaged('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
+        // A capped transcript can be followed by a newer live tail with missing
+        // cursor state between them. Restore the native frame after this replay,
+        // just as after the first restore, rather than leaving Fix to the person.
+        needRestoreFix.current = true
+        armRestoreFix()
         if (scrollIntent.current === intent) {
           if (wasPinned) t.scrollToBottom()
           else {
@@ -4204,6 +4520,11 @@ function TerminalPane({
           agent,
           cols: t.cols,
           grid: t.rows,
+          buffer: b.type,
+          mouseTracking: t.modes.mouseTrackingMode,
+          bracketedPaste: t.modes.bracketedPasteMode,
+          viewportY: b.viewportY,
+          baseY: b.baseY,
           replayCols: replayColsRef.current ?? null,
           replayRows: replayRowsRef.current ?? null,
           mirror: mirrorRef.current,
@@ -4251,6 +4572,11 @@ function TerminalPane({
             cols: t.cols,
             grid: t.rows,
             buffer: t.buffer.active.type,
+            mouseTracking: t.modes.mouseTrackingMode,
+            bracketedPaste: t.modes.bracketedPasteMode,
+            viewportY: t.buffer.active.viewportY,
+            baseY: t.buffer.active.baseY,
+            sinceByteMs: lastByteAt.current ? Date.now() - lastByteAt.current : null,
             markersBefore,
             markersAfter: list.length,
             restored: Math.max(0, list.length - surviving)
@@ -4301,17 +4627,40 @@ function TerminalPane({
     let redrawingHistory = false
     const redrawHistory = async (): Promise<boolean> => {
       if (redrawingHistory || dead) return false
+      // A CLI on the ALTERNATE screen (Codex) has no scrollback for history to go into, and
+      // a replay opens with `ESC c`, which drops that screen along with the mouse and paste
+      // modes the CLI set once at its start and never sends again: the pane stops taking
+      // the wheel (2026-09-29, card 2). Codex keeps its own history (Ctrl+T); the repaint
+      // `repair` already asked for is the whole fix here.
+      if (t.buffer.active.type === 'alternate') return false
       redrawingHistory = true
-      const back = t.cols
-      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      let back = t.cols
+      let wide = back
       try {
         // Finish already queued terminal writes before changing their painted width.
         await new Promise<void>(resolve => t.write('', resolve))
         if (dead) return false
         noteFix('redraw')
         if (!mirrorRef.current) api.takePaneSize(sessionId)
-        replaying.current = true
-        if (wide !== back) t.resize(wide, t.rows)
+        // Fix re-asserts this terminal's grid on the pty, not only the borrows it takes
+        // back. A pty left small with NO borrow on record (see `ptyOwed`) had nothing for
+        // `takePaneSize` to return, so Fix replayed history at 130 columns into a CLI still
+        // painting at 29 and said "repaired" over the same torn frame. Only when this pane
+        // is drawn at its own grid: under a borrow `t.cols` is the borrower's, and taking
+        // the borrow back above already hands the pty the desk's.
+        if (!mirrorRef.current && !gridRef.current)
+          api.resize(sessionId, back, t.rows, isPhoneClient(), viewerName())
+        // Widened when the snapshot ARRIVES, never while it is on the way. A mirror's comes
+        // over the link: measured 2026-09-29 on a PC pane mirrored at 133, Fix held this
+        // terminal at 143 for about 7 s with no fit allowed (`replaying`), so the far end's
+        // live frames landed at the wrong width - the right edge cut off, the status footer
+        // twice - and a second press in that time repaired nothing.
+        widenForReset = () => {
+          back = t.cols
+          wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+          replaying.current = true
+          if (wide !== back) t.resize(wide, t.rows)
+        }
         // Main delivers the snapshot through the same ordered reset/data stream. Reading
         // a log here and then resetting could erase output that arrived during that read.
         const restored = await api.replayHistory(sessionId)
@@ -4322,10 +4671,18 @@ function TerminalPane({
         if (!dead) say(error instanceof Error ? error.message : 'History is unavailable from that device')
         return false
       } finally {
+        widenForReset = null
         redrawingHistory = false
         replaying.current = false
         if (!dead) {
-          if (wide !== back) t.resize(back, t.rows)
+          if (wide !== back) {
+            appResizing.current = true
+            try {
+              t.resize(back, t.rows)
+            } finally {
+              appResizing.current = false
+            }
+          }
           reshape(t, f)
         }
       }
@@ -4333,12 +4690,21 @@ function TerminalPane({
     paneRedraw.set(sessionId, redrawHistory)
     paneComposer.set(sessionId, () => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
-      return composerText((row) => b.getLine(row)?.translateToString(true) ?? '', b.baseY + b.cursorY, {
+      if (b.type === 'alternate' && agent !== 'codex') return null
+      const cursor = b.baseY + b.cursorY
+      const text = composerText((row) => b.getLine(row)?.translateToString(true) ?? '', cursor, {
         codexCols: agent === 'codex' ? t.cols : undefined,
         maxUp: agent === 'codex' ? t.rows : undefined,
         maxDown: agent === 'codex' ? t.rows : undefined
       })
+      // Match main's native Codex hint reading: these words are empty only when the
+      // whole hint is dim and the caret precedes it. Identical typed words stay a draft.
+      if (agent === 'codex' && text === 'Ask Codex to do anything' && b.cursorX === 2 &&
+        b.getLine(cursor)?.translateToString(true) === `› ${text}` &&
+        Array.from(text).every((_, n) => Boolean(b.getLine(cursor)?.getCell(n + 2)?.isDim()))) {
+        return ''
+      }
+      return text
     })
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
@@ -4480,8 +4846,6 @@ function TerminalPane({
 
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
     // the agent's output permanently, so resizes only run while the pane is shown.
-    const mountedAt = Date.now()
-    let settle: number | undefined
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       let changed = false
@@ -4545,29 +4909,18 @@ function TerminalPane({
       // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
       // whole frame again. Held off for the first seconds so a CLI still painting its
       // welcome screen is not poked mid-paint.
-      window.clearTimeout(settle)
-      settle = window.setTimeout(() => {
-        if (!autoFixRef.current || Date.now() - mountedAt < 3000) return
-        if (!host.current?.offsetParent) return
-        // A mirror changing ROWS means the far end resized, and the far end has already
-        // asked its own agent to repaint. Asking again from here would poke a CLI
-        // mid-paint over the network for no reason.
-        //
-        // A mirror changing COLUMNS is this window's own doing, and the far end cannot
-        // see it: its pane is the right shape over there. Every absolute column the far
-        // CLI printed is now clamped into a narrower grid here, which is the overlapping,
-        // half-overwritten rows Robert sent a picture of. So a width change is repaired
-        // from here, and only a width change.
-        if (mirrorRef.current && !rewrapped) return
-        api.redraw(sessionId)
-        try {
-          t.refresh(0, t.rows - 1)
-        } catch {
-          /* detached */
-        }
-      }, 400)
+      queueResizeRepaint(rewrapped)
     })
     ro.observe(host.current)
+    // ...and the screen, which changes size with NOTHING about the box moving: a renderer
+    // swap (a pane hidden and shown, a lost GPU context) or a move to a screen with another
+    // pixel ratio changes the cell under an unchanged font. A mirror's font, scale and
+    // centring are all read off that cell, and with only the host watched none of them was
+    // re-read - 75px empty on the left and two columns off the right, measured 2026-10-02.
+    // A local pane the same: fitted at WebGL's 7.2px cell, drawn at the DOM's 7.6px, its
+    // last two columns sat under the scrollbar until the window next moved.
+    const screenEl = t.element?.querySelector('.xterm-screen')
+    if (screenEl) ro.observe(screenEl)
 
     // Whether the agent's own footer still says it is running. The main process cannot see
     // the rendered frame, and without this a long silent tool call looks exactly like a
@@ -4588,7 +4941,7 @@ function TerminalPane({
       offHandover()
       coarse.removeEventListener('change', oneComposer)
       ro.disconnect()
-      window.clearTimeout(settle)
+      window.clearTimeout(resizeRepaint.current)
       window.clearTimeout(settle2)
       window.clearTimeout(fixTimer)
       window.clearTimeout(grantTimer.current)
@@ -4634,7 +4987,9 @@ function TerminalPane({
       window.clearTimeout(tailSync)
       for (const m of list.splice(0)) m.marker.dispose()
       // Before dispose(), so the seat is free for whichever pane asks for it next -
-      // t.dispose() takes the addon with it, but only this line gives up the budget.
+      // t.dispose() takes the addon with it, but only this line gives up the budget -
+      // and only dropGl gives the context back to the GPU without waiting for a GC.
+      dropGl(glRef.current)
       glRef.current = null
       glLive.delete(sessionId)
       t.dispose()
@@ -4660,7 +5015,7 @@ function TerminalPane({
     const t = term.current
     if (!t) return
     if (!visible) {
-      glRef.current?.dispose()
+      dropGl(glRef.current)
       glRef.current = null
       glLive.delete(sessionId)
       return
@@ -4922,6 +5277,7 @@ function TerminalPane({
           .attachPaths(sessionId, dropped)
           .then((res) => {
             if (res.error) toast.current?.(res.error)
+            sayIfOlderDesk(dropped, res)
             typePaths(res.paths)
           })
           .catch(() => toast.current?.('Could not send that file to the other device.'))
@@ -5097,6 +5453,34 @@ function TerminalPane({
       }}
       onDrop={onDrop}
     >
+      {marks.length > 0 && (
+        <details className="prompt-index" onKeyDown={event => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          event.currentTarget.open = false
+          event.currentTarget.querySelector('summary')?.focus()
+        }}>
+          <summary>Prompts · {marks.length}</summary>
+          <div className="prompt-index-list">
+            {marks.map((mark, index) => <button
+              key={mark.id}
+              title={mark.marker.line < 0
+                ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
+                : markLabel(mark, Math.max(railNow, mark.at))}
+              onClick={event => {
+                if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
+                else jumpTo(mark)
+                const details = event.currentTarget.closest('details')
+                if (details) {
+                  details.open = false
+                  details.querySelector('summary')?.focus()
+                }
+              }}
+            >{index + 1}. {mark.text}</button>)}
+          </div>
+        </details>
+      )}
       <div
         className="xterm-host"
         ref={host}
@@ -5226,34 +5610,8 @@ function TerminalPane({
       {marks.length > 0 && (
         <div
           className="mark-rail"
-          style={{ top: track.top, height: track.height || undefined, right: track.right }}
+          style={{ top: track.top, height: track.height || undefined, right: track.right, '--rail-scale': track.scale } as React.CSSProperties}
         >
-          <details className="prompt-index" onKeyDown={event => {
-            if (event.key !== 'Escape') return
-            event.preventDefault()
-            event.stopPropagation()
-            event.currentTarget.open = false
-            event.currentTarget.querySelector('summary')?.focus()
-          }}>
-            <summary>Prompts · {marks.length}</summary>
-            <div className="prompt-index-list">
-              {marks.map((mark, index) => <button
-                key={mark.id}
-                title={mark.marker.line < 0
-                  ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
-                  : markLabel(mark, Math.max(railNow, mark.at))}
-                onClick={event => {
-                  if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
-                  else jumpTo(mark)
-                  const details = event.currentTarget.closest('details')
-                  if (details) {
-                    details.open = false
-                    details.querySelector('summary')?.focus()
-                  }
-                }}
-              >{index + 1}. {mark.text}</button>)}
-            </div>
-          </details>
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p

@@ -18,6 +18,7 @@ import { readFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -546,5 +547,42 @@ ok('and never off the sampler variable', !/lastPressure/.test(offerBody))
     /paneOwedHistory\.delete\(sessionId\)/.test(pane.slice(pane.indexOf('paneRedraw.delete(sessionId)'))))
 }
 
+
+// The compressor beside the kernel's flag (2026-09-23). The two readings at the top of
+// capacity.ts and in `compressorLevel`'s comment: 15G used / 122M unused / 6321M compressor
+// WAS level 2; 15G used / 139M unused / 6470M compressor read level 1 a few minutes after
+// the same desk had read 2. Both must read `warn` here, and a desk with room must not.
+{
+  const { compressorLevel, COMPRESSOR_WARN_FRAC, UNUSED_WARN_FRAC } = await import('file://' + mod.replace(/\\/g, '/'))
+  ok('2026-08-14 reading (level 2) is warn', compressorLevel({ totalMb: 16384, unusedMb: 122, compressorMb: 6321 }) === 'warn')
+  ok('2026-09-23 05:35Z reading (flag said 1) is warn', compressorLevel({ totalMb: 16384, unusedMb: 139, compressorMb: 6470 }) === 'warn')
+  ok('thresholds sit under both measurements', 6321 / 16384 > COMPRESSOR_WARN_FRAC && 139 / 16384 < UNUSED_WARN_FRAC)
+  ok('a big compressor with plenty unused is a machine that recovered', compressorLevel({ totalMb: 16384, unusedMb: 2000, compressorMb: 7000 }) === 'normal')
+  ok('little unused with a small compressor is the OS keeping pages, not trouble', compressorLevel({ totalMb: 16384, unusedMb: 139, compressorMb: 900 }) === 'normal')
+  ok('genuinely low use is normal', compressorLevel({ totalMb: 16384, unusedMb: 6000, compressorMb: 900 }) === 'normal')
+  ok('never critical - that stays the kernel\'s call', compressorLevel({ totalMb: 16384, unusedMb: 0, compressorMb: 16000 }) === 'warn')
+  ok('a failed probe is normal (NaN)', compressorLevel({ totalMb: 16384, unusedMb: NaN, compressorMb: 6470 }) === 'normal')
+  ok('a failed probe is normal (no total)', compressorLevel({ totalMb: 0, unusedMb: 139, compressorMb: 6470 }) === 'normal')
+
+  // The read itself: `vm_stat` on Apple silicon (16 KB pages) and Intel (4 KB).
+  const memOut = join(dir, 'memory.bundle.cjs')
+  buildSync({ absWorkingDir: join(here, '..'), entryPoints: ['src/main/memory.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: memOut, external: ['electron'] })
+  const { parseVmStat } = createRequire(import.meta.url)(memOut)
+  const m4 = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                                8896.',
+    'Pages active:                            300000.',
+    'Pages occupied by compressor:            414080.',
+    'Pages stored in compressor:             1200000.'
+  ].join('\n')
+  const shape = parseVmStat(m4, 16384 * 1048576)
+  ok('vm_stat free pages -> MB at the header\'s page size', shape && shape.unusedMb === 139, JSON.stringify(shape))
+  ok('vm_stat compressor pages -> MB', shape && shape.compressorMb === 6470, JSON.stringify(shape))
+  ok('total from os.totalmem', shape && shape.totalMb === 16384)
+  const intel = m4.replace('16384 bytes', '4096 bytes')
+  const small = parseVmStat(intel, 16384 * 1048576)
+  ok('a 4 KB page is a quarter of the memory', small && small.compressorMb === Math.round(6470 / 4) - 0 || (small && Math.abs(small.compressorMb - 1617) <= 1), JSON.stringify(small))
+  ok('a missing line is null, never a guess', parseVmStat('Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 10.\n', 1) === null)
+}
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

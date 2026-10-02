@@ -30,7 +30,9 @@ import {
   type HandoffRepo,
   type HandoffResult
 } from '../shared/handoff'
-import { queuedNote } from '../shared/autoHandoff'
+import { automaticWork, queuedNote } from '../shared/autoHandoff'
+import { verifiedPaneHandoff } from './handoffSteps'
+import { pinnedByPrompt } from '../shared/offloadFirst'
 import type { DevServer } from '../shared/devServers'
 import type { Session, StartSessionRequest } from '../shared/types'
 
@@ -266,15 +268,20 @@ export interface SendDeps {
    */
   busy?(s: Session): boolean
   /** Take this pane, to be moved to `device` once it goes quiet. */
-  queue?(id: string, device: string, closeReceiverWhenDone: boolean): void
+  queue?(id: string, device: string, closeReceiverWhenDone: boolean, automatic?: boolean): void
   /**
    * Stop the turn this pane is on and wait for its composer to come back - the CLI's own
    * Escape, then `busy` polled up to `INTERRUPT_WAIT_MS`. Resolves true once the pane
    * reads idle, false when it never did. Absent means `now` cannot be honoured.
    */
   interrupt?(id: string): Promise<boolean>
-  /** The dev servers this pane has running, as script names its repo really has. */
-  devServersOf?(id: string, cwd: string): Promise<{ servers: DevServer[]; notes: string[] }>
+  /**
+   * The dev servers this pane has running, as script names its repo really has - and the
+   * pids of those outside the pane's tree (`strays`), which `kill()` cannot reach.
+   */
+  devServersOf?(id: string, cwd: string): Promise<{ servers: DevServer[]; notes: string[]; strays?: number[] }>
+  /** Stop one stray dev server by pid, re-validated on the way (`stopDevServer`). */
+  stopDev?(pid: number): Promise<{ ok: boolean; why?: string }>
 }
 
 /**
@@ -291,6 +298,10 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   const out: HandoffItem[] = []
   const closeAfter = request.closeReceiverWhenDone === true
   for (const pane of panes) {
+    if (request.automatic && (pane.stayHere || pane.focused || pinnedByPrompt(pane.gist, pane.cwd) || !automaticWork({ ...pane, state: deps.busy?.(pane) ? 'working' : 'ready' }))) {
+      out.push({ id: pane.id, title: pane.title, ok: false, error: 'No unfinished work to move; this conversation stays here', notes: [] })
+      continue
+    }
     // Do this before a busy pane enters the queue. A countdown for a provider
     // that cannot carry its conversation is a false promise, not useful work.
     const snapshot = deps.snapshot().find((r) => r.scrollbackId === pane.id)
@@ -328,9 +339,13 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
     }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
     // out loud that an unfinished answer is expendable. A background agent still running
-    // inside the CLI (`Session.subagent`) is held the same way: the move would end it.
-    if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent) && deps.queue) {
-      deps.queue(pane.id, device, closeAfter)
+    // inside the CLI (`Session.subagent`) is held the same way: the move would end it. So is
+    // a pane the app still owes a prompt (`Session.owedPrompt`) - an automatic clear
+    // counting down, or its resume prompt: the far end resumes the conversation un-cleared
+    // and the clear lands in the copy being closed (s60-mulljm2l, 2026-09-28). Not folded
+    // into `busy`, which also decides the `now` interrupt above.
+    if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent || !!pane.backJob || pane.owedPrompt || pane.drafting) && deps.queue) {
+      deps.queue(pane.id, device, closeAfter, request.automatic)
       out.push({
         id: pane.id,
         title: pane.title,
@@ -341,8 +356,16 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       })
       continue
     }
+    // A NOW move still goes with an owed prompt pending (b525596d: `now` is unchanged by
+    // owedPrompt); a running background agent, background job or the person's own unsent
+    // text is never thrown away, NOW or not.
+    if (pane.subagent || pane.backJob || pane.drafting || (request.now !== true && (pane.owedPrompt || deps.busy?.(pane)))) {
+      out.push({ id: pane.id, title: pane.title, ok: false, error: 'Work or an unsent prompt is still active; this conversation stays here', notes: [] })
+      continue
+    }
+    if (request.automatic) continueWith = 'Continue the unfinished work in this conversation on this machine. Check the saved handoff and remaining steps first; do not repeat completed work.'
     try {
-      out.push(await sendOne(deps, device, pane, closeAfter, continueWith))
+      out.push(await sendOne(deps, device, pane, closeAfter, continueWith, request.automatic))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -350,7 +373,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   return out
 }
 
-async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string): Promise<HandoffItem> {
+async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string, automatic = false): Promise<HandoffItem> {
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
@@ -363,6 +386,18 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     const error = `Its conversation is already running on ${there} - press this pane to carry on here instead, or close it`
     deps.log?.(`${pane.id} -> ${where}: refused before repo push - ${error}`)
     return { id: pane.id, title: pane.title, ok: false, error, notes }
+  }
+  const verifiedWork = (current: Session) => !!spec.resumeId && !!verifiedPaneHandoff(current.cwd, current.id, current.agent, spec.resumeId)?.open
+  if (automatic && !verifiedWork(pane)) return { id: pane.id, title: pane.title, ok: false, error: 'No fresh handoff for this exact conversation; it stays here', notes }
+  const inputAt = pane.lastKeyboard
+  const changed = () => {
+    const current = deps.list().find((s) => s.id === pane.id)
+    return !current || current.status === 'exited' || current.lastKeyboard !== inputAt ||
+      // An owed prompt counts only if it arrived DURING preparation: one already pending
+      // reaches here only on a NOW move, which goes regardless (sendHandoff).
+      deps.busy?.(current) || current.subagent || current.backJob || (current.owedPrompt && !pane.owedPrompt) || current.drafting ||
+      (automatic && (!verifiedWork(current) || current.stayHere || current.focused || pinnedByPrompt(current.gist, current.cwd) ||
+        !automaticWork({ ...current, state: 'ready' })))
   }
   const t0 = Date.now()
 
@@ -418,10 +453,14 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // Read BEFORE the pane is killed: the tree is the only record of what it was running,
   // and `kill()` takes the whole tree with it.
   let dev: DevServer[] = []
+  // The servers attributed by path alone: `kill()` below will not reach them, so once the
+  // far end is running its own they are stopped here by pid (re-validated in `stopDev`).
+  let strays: number[] = []
   if (deps.devServersOf) {
     try {
       const found = await deps.devServersOf(pane.id, pane.cwd)
       dev = found.servers
+      strays = found.strays ?? []
       notes.push(...found.notes)
     } catch {
       /* a locked-down process table is a missing note, never a failed handoff */
@@ -443,6 +482,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // Only a conversation can carry on; a shell that was interrupted simply starts fresh.
   if (continueWith && transcript) payload.continueWith = continueWith
 
+  if (changed()) return { id: pane.id, title: pane.title, ok: false, error: 'The conversation changed while preparing the move, so it stayed here', notes }
   deps.stage?.(pane.id, `sending to ${where}`)
   const t1 = Date.now()
   const result = await deps.deliver(device, payload, file).catch((err: Error) => {
@@ -452,6 +492,10 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   if (!result.ok) {
     deps.log?.(`${pane.id} -> ${where}: refused over there after ${Date.now() - t1} ms - ${result.error || 'no reason given'}`)
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
+  }
+  if (changed()) {
+    deps.moved?.(pane.id, device)
+    return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, 'The source became active while the remote opened. It was kept running here; review both copies before continuing.'] }
   }
   if (handoffSpec.agent !== 'shell' && result.resumed !== true) {
     // The conversation was started over there but the receiver could not PROVE it came up
@@ -473,6 +517,15 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // this one is now a second window onto old state. Closed, not slept: an asleep copy of a
   // conversation that lives elsewhere is the duplicate row this used to leave behind.
   deps.kill(pane.id)
+  // ...and the dev server it left on ppid 1, which the far end has just started its own
+  // copy of (`payload.dev`). Only after the move is proven: a refused move keeps its server.
+  if (dev.length && strays.length && deps.stopDev) {
+    for (const pid of strays) {
+      const r = await deps.stopDev(pid)
+      deps.log?.(`${pane.id} -> ${where}: ${r.ok ? 'stopped' : 'left'} the dev server ${pid} here${r.why ? ` - ${r.why}` : ''}`)
+    }
+    notes.push(strays.length === 1 ? 'Stopped the dev server this pane left running here' : `Stopped ${strays.length} dev servers this pane left running here`)
+  }
   return { id: pane.id, title: pane.title, ok: true, notes: [...notes, ...result.notes] }
 }
 
@@ -541,10 +594,31 @@ async function pushRepo(cwd: string, root: string, deviceName: string): Promise<
 // ---------------------------------------------------------------------------
 // Receiving
 
+/** Where a blocked handoff landed instead of the busy same-named checkout. */
+export interface LandedCopy {
+  /** the copy's own folder - `landOn` may create it */
+  cwd: string
+  /** the lane label the pane should carry, so `laneFor` fills its env and keeps the folder */
+  lane: string
+  /** in screen words, for the pane's notes - the reader has never used git */
+  note: string
+}
+
 export interface ReceiveDeps {
   root(): string
-  /** the same lane split a local launch goes through, deciding the final cwd */
-  place(req: StartSessionRequest): Promise<StartSessionRequest>
+  /**
+   * The same lane split a local launch goes through, deciding the final cwd. `extraTaken`
+   * names folders this handoff has already claimed (the busy checkout it just routed
+   * around) so a lane split does not hand the pane straight back to it.
+   */
+  place(req: StartSessionRequest, extraTaken?: string[]): Promise<StartSessionRequest>
+  /**
+   * The same-named checkout here was busy with somebody else's work (`ensureRepo` answered
+   * `blocked: true`). Find a free lane copy of the repo and check the handed-over commit out
+   * there instead - a refusal string when none exists. Absent means no rerouting: the
+   * blocked error is the whole answer, same as before this existed.
+   */
+  landOn?(target: string, repo: HandoffRepo, blocked: string): Promise<LandedCopy | string>
   /**
    * Watch the started pane until `shared/resumeCheck.ts` can say whether the conversation
    * came up: `ok` at an idle composer, `failed` when the process quit or printed a failed
@@ -615,15 +689,33 @@ export async function receiveHandoff(
       return { ok: false, error: 'Conversation transcript is malformed, incomplete, or does not match its resume ID', notes }
     }
   }
-  const mapped = mapCwd(spec.cwd, payload.senderRoot, deps.root())
+  let mapped = mapCwd(spec.cwd, payload.senderRoot, deps.root())
   if (!mapped) {
     return { ok: false, error: `No matching folder here for ${spec.cwd}`, notes }
   }
   const from = payload.senderDevice ? `<- ${payload.senderDevice}` : '<-'
   const t0 = Date.now()
+  let landedLane: string | undefined
+  let extraTaken: string[] | undefined
   if (payload.repo) {
-    const err = await ensureRepo(payload.repo, payload.senderRoot, deps.root())
-    if (err) return { ok: false, error: err, notes }
+    const result = await ensureRepo(payload.repo, payload.senderRoot, deps.root())
+    if (result.error) {
+      if (!result.blocked) return { ok: false, error: result.error, notes }
+      const landed = await deps.landOn?.(result.target, payload.repo, result.error)
+      if (!landed || typeof landed === 'string') {
+        return { ok: false, error: landed ?? result.error, notes }
+      }
+      // `mapped` was computed under the busy checkout (`result.target`); the landed copy
+      // is the same repo elsewhere, so it takes the same place in the path. Both came out
+      // of `mapCwd`, so the prefix matches; if it somehow does not, the copy's root is the
+      // safe place rather than a path spliced from two spellings.
+      const under = mapped.toLowerCase().startsWith(result.target.toLowerCase())
+      mapped = under ? landed.cwd + mapped.slice(result.target.length) : landed.cwd
+      notes.push(landed.note)
+      landedLane = landed.lane
+      extraTaken = [result.target]
+      deps.log?.(`${from}: ${result.target} was busy, landed in ${landed.cwd} instead`)
+    }
     deps.log?.(`${from}: repo ready in ${Date.now() - t0} ms (${spec.title})`)
   }
   if (!existsSync(mapped)) {
@@ -632,14 +724,19 @@ export async function receiveHandoff(
     notes.push('Folder did not exist here - created empty')
   }
 
-  const req = await deps.place({
-    cwd: mapped,
-    title: spec.title,
-    agent: spec.agent,
-    model: spec.model,
-    role: spec.role,
-    laneEnv: spec.laneEnv
-  })
+  const req = await deps.place(
+    {
+      cwd: mapped,
+      title: spec.title,
+      autoTitled: spec.autoTitled,
+      agent: spec.agent,
+      model: spec.model,
+      role: spec.role,
+      laneEnv: spec.laneEnv,
+      ...(landedLane ? { lane: landedLane } : {})
+    },
+    extraTaken
+  )
 
   // Where it came from, kept on the pane. The budget rule over here is the same rule that
   // sent it, so without this the two desks pass one pane between them for ever.
@@ -759,30 +856,42 @@ export async function receiveHandoff(
  * with the branch gone - so a branch fetch/clone that fails falls back to
  * fetching/cloning the sha and rebuilding the local branch on top of it.
  */
-export async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): Promise<string> {
+export interface EnsureRepoResult {
+  target: string
+  error?: string
+  /**
+   * The refusal is specifically "the same-named checkout here is busy with somebody else's
+   * work" (dirty, or unpushed commits on the branch being handed over) - the two cases a
+   * receiver can route around by landing the pane in a free lane copy instead. Every other
+   * failure (no matching folder, a dead remote, a detached HEAD) has no such alternative.
+   */
+  blocked?: boolean
+}
+
+export async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): Promise<EnsureRepoResult> {
   const target = mapCwd(slash(senderRoot).replace(/\/+$/, '') + (repo.dirRel ? '/' + repo.dirRel : ''), senderRoot, root)
-  if (!target) return 'Could not place the repo under the projects root here'
+  if (!target) return { target: '', error: 'Could not place the repo under the projects root here' }
   if (!existsSync(target)) {
     mkdirSync(dirname(target), { recursive: true })
     try {
       await git(dirname(target), ['clone', '--branch', repo.branch, repo.url, target], 300_000)
-      return ''
+      return { target }
     } catch (err) {
       if (repo.sha) {
         try {
           await git(dirname(target), ['clone', repo.url, target], 300_000)
           await git(target, ['checkout', '-b', repo.branch, repo.sha])
-          return ''
+          return { target }
         } catch (shaErr) {
-          return `Clone failed: ${repo.branch} is gone from origin (${(err as Error).message}) and ${repo.sha.slice(0, 8)} could not be checked out either: ${(shaErr as Error).message}`
+          return { target, error: `Clone failed: ${repo.branch} is gone from origin (${(err as Error).message}) and ${repo.sha.slice(0, 8)} could not be checked out either: ${(shaErr as Error).message}` }
         }
       }
-      return `Clone failed: ${(err as Error).message}`
+      return { target, error: `Clone failed: ${(err as Error).message}` }
     }
   }
   try {
     if (await git(target, ['status', '--porcelain'])) {
-      return `${target} has uncommitted work on this machine - not touching it`
+      return { target, error: `${target} has uncommitted work on this machine - not touching it`, blocked: true }
     }
     // Already standing on the commit being handed over, on the branch it was handed over
     // on: there is nothing to fetch and nothing to check out. Asked before the network
@@ -794,18 +903,18 @@ export async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: st
         git(target, ['rev-parse', 'HEAD']),
         git(target, ['rev-parse', '--abbrev-ref', 'HEAD'])
       ])
-      if (head === repo.sha && branch === repo.branch) return ''
+      if (head === repo.sha && branch === repo.branch) return { target }
     }
     let ref = `origin/${repo.branch}`
     try {
       await git(target, ['fetch', 'origin', repo.branch], 120_000)
     } catch (fetchErr) {
-      if (!repo.sha) return `Could not update ${target}: ${(fetchErr as Error).message}`
+      if (!repo.sha) return { target, error: `Could not update ${target}: ${(fetchErr as Error).message}` }
       try {
         await git(target, ['fetch', 'origin', repo.sha], 120_000)
         ref = repo.sha
       } catch (shaErr) {
-        return `Could not update ${target}: ${repo.branch} is gone from origin (${(fetchErr as Error).message}) and ${repo.sha.slice(0, 8)} could not be fetched either: ${(shaErr as Error).message}`
+        return { target, error: `Could not update ${target}: ${repo.branch} is gone from origin (${(fetchErr as Error).message}) and ${repo.sha.slice(0, 8)} could not be fetched either: ${(shaErr as Error).message}` }
       }
     }
     let has = true
@@ -816,16 +925,16 @@ export async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: st
     }
     if (!has) {
       await git(target, ['checkout', '-b', repo.branch, ref])
-      return ''
+      return { target }
     }
     const ahead = await git(target, ['rev-list', '--count', `${ref}..${repo.branch}`])
     if (ahead !== '0') {
-      return `${target} has ${ahead} unpushed commit(s) on ${repo.branch} here - not touching it`
+      return { target, error: `${target} has ${ahead} unpushed commit(s) on ${repo.branch} here - not touching it`, blocked: true }
     }
     await git(target, ['checkout', repo.branch])
     await git(target, ['merge', '--ff-only', ref])
-    return ''
+    return { target }
   } catch (err) {
-    return `Could not update ${target}: ${(err as Error).message}`
+    return { target, error: `Could not update ${target}: ${(err as Error).message}` }
   }
 }

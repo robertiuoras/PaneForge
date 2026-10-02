@@ -170,7 +170,8 @@ const CLAUDE_MODELS: ModelChoice[] = [
   { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5', hint: 'fast, cheaper' },
+  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'fast, cheaper' },
+  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
   // The API id carries the minor version (`claude-fable-5-1`); a bare `claude-fable-5`
   // was what the chip trimmed the live id down to, so a pane running 5.1 wore "Fable 5".
   { value: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'heaviest' },
@@ -259,7 +260,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     modelFlag: '--model',
     models: CLAUDE_MODELS,
     color: '#d97757',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     note: 'Anthropic subscription or API key',
     docs: 'https://docs.claude.com/en/docs/claude-code'
@@ -293,7 +297,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#8b5cf6',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'One OpenRouter key, any model on it - free ones included. Paste the key in Settings.',
@@ -334,7 +341,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#4d6bfe',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'DeepSeek key in Settings - no subscription, pay per token',
@@ -369,7 +379,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#14b8a6',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'Z.ai key in Settings - pay per token, or a GLM Coding Plan',
@@ -649,7 +662,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
  * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
  * read the clipboard too - the binary is what decides this, never the model behind it.
  */
-const CLIPBOARD_IMAGE_AGENTS = new Set([
+const CLAUDE_CODE_AGENTS = new Set([
   'claude',
   'openrouter',
   'deepseek',
@@ -658,9 +671,52 @@ const CLIPBOARD_IMAGE_AGENTS = new Set([
   'anthropic'
 ])
 
+/**
+ * Which CLIs read images directly off the OS clipboard on ^V.
+ *
+ * Claude Code reads an image off the clipboard when it gets a ^V; modern Codex (0.150+)
+ * and Antigravity CLI (1.2+) also read macOS/OS clipboard images on ^V.
+ *
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic',
+  'codex',
+  'antigravity'
+])
+
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
   return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
+}
+
+/**
+ * The keystroke that makes this agent read an image off the clipboard, on the machine its
+ * pty runs on.
+ *
+ * ^V everywhere except Claude Code on Windows. There Ctrl+V is the terminal's own paste
+ * and Claude Code's image key is Alt+V - read off 2.1.286's own keymap
+ * (`ve = xe ? "alt+v" : "ctrl+v"`, `xe` = windows or wsl), so a ^V on the PC pasted
+ * nothing at all. Codex 0.159.1 names Ctrl+V in its own tips and is left on it.
+ */
+export function imagePasteKey(agent: string | undefined, onWindows: boolean): string {
+  if (onWindows && !!agent && CLAUDE_CODE_AGENTS.has(agent)) return '\x1bv'
+  return '\x16'
+}
+
+/**
+ * Does a `\` typed before Enter make a new line in this agent's prompt box instead of
+ * sending it? Claude Code's does; Codex 0.155.1 sends the line (measured 2026-09-23). The
+ * binary decides this too, so it is the same set. See `DraftOptions.backslashNewline`.
+ */
+export function continuesOnBackslash(agent: string | undefined): boolean {
+  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
 }
 
 export function allAgents(custom: AgentSpec[] = []): AgentSpec[] {
@@ -1018,6 +1074,11 @@ export function buildArgs(
   // person's global Codex preference is untouched.
   if (spec.id === 'codex' && opts.resume)
     argv.push('-c', 'tui.resume_cwd="current"')
+  // Codex opens on an "Update available" chooser whose first answer is "Update now", so
+  // the first Enter a pane receives (a queued prompt, a relay) starts a global install
+  // instead of the task. PaneForge's setup rows run `codex update` on purpose instead.
+  // Process-scoped, like the two overrides around it.
+  if (spec.id === 'codex') argv.push('-c', 'check_for_update_on_startup=false')
   // How hard the pane starts out thinking. Codex only, and only when the pane was opened
   // with that reading switched on: it is a `-c` override of `model_reasoning_effort` for
   // THIS process, so nothing on disk changes and the person's own config.toml is left

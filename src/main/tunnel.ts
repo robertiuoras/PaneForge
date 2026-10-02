@@ -64,6 +64,9 @@ const START_BUDGET_MS = ms('PF_TUNNEL_START_MS', 180_000)
 /** Downloading 19-54 MB on a bad hotel connection is slow, not broken. */
 const FETCH_BUDGET_MS = ms('PF_TUNNEL_FETCH_MS', 300_000)
 
+/** How often a switched-on tunnel checks that the permanent address is still ours. */
+const HEAL_MS = ms('PF_TUNNEL_HEAL_MS', 60_000)
+
 /** The line that means the tunnel has a live connection - and only then is DNS worth asking. */
 const REGISTERED = /Registered tunnel connection/
 const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/
@@ -130,6 +133,8 @@ export interface TunnelDeps {
    * cloudflared path it used to be the only one of.
    */
   funnel?: FunnelDeps
+  /** one plain line per funnel re-assert or failure; no addresses beyond the host, no secrets */
+  log?(line: string): void
 }
 
 export class Tunnel {
@@ -143,6 +148,10 @@ export class Tunnel {
   private fetching: Promise<string> | null = null
   private funnel: Funnel
   private via: TunnelState['via'] = ''
+  /** the port the switch is on for, and the timer that keeps the permanent address up */
+  private wantPort = 0
+  private healTimer: ReturnType<typeof setInterval> | null = null
+  private healing = false
 
   constructor(private deps: TunnelDeps) {
     this.funnel = new Funnel(deps.funnel ?? {})
@@ -191,6 +200,8 @@ export class Tunnel {
     if (this.busy()) return this.state()
     await this.stop()
     this.stopping = false
+    this.wantPort = port
+    this.armHeal()
     this.note('starting')
 
     // Tailscale Funnel first, always, when this machine can do it: same public HTTPS,
@@ -253,6 +264,52 @@ export class Tunnel {
     this.via = 'tailscale'
     this.note('up')
     return true
+  }
+
+  private armHeal(): void {
+    if (this.healTimer) return
+    this.healTimer = setInterval(() => void this.heal(), HEAL_MS)
+    this.healTimer.unref?.()
+  }
+
+  /**
+   * Keep the permanent address up while the switch is on.
+   *
+   * Two things take it away without the switch moving: tailscaled not being up yet when
+   * the app launched (cold boot, login - the start fell through to cloudflared and never
+   * asked again), and anything else on the machine editing 443. A healthy tick is one
+   * `funnel status` call. Re-asserting never turns the funnel off first, so a working
+   * address does not blink.
+   */
+  private async heal(): Promise<void> {
+    const port = this.wantPort
+    if (!port || this.stopping || this.healing || this.busy()) return
+    this.healing = true
+    try {
+      const onFunnel = this.phase === 'up' && this.via === 'tailscale'
+      if (onFunnel) {
+        // Unreadable is not broken: only a 443 that reads as someone else's, or empty.
+        const at = await this.funnel.proxyPort().catch(() => null)
+        if (at === null || at === port) return
+      } else if (!(await this.funnel.available().catch(() => ''))) return
+      if (this.stopping || this.busy()) return
+      const started = await this.funnel.start(port).catch(() => ({ url: '', denied: true, error: '' }))
+      if (!started.url || this.stopping) {
+        if (!started.url && started.error) this.deps.log?.(`funnel re-assert failed: ${started.error}`)
+        return
+      }
+      if (!(await this.waitUntilServing(started.url, true)) || this.stopping) {
+        if (!this.stopping) this.deps.log?.('funnel re-asserted but the address did not answer')
+        return
+      }
+      this.deps.log?.(`funnel re-asserted on ${started.url} (was ${onFunnel ? 'repointed' : this.via || 'off'})`)
+      this.kill()
+      this.url = started.url
+      this.via = 'tailscale'
+      this.note('up')
+    } finally {
+      this.healing = false
+    }
   }
 
   private async run(binary: string, port: number): Promise<TunnelState> {
@@ -433,6 +490,9 @@ export class Tunnel {
 
   async stop(): Promise<void> {
     this.stopping = true
+    this.wantPort = 0
+    if (this.healTimer) clearInterval(this.healTimer)
+    this.healTimer = null
     this.kill()
     this.url = ''
     // Not a child process: `funnel --bg` is a setting tailscaled keeps, so nothing here

@@ -1,6 +1,19 @@
 // The main-process watchdog is deliberately arithmetic first: this proves its refusals.
 
-import { BEAT_MS, HANG_MS, beat, decide, fresh } from '../src/shared/mainWatch.ts'
+import {
+  BEAT_MS,
+  HANG_MS,
+  STARVED_HANG_FACTOR,
+  beat,
+  decide,
+  fresh,
+  readVitals,
+  describeVitals,
+  machineBusyPct,
+  describeTasklist,
+  silenceLine,
+  forkStoppedReason
+} from '../src/shared/mainWatch.ts'
 import { build } from 'esbuild'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -44,6 +57,81 @@ const slept = decide(state, now)
 state = slept.state
 ok('a twenty-minute clock jump is sleep, not a hang', slept.action === 'wait' && state.silentTicks === 0)
 
+// 2026-10-01 6:25:54pm: `main: no heartbeat for 76s - relaunching ... machine: 196MB free of
+// 16384MB`. The kill -9 ended 18 chats mid-turn for a stall that was the machine's.
+const starvedRun = (ticks) => {
+  let s = beat(fresh())
+  let t = 5_000_000
+  const actions = []
+  for (let i = 0; i < ticks; i++) {
+    t += BEAT_MS
+    const next = decide(s, t, HANG_MS, true)
+    s = next.state
+    actions.push(next.action)
+  }
+  return actions
+}
+ok('starved: ten minutes is the factor that was chosen', HANG_MS * STARVED_HANG_FACTOR === 600_000)
+ok('starved: 76 s of silence waits', starvedRun(38).every((action) => action === 'wait'))
+ok('starved: 600 s of silence acts, and not a tick before', (() => {
+  const actions = starvedRun(600_000 / BEAT_MS)
+  return actions.slice(0, -1).every((action) => action === 'wait') && actions.at(-1) === 'act'
+})())
+ok('not starved: the same 76 s still acts', (() => {
+  let s = beat(fresh())
+  let t = 5_000_000
+  let last = 'wait'
+  for (let i = 0; i < 38; i++) { t += BEAT_MS; const next = decide(s, t, HANG_MS, false); s = next.state; last = next.action }
+  return last === 'act'
+})())
+
+// --- vitals arithmetic ---
+
+const mark0 = { at: 1_000_000, cpuUs: 500_000 }
+const r1 = readVitals(mark0, 1_002_000, { rss: 100 * 1048576, heapUsed: 40 * 1048576 }, 500_000 + 400_000, 1_001_500)
+ok('readVitals lag is the gap past BEAT_MS', r1.vitals.lagMs === 0)
+const r2 = readVitals(mark0, 1_005_000, { rss: 100 * 1048576, heapUsed: 40 * 1048576 }, 500_000, 0)
+ok('readVitals lag is gap minus BEAT_MS when the timer fires late', r2.vitals.lagMs === 3_000)
+ok('readVitals cpuPct comes from delta cpu microseconds over the gap', r1.vitals.cpuPct === 20)
+ok('readVitals rendererAgoMs is null when the renderer has never answered', r2.vitals.rendererAgoMs === null)
+ok('readVitals rendererAgoMs is the time since the last answer otherwise', r1.vitals.rendererAgoMs === 500)
+ok('readVitals mark carries the raw cpu microseconds forward', r1.mark.cpuUs === 900_000 && r1.mark.at === 1_002_000)
+
+const described = describeVitals(r1.vitals)
+ok('describeVitals mentions memory, lag and cpu', described.includes('MB') && described.includes('ms late') && described.includes('cpu'))
+ok('describeVitals says the window has not answered yet when null', describeVitals(r2.vitals).includes('has not answered yet'))
+
+const cpuBefore = [{ user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }]
+const cpuAfter = [{ user: 15, nice: 0, sys: 10, idle: 75, irq: 0 }, { user: 15, nice: 0, sys: 10, idle: 75, irq: 0 }]
+ok('machineBusyPct reads busy time across all cores', machineBusyPct(cpuBefore, cpuAfter) === 25)
+ok('machineBusyPct refuses mismatched core counts', machineBusyPct(cpuBefore, [cpuAfter[0]]) === null)
+ok('machineBusyPct refuses an empty reading', machineBusyPct([], []) === null)
+
+const tasklistLine = '"PaneForge.exe","15976","","1","211,388 K","Running","DESKTOP-CMSUCM1\\Gamer","0:10:56","PaneForge"'
+const tasklistDesc = describeTasklist(tasklistLine)
+ok('describeTasklist reads the status', tasklistDesc?.includes('Running') ?? false)
+ok('describeTasklist reads the cpu time', tasklistDesc?.includes('0:10:56') ?? false)
+ok('describeTasklist reads the memory', tasklistDesc?.includes('211,388 K') ?? false)
+ok('describeTasklist refuses garbage', describeTasklist('not a csv line at all') === null)
+
+const line = silenceLine({
+  silentS: 76,
+  what: 'relaunching',
+  pid: 16972,
+  last: { agoS: 4, vitals: r1.vitals },
+  machine: { freeMb: 512, totalMb: 16384, busyPct: 40 },
+  proc: tasklistDesc
+})
+ok('silenceLine names the pid', line.includes('pid 16972'))
+ok('silenceLine names the silent seconds', line.includes('76s'))
+ok('silenceLine names the last beat', line.includes('last beat'))
+ok('silenceLine names the machine reading', line.includes('machine:'))
+
+const stoppedReason = forkStoppedReason('stopped (0)', 1_000_000, 1_094_000, 46, r1.vitals, 512, 16384)
+ok('forkStoppedReason names beats sent and uptime', stoppedReason.includes('after 94s') && stoppedReason.includes('46 beats sent'))
+ok('forkStoppedReason names the machine', stoppedReason.includes('machine:') && stoppedReason.includes('512MB free of 16384MB'))
+ok('forkStoppedReason says main had nothing to show with no prior beat', forkStoppedReason('stopped (0)', 0, 1_000, 0, null, 1, 2).includes('no beat was sent'))
+
 // Bundle the real module, substituting Electron and crash logging only at test time. This
 // keeps the production watchdog free of a test injection surface while driving lifecycle
 // failures that pure tick arithmetic cannot observe.
@@ -71,7 +159,7 @@ global.setInterval = (fn) => { intervals.push(fn); return { unref() {} } }
 global.setTimeout = (fn) => { timeouts.push(fn); return { unref() {} } }
 function lifecycle(forkImpl) {
   const events = new Map()
-  const electron = { app: { isPackaged: true, getPath: () => '/tmp/pf', once: (name, fn) => events.set(name, fn) }, utilityProcess: { fork: forkImpl } }
+  const electron = { app: { isPackaged: true, getPath: () => work, getVersion: () => 'test-version', once: (name, fn) => events.set(name, fn) }, utilityProcess: { fork: forkImpl } }
   globalThis.__watchLogs = []
   Module._load = (request, parent, isMain) => request === 'electron' ? electron : nativeLoad(request, parent, isMain)
   delete requireOut.cache[requireOut.resolve(out)]
@@ -93,6 +181,13 @@ try {
   old.emit('error', 'FatalError', 'test')
   old.emit('exit', 1)
   ok('an error kills the old child and error plus exit schedule one retry', old.killed && timeouts.length === 2)
+  const stoppedChild = fakeChild()
+  const stoppedLifecycle = lifecycle(() => stoppedChild)
+  stoppedLifecycle.startMainWatch()
+  stoppedChild.emit('exit', 0)
+  const stoppedLog = globalThis.__watchLogs.map((args) => args.join(' ')).join('\n')
+  ok('a stopped helper logs beats sent', stoppedLog.includes('beats sent'))
+  ok('a stopped helper logs the machine reading', stoppedLog.includes('machine:'))
   const named = fakeChild()
   const namedLifecycle = lifecycle(() => named)
   namedLifecycle.startMainWatch()
@@ -108,18 +203,32 @@ try {
   // Compile the real child with only its message port replaced. The mark function remains
   // private in production; the source substitution exposes it only inside this test bundle.
   const childOut = join(work, 'watchdog-child.cjs')
-  const childSource = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
-    .replace("const port = process.parentPort", 'const port = { on() {} }')
-    .replace('async function markDeskForRestart(', 'export async function markDeskForRestart(')
-    .replace('function relaunch(', 'export function relaunch(')
+  // A patch that stops matching (the source line moved) must fail the run, not silently test the
+  // real thing: String.replace returns the input unchanged when nothing matches.
+  const patch = (source, from, to) => {
+    if (!source.includes(from)) throw new Error(`watchdog-child.ts no longer contains the text this test patches: ${from}`)
+    return source.replace(from, to)
+  }
+  let childSource = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
+  childSource = patch(childSource, "const port = process.parentPort", 'const port = { on(_name, fn) { globalThis.__childOnMessage = fn } }')
+  childSource = patch(childSource, "import { readPressure } from './memory'", "const readPressure = () => { globalThis.__pressureReads = (globalThis.__pressureReads ?? 0) + 1; return globalThis.__pressure ?? 'normal' }")
+  childSource = patch(childSource, 'async function markDeskForRestart(', 'export async function markDeskForRestart(')
+  childSource = patch(childSource, 'function relaunch(', 'export function relaunch(')
   await build({
     stdin: { contents: childSource, resolveDir: join(root, 'src/main'), sourcefile: 'watchdog-child.ts', loader: 'ts' },
     bundle: true, platform: 'node', format: 'cjs', outfile: childOut
   })
   const spawnCalls = []
-  Module._load = (request, parent, isMain) => request === 'node:child_process'
-    ? { execFile() {}, spawn(command, args, options) { spawnCalls.push({ command, args, options }); return { once() {}, unref() {} } } }
+  const execCalls = []
+  // The machine as the child saw it at 6:25:54pm: 196 MB free of 16384 MB.
+  const osAtCrash = { ...nativeLoad('node:os', null, false), freemem: () => 196 * 1048576, totalmem: () => 16384 * 1048576 }
+  // The child's view of the machine: no real ps, no real spawn, 196 MB free. Every require of
+  // the child bundle (the first below and each loadChild replay) must run under this loader.
+  const childLoad = (request, parent, isMain) => request === 'node:child_process'
+    ? { execFile(command) { execCalls.push(command) }, spawn(command, args, options) { spawnCalls.push({ command, args, options }); return { once() {}, unref() {} } } }
+    : request === 'node:os' ? osAtCrash
     : nativeLoad(request, parent, isMain)
+  Module._load = childLoad
   const { markDeskForRestart, relaunch } = requireOut(childOut)
   const hello = (userData) => ({ t: 'hello', pid: 1, exe: 'pf', appPath: 'pf', userData, platform: 'darwin', argv: [], packaged: false })
   const caseDir = (name) => mkdtempSync(join(work, `${name}-`))
@@ -129,6 +238,24 @@ try {
   await markDeskForRestart(hello(dir))
   let marked = JSON.parse(readFileSync(join(dir, 'desk.exit.json'), 'utf8'))
   ok('a legacy desk without writtenAt is recoverable when no clear tombstone exists', marked.specs[0].cwd === 'legacy' && marked.reason === 'update' && marked.writtenAt > 0)
+  // 2026-10-01 08:25:54Z: a hang restart wrote reason 'update' (so the panes reopen unasked) and
+  // the next launch logged "left by an update" with no update. The marker must survive
+  // readDesk and pick the true wording; a real update desk keeps its own.
+  ok('the hang restart marks its desk with relaunch watchdog', marked.relaunch === 'watchdog')
+  const restoreOut = join(work, 'restore.cjs')
+  await build({ entryPoints: [join(root, 'src/main/restore.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: restoreOut, external: ['electron'] })
+  let deskDir = dir
+  Module._load = (request, parent, isMain) => request === 'electron' ? { app: { getPath: () => deskDir } } : nativeLoad(request, parent, isMain)
+  const { readDesk } = requireOut(restoreOut)
+  const shared = await import('../src/shared/restoreTurn.ts').catch(() => ({}))
+  const leftBy = shared.deskLeftBy ?? (() => 'by an update')
+  const read = readDesk()
+  ok('readDesk keeps the watchdog marker and the unasked-reopen reason', read?.relaunch === 'watchdog' && read.reason === 'update')
+  ok('a watchdog desk is logged as a hang restart', leftBy(read ?? {}).includes('hang restart'))
+  deskDir = caseDir('real-update')
+  writeDesk(deskDir, 'desk.exit.json', { specs: [{ cwd: 'u' }], reason: 'update', at: 1, writtenAt: 1 })
+  const real = readDesk()
+  ok('a real update desk has no marker and is still logged as an update', real?.relaunch === undefined && leftBy(real ?? {}) === 'by an update')
   dir = caseDir('terminal')
   writeDesk(dir, 'desk.json', { specs: [{ cwd: 'live' }], writtenAt: 0 })
   writeDesk(dir, 'desk.exit.json', { specs: [{ cwd: 'exit' }], writtenAt: 3 })
@@ -156,6 +283,53 @@ try {
   ok('packaged Linux recovery passes the exact named profile to the executable', spawnCalls[2].command === 'sh' && spawnCalls[2].args[1].includes("'/opt/pf' '--profile=named-profile'"))
   relaunch(packaged('linux'))
   ok('the default profile does not add a profile argument', !spawnCalls[3].args[1].includes('--profile='))
+
+  // Replay of 6:25:54pm through the real child: silence while the machine is short of memory
+  // waits and says so, a beat afterwards says every pane was kept, and only ten minutes of
+  // silence acts. execFile('ps') is the first thing act() runs, so it marks an act.
+  // The desk-restore cases above swapped Module._load for an electron-only stub; put the child's
+  // loader back, or the replay below reads this machine's real memory and runs the real ps.
+  Module._load = childLoad
+  const settle = async (file, text) => {
+    for (let i = 0; i < 5000; i++) {
+      if (existsSync(file) && readFileSync(file, 'utf8').includes(text)) return true
+      await new Promise((r) => setImmediate(r))
+    }
+    return false
+  }
+  const loadChild = (pressure) => {
+    globalThis.__pressure = pressure
+    globalThis.__pressureReads = 0
+    delete requireOut.cache[requireOut.resolve(childOut)]
+    requireOut(childOut)
+    const userData = caseDir(`starved-${pressure}`)
+    const send = globalThis.__childOnMessage
+    // A pid that cannot exist, so no path through relaunch() can ever reach a real process.
+    send({ data: { t: 'hello', pid: 2147483646, exe: 'pf', appPath: 'pf', userData, platform: 'darwin', profile: '', packaged: false } })
+    return { tick: intervals.at(-1), send, log: join(userData, 'paneforge-errors.log') }
+  }
+  const acts = () => execCalls.filter((command) => command === 'ps').length
+  let child = loadChild('warn')
+  child.send({ data: { t: 'beat' } })
+  for (let i = 0; i < 4; i++) { child.tick(); child.send({ data: { t: 'beat' } }) }
+  ok('a beating main never asks the machine about memory', globalThis.__pressureReads === 0)
+  let actsBefore = acts()
+  for (let i = 0; i < 38; i++) child.tick()
+  ok('starved child: 76 s of silence at 196MB free does not relaunch', acts() === actsBefore)
+  ok('starved child: says why it is waiting, with the machine reading', await settle(child.log, 'main: no heartbeat for 76s, but the machine is short of memory (196MB free of 16384MB) - waiting up to 10 min instead of relaunching'))
+  child.send({ data: { t: 'beat' } })
+  ok('starved child: a beat afterwards says every pane was kept', await settle(child.log, 'main: beating again after 76s of silence while memory was short - not relaunched, every pane kept'))
+  for (let i = 0; i < 299; i++) child.tick()
+  ok('starved child: 598 s of silence still waits', acts() === actsBefore)
+  child.tick()
+  ok('starved child: 600 s of silence relaunches', acts() === actsBefore + 1)
+  child = loadChild('normal')
+  child.send({ data: { t: 'beat' } })
+  actsBefore = acts()
+  for (let i = 0; i < 37; i++) child.tick()
+  const waitedNormal = acts() === actsBefore
+  child.tick()
+  ok('memory fine: 76 s of silence still relaunches as before', waitedNormal && acts() === actsBefore + 1)
 
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   const beforeQuit = index.slice(index.indexOf("app.on('before-quit'"), index.indexOf("app.on('will-quit'"))

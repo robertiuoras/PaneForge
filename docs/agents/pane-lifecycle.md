@@ -1,0 +1,194 @@
+# Pane lifecycle: sending, restoring, clearing, closing, recovering
+
+Verbatim sections moved out of the repo's always-loaded instructions (`AGENTS.md`),
+same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/shared/`, `main/` =
+`src/main/`. `test:x` = `npm run test:x`.
+
+## ...and a pane that says it is working, on a frame nobody repainted
+
+Busy read = bottom of screen (`shared/busy.ts`). `shared/staleFrame.ts`, `test:staleframe`:
+`busyUntil` renewed, `checkBusy` 4s; `busyEvidence`+`staleSignature`; recovery
+`sessions.redraw` + SIGWINCH, no keystrokes. `STALE_AFTER_MS` 4min, `MAX_NUDGES` 2,
+`NUDGE_EVERY_MS` 1min; mirror judges nothing; `autoFixUi` off = no. `window.__paneBusy[id].stale`.
+
+## A window that stops answering comes back on its own
+
+`shared/renderWatch.ts` + `main/renderWatch.ts`. `forcefullyCrashRenderer`, reload from
+`render-process-gone` (`PROBE_DEAD_MS` 20s + 5s). `executeJavaScript('1')` per
+`PROBE_EVERY_MS` 5s, `GRACE_MS` 10s; `RELOAD_COOLDOWN_MS` 60s, `MAX_RELOADS` 3. Dead renderer
+rebuilt; `activate` asks `alive()`; panes return via desk.json + `--resume`, no focus.
+Probe age is AWAKE time (`process.hrtime`); a tick after a `SLEEP_GAP_MS` 30s gap drops the
+probe + unresponsive clock (2026-10-01: two reloads inside a 5h sleep, "1021965ms").
+`paneforge-errors.log`; cpu = `getAppMetrics().cpu.percentCPUUsage` delta. `test:renderwatch`;
+`PF_PORT=9334 npm run test:renderwatchlive`.
+
+## A fault the app survived is a fault nobody hears about
+
+`crash.ts` swallows; `shared/faultNotify.ts` decides, `main/faultNotify.ts` posts on
+`askNotify.ts`'s channel (`test:faultnotify`). Test copy pages nobody (`profileName()`); drill
+isn't a fault; unregistered kind not sent; `MAX_PER_RUN` 5; only `reload`/`recreate`/`still
+wedged` leave; digits blanked; `QUIET_MS` 30 min. Listener on `crash.ts`. Silent without
+`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`; never awaited.
+
+## A pane opened with a prompt sends it
+
+`queuePrompt` (`src/main/sessions.ts`, `test:promptsubmit`). Ready = idle COMPOSER (output
+stopped, `readsBusy` false, last PAINTED). Return separate; submit confirmed by TURN (`runSince`
+newer); busy waits; idle with no turn gets another return. `/clear` no boot patience;
+`PROMPT_ENTER_TRIES` 6; `CLEAR_RESUME_BUDGET_MS` 3 min vs 45s; `autoclear-app.log` `UNSENT`;
+`ARM_QUIET_MS` 15s, `ARM_CLEAR_LEAD_MS` 120ms. Codex `gpt-5.1-codex*` = `400 not supported`.
+Claude with a pid file (`claudeReceiptReadable`): ONLY the transcript user row says sent (a paste
+placeholder is still in the box; a `/clear` footer is not a turn). Still starting (`deferring`):
+one return, then wait for the row - more returns become composer characters.
+
+## A pane says what its handoff has left
+
+`## Next steps`: `shared/handoffSteps.ts` (mirrors `claude-config/autoclear.mjs`),
+`main/handoffSteps.ts` 30s cache; `test:handoffsteps` skips out loud if absent. `0` = `None`,
+`undefined` = no handoff; chip for neither; no busy reading. Arm re-reads: nothing open ->
+`NOTHING_OPEN` (`pane-clear.mjs`); `--no-resume` exempt.
+
+## A pane that is still starting says so
+
+`blank` is not booting. `Session.printed` = first byte from THIS process, cleared by
+restart/wake. `PaneBooting` one dim BOTTOM line (`.pane-booting.over`): `Starting Claude
+Code…` (agent `label`), seconds past `COUNT_AFTER_MS` 1.2s; no spinner (`test:anim`). `npm run
+boot-timing --panes 7`; staggering is WORSE.
+
+## A reopened pane comes back with what was on its screen
+
+`test:restore` hands `--resume`. Most return ASLEEP: `Live.proc` nullable, `start()` `asleep`;
+`sleep()` = `status: 'exited'`, grid frozen at `START_COLS`; `wake()` spawns; only DEAD drops.
+`restoreAsleep` (`shared/restoreTurn.ts`) refuses first pane, prompt-launched, mid-turn
+(`test:restoreturn`). `history.ts` -> `userData/history/<id>.log`, `tail()` `BUFFER_LIMIT`, no
+ANSI-strip; desk must carry `scrollbackId` (`test:scrollback`). Clock `openedAt`; mid-turn
+via `queuePrompt`; `askAfterUpdate` off. PAINTED size: `max(recorded, paintedWidth(bytes))`
+and the recorded ROWS (`sizeOf`, `replayRows`) -> staged before the restore mark, resize in
+write CALLBACK; Fix writes through
+the same stage (`writeStaged` - raw); a pane
+with no rows on disk is torn once, the bytes carry no height (`shared/replayWidth.ts`,
+`test:replaywidth`). Self-Fix `repair()` once, `RESTORE_FIX_MS` 1.2s; mirror refused, hidden
+FLAGGED (`test:restorefix`). Rail = KEYSTROKES; `seedMarks` scans `❯ <text>` once
+(`test:promptecho`). Reply mark per CLI (Claude `"type":"assistant"`, antigravity
+`"type":"PLANNER_RESPONSE"`, `hasReply`); wrong = `conversation-unverified`, never sleeps;
+refusal hold doubles `sleepHoldMs` 10 min -> 2 h (`test:sleep`). Asleep pane claims its
+conversation in `start()` BEFORE the early return (`noteSession`, `resumeIdFor`). Nothing
+inferred = `claimFromCli` reads the CLI's `~/.claude/sessions/<pid>.json` (`test:cliclaim`).
+
+`/clear` keeps the previous turn (`test:scrollclear`): `keep.arm()` (`shared/keepScrollback.ts`)
+on `mayClearScreen` or a slash PREFIX of `/clear` RETURNS scroll before any byte; `keptRows`
+to composer top when CARET between its rules; fed via `paneArmClear`. Erase REPORTED;
+`shared/screenLoss.ts` at 80%+; `2J`/`3J` rewrite covers unasked clear, down 10s after an
+armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
+
+## A finished pane closes itself into Review
+
+`shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
+on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
+`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
+quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
+(`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
+`READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
+children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
+`test:replyread`), no running subagent, reply not ending `?`, `actionableNextSteps` empty,
+the folder NEVER holds it (Robert 2026-10-02): `gitCached` changed files / unpushed commits (a failed or pre-turn read
+is `'unread'`, asked again at the close, else silent) go into the Review row's `evidence` as `Left in <folder>: ...`
+(`folderLeftover`) and the done-close.log close line; a background job only WAITING
+(`isWaitScript`: sleep loops, `gh run watch`, `tail -f`, `bg-wait.mjs` minus its
+label/done/fail words) holds nothing. Writes `result`/`unverified` review
+`done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each
+flag, `closeHeldBy`). ONLY after a real close: each `personOwnedSteps` step a GuardDeck to-do,
+the result card (`sendReviewNotice`) unless explicitly marked reviewed in Review or by a
+GuardDeck receipt. Looking at a pane only controls close timing; it never acknowledges a
+report or suppresses its delivery. Explicit unfinished/queued work in prose also holds the pane.
+Explicit `--close-when-done` also requires an actual completed agent reply and no owed
+prompt; an idle startup or trust composer is not completion. Claude's invisible-character
+review warning holds submission. Typed but unconfirmed Claude intent remains in the durable
+queue, blocks followers and is never pasted again on restore. Only a native receipt containing
+the entire payload releases it; a matching first line or a turn clock is insufficient
+(`test:promptsubmit`, `test:closedone`, `test:busy`). A pre-paste trust-choice Enter does not
+claim Codex's composer; existing empty, idle and unchanged checks still govern delivery.
+Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
+any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
+An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
+`cardAfterClose` (direct close, arm, `sessions:kill`). `pf tidy` = `sessions:closeDone`: same
+sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
+`shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
+result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
+shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
+
+A pane started ON a finished conversation (handed in, reopened, restored) never flips busy, so
+its turn end is seeded from the transcript's end row (`ReplyRead.turnEndedAt`: Claude
+`turn_duration`/`stop_hook_summary`, Codex `task_complete`) at the moment it is seen
+(`seedTurnEnd`, `attention-audit.log` `turn-end-seeded`); the rules above then decide. An idle
+agent pane with no turn end logs `stays - no finished turn: ...` once (`test:doneclose`,
+`test:replyread`). A PC close reaches the Mac as a Review row AND a GuardDeck card naming the
+PC, written by the Mac on the replica that first carries `closedAt`, never for a close older
+than `PEER_NOTICE_MAX_AGE_MS` 12h (`storeRemoteReview`, `test:review`).
+
+Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
+even when automatic closure is disabled. Shell closure retains its existing command semantics.
+
+Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
+refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
+clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
+for the lifetime of the app, until a manual fresh session changes its ID.
+
+## A session that clears itself asks first
+
+`scripts/autoclear-hook.mjs` (Stop/SessionStart; installer `main/autoclearHooks.ts`, a
+foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
+`main/autoclearRequests.ts` -> `autoClearAsk` = `autoclear:ask` (`test:autoclearhook`).
+`Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
+A queued ask re-arms at `endRun`, and `sweepIdle` re-asks it on an idle pane with an empty box
+and no hold (a stale hold at `endRun` stranded it, s19 2026-10-02). A retained prompt's late
+receipt drops its own return's hold (`draftConfirmation.key`). Only a TYPED owed prompt
+(`promptInFlight`) blocks the stale-draft recheck; one still waiting is waiting on it.
+`shared/autoclear.ts` refusals; `main/sessions.ts` re-checks (`dropFor`) each tick. `## Next steps:
+None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
+A fresh handoff the parser cannot read (`handoffShapeProblem`: no `Next steps` heading, or
+prose under it with no list line and no None) is blocked with the fix, once per file version,
+twice a session max - it used to idle exactly like None. `test:autoclearcycle` = 20 finish ->
+clear -> resume cycles through the hook, 20/20 or red. One chat word, shared with PaneForge
+Next (wr-03): `chatPhase` (`shared/fleet.ts`) working / waiting / done / closing.
+
+The quiet floor (`ARM_QUIET_MS`, at arm, expiry and the arm lead) reads `Live.contentAt`, not
+`meta.lastOutput`: every pty byte EXCEPT a digits-only footer counter tick on a pane not mid-turn
+(`contentStampAfter`/`isCounterRepaint`). A finished pane carrying a background agent repaints
+its timer every second and was held 115 times, never cleared (s72, 2026-10-02). Anything not
+provably a tick still stamps, so a second Stop-hook reply still holds. `test:autoclear`,
+`node scripts/test-all.mjs autoclearmanager`.
+
+## The screen stays on while a pane works
+
+`shared/awake.ts` + `main/awake.ts` `powerSaveBlocker` while mid-turn/asking (`test:awake`).
+Cap on BUSY STRETCH; `config.keepDisplayAwake`. `screenUnseen` drops screen hold only;
+clamshell + monitor: builtin must be the only screen; failed read = false.
+
+## A pane's two ends open at the same width
+
+Grid never narrower than painted width: `src/shared/paneGrid.ts` (`test:panegrid`). Pty 120 vs
+xterm 80 tore `claude --resume` at 119. Fix `redrawHistory` at `max(pane now, replayCols,
+START_COLS)`, user-initiated; `window.__pf[id].redraw()`.
+
+## A turn the transport cut in half finishes itself
+
+`shared/recover.ts` (`test:recover`) keys on `The response above may be incomplete.`; never
+after rate/usage limit, credit, auth, overload; `> ` quoted error is talk (`promptBox`); three
+in a row stops; new output only; sends via `queuePrompt`.
+
+## A usage limit is one wave, continued after its reset, and one phone push
+
+`shared/limitWave.ts` decides, `main/limitWaves.ts` acts (`test:limitwave`). A `paneError`
+whose line (+ rows under it: Codex wraps its date) names a limit WITH a reset never goes to
+Telegram; no reset / auth / credit keep Telegram. Wave = provider + window + reset within
+`JITTER_MS` 2 min; mirrors excluded; `'stale'` (reset already gone: a `--resume` repaint) is
+dropped. Due = reset + `CONTINUE_AFTER_MS` (Claude 150s: Claude Code continues by itself
+38-116s after the reset; Codex 60s). At due: closed leaves the count; busy / `turnsHere` grew
+/ `continuationOwnsSource` = continuing, nothing typed; drafting, exited, `recover.enabled`
+off = not; else `carryOn` (wakes an asleep pane, `RESTORE_CONTINUE_MS`, `queuePrompt`).
+Continuing = `sent` then busy within `START_WITHIN_MS` 3 min; a second stop = not, same reset
+never re-queues. Push after `SETTLE_QUIET_MS` 60s quiet or `WAVE_DEADLINE_MS` 10 min: TaskDriver
+notify, token env then `~/.claude/todos-ingest.token`, `dedupe_key`
+`pf-limit-reset:<provider>:<resetISO>:<host>`; failed = retried `PUSH_RETRY_MS`, never marked
+sent. In memory only. `limit-reset.log`; `PF_TASKDRIVER_NOTIFY_URL` for tests.

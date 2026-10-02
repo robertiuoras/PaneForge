@@ -89,7 +89,7 @@ git(laneFolder2, 'add', '-A')
 git(laneFolder2, 'commit', '-qm', 'feat: notes')
 writeFileSync(join(repo, 'notes.txt'), 'somebody typed this in main\n')
 const r2 = lane(repo, 'ready', '--session', SESS2)
-ok('a colliding untracked file still refuses, by name', /dirty[\s\S]*notes\.txt/.test(r2.out + r2.err), (r2.out + '\n' + r2.err).slice(0, 400))
+ok('a colliding untracked file still refuses, by name', /(dirty|uncommitted edits to)[\s\S]*notes\.txt/.test(r2.out + r2.err), (r2.out + '\n' + r2.err).slice(0, 400))
 ok('and nothing was merged over it', !git(repo, 'log', '--oneline', '-5', 'master').includes('notes'), git(repo, 'log', '--oneline', '-5', 'master'))
 ok('the typed file survives', readFileSync(join(repo, 'notes.txt'), 'utf8') === 'somebody typed this in main\n')
 

@@ -630,9 +630,6 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
    its 81 at the default 282px sidebar (measured) and read `Ses…`. The badges wrap to a
    second line instead (`.section-tail` above); the title is never clipped. */
 .section-title { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
-.keep-open-check { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: var(--text); cursor: pointer; }
-.keep-open-check:disabled { cursor: default; opacity: .45; }
-.keep-open-check:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
 /* The memory notice. Amber for tight, red for over - and deliberately quiet type: this
    appears while the machine is already struggling, and a loud banner on a laptop that is
@@ -672,7 +669,7 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .pickrow { display: flex; gap: 6px; margin: 4px 0 2px; }
 button.chip.pick { cursor: pointer; font: inherit; font-size: 11px; padding: 3px 10px; }
 button.chip.pick:hover { color: var(--text); border-color: var(--line-strong); }
-button.chip.pick.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+button.chip.pick.on { color: var(--accent-on); background: var(--accent); border-color: var(--accent); }
 
 /* A pane taken off the idle clock, where its countdown would have been. Green rather than
    amber: nothing is about to happen to this pane, which is the whole point of it. */
@@ -986,7 +983,11 @@ button.row-lane:hover { color: var(--text); }
 .row-lane.busy .lane-dot { background: var(--warn); animation: laneBreath 2.8s ease-in-out infinite; }
 .row-lane.stuck { color: var(--danger); }
 .row-lane.stuck .lane-dot { background: var(--danger); }
-.row-title.has-key .row-tags { margin-left: auto; flex: none; flex-wrap: nowrap; }
+/* The tag box wraps its own chips instead of taking the name's room: a close countdown
+   and an asleep word together left the name one letter (2026-09-23). */
+.row-title.has-key .row-tags { margin-left: auto; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+/* 7ch is the most card-fit-test.mjs allows beside a long project-copy label. */
+.row-title.has-key .row-name { min-width: 7ch; }
 .row-state {
   flex: none; margin-left: auto; padding-left: 8px; font-size: 11px; font-weight: 500;
   letter-spacing: 0; color: var(--muted); font-variant-numeric: tabular-nums;
@@ -995,15 +996,102 @@ button.row-lane:hover { color: var(--text); }
 .row-state.starting { color: var(--warn); }
 .row-kept {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; padding: 0; border: none; background: none; border-radius: 4px;
-  color: var(--muted); cursor: pointer; opacity: 0.8;
+  width: 14px; height: 16px; padding: 0; border: none; background: none; border-radius: 4px;
+  color: var(--ok); cursor: pointer;
 }
-.row-kept:hover { color: var(--text); opacity: 1; background: #ffffff0d; }
-.row-sub { flex-wrap: nowrap; gap: 0; }
+.row-kept:hover { filter: brightness(1.25); background: #ffffff0d; }
+/* On the title line `asleep 7m` is a word like `waiting`, not a box: the box's 14px of
+   border and padding beside a pin pushed a 13-letter name onto two lines (2026-09-24). */
+.row-title.has-key .chip.asleep {
+  border: none; background: none; padding: 0; font-size: 11px; font-weight: 500; letter-spacing: 0;
+}
+.row-title.has-key .row-tags { gap: 4px; }
+/* Three lines, 2026-09-23: name + state / project · copy / model · open · steps.
+   Nothing on a card is cut short except a name past three lines: the name wraps to a
+   third line, the project line wraps before it clips, and the sentence below wraps
+   whole facts rather than ellipsising them (Robert: "things are cut off hard to see"). */
+.row-title.has-key { align-items: flex-start; }
+.row-title.has-key .num-wrap, .row-title.has-key .row-remote, .row-title.has-key .row-tags,
+.row-title.has-key .row-state { margin-top: 1px; }
+.row-title.has-key .row-name {
+  white-space: normal; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+}
+/* 2026-09-25, "session names breaking when too long / new line split randomly". At a
+   260px sidebar the name had 101px of it: a column of one or two words a line beside the
+   key, cut off at the third line (`Session / lifecycle / research +...`). The flex line
+   gave the key, the tag box and the state word each a column the full height of the name.
+
+   So the title line is TEXT again, the way a mail client sets a subject: the tags and the
+   state word float right of the first line (they come first in the markup for that), the
+   key sits inline, and the name flows from the key across the whole card and wraps under
+   it. Measured the same 7 names: 3 lines at 101px became 2 lines at 190px, no word broken
+   except one longer than the card. The three-line cap moves from the name to the line.
+
+   The close button held a column of its own on every card although it only shows on
+   hover: it floats over the card's bottom-right corner, where the short sub line leaves
+   room. A touch screen keeps its always-drawn 40px button in the flow. */
+.row-title.has-key {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  white-space: normal; overflow-wrap: anywhere; text-wrap: pretty;
+}
+/* Vertical offsets measured against the name's first line: key centre 0px, remote icon +0.5px. */
+.row-title.has-key .num-wrap { display: inline-flex; vertical-align: 2px; margin: 0 6px 0 0; }
+.row-title.has-key .row-remote { display: inline-flex; vertical-align: -2px; margin: 0 5px 0 0; }
+.row-title.has-key .row-name { display: inline; min-width: 0; -webkit-line-clamp: none; overflow: visible; }
+.row-title.has-key .row-tags,
+.row-title.has-key .row-state { float: right; margin: 1px 0 0 8px; padding-left: 0; }
+/* One line of chips, never a stack: a two-row tag box held a narrow column for two lines. */
+.row-title.has-key .row-tags { flex-wrap: nowrap; justify-content: flex-end; }
+/* An empty tag box would still float its 8px margin and push the state word off the edge. */
+.row-title.has-key .row-tags:empty { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .row > .row-close { position: absolute; right: 6px; bottom: 6px; }
+  .row > .row-restart { position: absolute; right: 30px; bottom: 6px; }
+}
+.row-place {
+  display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 2px;
+  font-size: 11.5px; color: var(--muted);
+}
+.row-place .row-lane {
+  flex: 1 1 auto; max-width: none; min-width: 0; flex-wrap: wrap; white-space: normal;
+  font-size: inherit; row-gap: 0;
+}
+.row-project { color: var(--text); opacity: 0.82; font-weight: 560; overflow-wrap: anywhere; }
+.row-copy { white-space: nowrap; }
+.row-copy::before { content: '\00b7'; margin: 0 5px 0 1px; opacity: 0.7; }
+.row-sub { flex-wrap: wrap; gap: 0; row-gap: 1px; }
 .row-sub .meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-sub .meta.row-agent { display: inline-flex; align-items: center; gap: 5px; flex: none; max-width: 50%; }
+.row-sub .meta.row-agent { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; }
 .row-sub .meta + .meta::before { content: '\00b7'; margin: 0 6px; opacity: 0.7; }
-.row-sub .meta.jobs { color: var(--accent); flex: 0 999 auto; }
+.workers { margin-top: 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.workers summary { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 7px 9px; cursor: pointer; font-size: 11px; list-style: none; color: var(--muted); }
+.workers summary::-webkit-details-marker { display: none; }
+.workers summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 10px; }
+.workers-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.workers-active .workers-dot { background: var(--accent); animation: worker-breathe 2.8s ease-in-out infinite; }
+.workers-label { color: var(--text); font-weight: 550; }
+.workers-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.workers-chevron { transition: transform 160ms ease; }
+.workers[open] .workers-chevron { transform: rotate(180deg); }
+.workers-preview { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 12px; }
+.workers[open] .workers-preview { display: none; }
+.workers-body { padding: 0 9px 8px; animation: worker-arrive 160ms ease-out; }
+.workers-list { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow-y: auto; }
+.worker { padding: 8px 0; border-top: 1px solid var(--line); }
+.worker-heading, .worker-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.worker-name { flex: 1; min-width: 0; color: var(--text); font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worker-state { font-size: 10px; color: var(--muted); }
+.worker-running .worker-state { color: var(--accent-text); }
+.worker-meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.worker-meta > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.worker-time { margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.workers-note { font-size: 10px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; }
+.pane > .workers { flex-shrink: 0; margin: 0 8px 5px; }
+@keyframes worker-breathe { 50% { opacity: .45; } }
+@keyframes worker-arrive { from { opacity: .5; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .workers-active .workers-dot, .workers-body { animation: none; } .workers-chevron { transition: none; } }
+.row-sub .meta.jobs { color: var(--accent); }
 .row-state .elapsed, .row-sub .elapsed {
   margin: 0; padding: 0; border: none; background: none; box-shadow: none;
   color: inherit; font: inherit; font-variant-numeric: tabular-nums; letter-spacing: 0;
@@ -1269,6 +1357,7 @@ html:is(.hi-refresh, .on-battery) .num-wrap:has(> .num.attn)::before,
 html:is(.hi-refresh, .on-battery) .lane-row.stuck::before { animation: none !important; opacity: 1; }
 
 html:is(.hi-refresh, .on-battery) .num.live::after,
+html:is(.hi-refresh, .on-battery) .workers-active .workers-dot,
 html:is(.hi-refresh, .on-battery) .row.asking::before,
 html:is(.hi-refresh, .on-battery) .dot.working,
 html:is(.hi-refresh, .on-battery) .dot.connecting,
@@ -1320,6 +1409,15 @@ html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
   transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
 .welcome-chip:hover { background: var(--surface-2); border-color: var(--line-strong); color: var(--text); }
+/* "Get set up": only drawn while `checkSetup` still has rows, so it reads as a checklist
+   that finishes rather than a permanent fixture of the empty desk. */
+.setup-card {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 4px; width: 100%;
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2);
+}
+.setup-h { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.setup-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text); }
 /* The one empty state that is a first-run instruction rather than "nothing matched". */
 .empty.first-run { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 2px; }
 .empty.first-run code { color: var(--text); word-break: break-all; }
@@ -2944,6 +3042,21 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
 }
 .cmd .kbd-box { min-width: 0; flex: none; }
+/* A chat row: its name over what it is about, the dot saying open (green) or closed (red).
+   The name column may shrink so a long ask ellipsizes instead of pushing the place off. */
+.cmd-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.cmd-dot.open { background: var(--ok); }
+.cmd-dot.closed { background: var(--danger); }
+.cmd-chat { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 0 1 auto; max-width: 68%; }
+.cmd-chat .cmd-title { overflow: hidden; text-overflow: ellipsis; }
+.cmd-about { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Folder over when, right-aligned: one line clipped from the left read `...y 5 · closed 1h`,
+   which lost the folder name - the half that says WHICH copy. */
+.cmd-where {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  color: var(--muted); font-size: 11px;
+}
+.cmd-where > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
@@ -2957,7 +3070,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .dialog.tall { height: min(760px, 90vh); display: flex; flex-direction: column; }
 .tab-body { max-height: min(58vh, 560px); overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px; }
 
-.quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.quick { display: grid; grid-template-columns: repeat(var(--quick-cols, 4), minmax(0, 1fr)); gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
 /* Daily review: dense enough to scan a busy day, with exact prompts still readable. */
@@ -2965,6 +3078,11 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .review-tabs { display: flex; gap: 5px; }
 .review-tabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
 .review-tabs button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.review-days { display: flex; gap: 5px; margin-top: -6px; }
+.review-days button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; }
+.review-days button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.review-day-heading { margin: 14px 10px 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.review-origin { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .review-scroll { min-height: 0; overflow-y: auto; padding-right: 3px; }
 /* One list container, hairline-divided rows - not a stack of separately-radiused cards.
    Following the design vault's linear.app entry: hairline borders instead of shadows, a
@@ -2991,6 +3109,20 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .review-field > strong { font-size: 11px; color: var(--muted); }
 .review-field pre, .review-field ul { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; color: var(--text); padding-left: 0; list-style: none; }
 .review-links { display: flex; flex-direction: column; gap: 4px; }
+.review-markdown { min-width: 0; overflow-x: auto; overflow-wrap: anywhere; color: var(--text); line-height: 1.55; }
+.review-markdown > :first-child { margin-top: 0; }
+.review-markdown > :last-child { margin-bottom: 0; }
+.review-markdown p { margin: 0 0 12px; }
+.review-markdown :is(h1,h2,h3,h4,h5,h6) { margin: 18px 0 8px; font-size: 1.1em; line-height: 1.3; color: var(--text); }
+.review-markdown :is(ul,ol) { margin: 8px 0 12px; padding-left: 24px; list-style: revert; white-space: normal; }
+.review-markdown li { margin: 4px 0; }
+.review-markdown blockquote { margin: 12px 0; padding-left: 14px; border-left: 3px solid var(--accent); color: var(--muted); }
+.review-markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.review-markdown code { font-family: ui-monospace, monospace; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; }
+.review-markdown pre { padding: 12px; overflow-x: auto; white-space: pre; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+.review-markdown pre code { padding: 0; background: none; }
+.review-markdown table { border-collapse: collapse; margin: 12px 0; max-width: 100%; }
+.review-markdown :is(th,td) { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .review-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .review-empty { padding: 14px 12px; color: var(--muted); font-size: 12px; }
 @media (max-width: 620px) {
@@ -3096,12 +3228,63 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .re-moves button { min-width: 28px; }
 .hint.dim { opacity: 0.8; }
 
-/* Two columns so the token and its meaning line up down the list; the token itself is
-   what gets copied, so it keeps the monospace it is typed in. */
-.token-legend { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 6px 0 8px; font-size: 11.5px; }
-.token-legend > div { display: contents; }
-.token-legend code { color: var(--accent); font: 11.5px ui-monospace, Consolas, monospace; }
-.token-legend span { color: var(--muted); }
+/* The one-click phrases under a line's own text box, and the ready-made lines under
+   "Add a line" - same chip as the rest of the app, just allowed to wrap since there are
+   more of them than fit one row. */
+.pickrow.discord-chips, .pickrow.discord-presets { flex-wrap: wrap; margin: 2px 0 0; }
+.pickrow.discord-presets { margin: 6px 0 2px; }
+
+/* The looks to pick from. Built to design-vault/linear.app.md: one surface step up from
+   the dialog, a hairline edge rather than a shadow, and the accent spent as an edge and a
+   9% tint on the chosen one - never a filled block - so four cards side by side read as
+   one choice with one answer, not four buttons. The sample line is the card's reason to
+   exist: "Out of all" means nothing until you read "5/7 sessions running". */
+/* Two by two, always: four looks at auto-fit came out three and one, which read as a
+   leftover rather than a fourth choice. */
+.look-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.look-card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: 10px 11px; border-radius: var(--r-sm); text-align: left; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+.look-card:hover { border-color: var(--line-strong); }
+.look-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.lc-top { display: flex; align-items: center; gap: 7px; }
+.lc-dot {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 1px solid var(--line-strong); background: var(--surface-3);
+}
+.look-card.on .lc-dot { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px); }
+.lc-name { font-size: 12.5px; font-weight: 590; letter-spacing: -0.01em; }
+/* The words Discord would show, set off by a rail so they read as a quotation of the
+   card rather than as more description. */
+.lc-sample {
+  display: flex; flex-direction: column; gap: 1px; padding-left: 7px;
+  border-left: 2px solid var(--line-strong); font-size: 11.5px; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.look-card.on .lc-sample { border-left-color: var(--accent); }
+.lc-hint { color: var(--muted); font-size: 11px; line-height: 1.35; }
+/* What Discord echoed back, quoted in the status line above the looks. */
+.discord-said { color: var(--text); }
+
+/* Writing lines by hand, folded away: it is the one part of the tab that needs somebody
+   to know what a template is. Same fold as the pairing details, with a hairline above so
+   it reads as the end of the simple settings. */
+.discord-advanced { border-top: 1px solid var(--line); padding-top: 8px; }
+.discord-advanced > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 5px 2px; font-size: 12px; color: var(--muted);
+}
+.discord-advanced > summary::-webkit-details-marker { display: none; }
+.discord-advanced > summary::before {
+  content: '›'; display: inline-block; width: 12px;
+  transition: transform var(--fast); transform-origin: 40% 55%;
+}
+.discord-advanced[open] > summary::before { transform: rotate(90deg); }
+.discord-advanced > summary:hover { color: var(--text); }
+.da-body { display: flex; flex-direction: column; gap: var(--set-gap); padding-top: 8px; }
 
 .install-console { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; overflow: hidden; }
 .ic-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
@@ -3269,6 +3452,31 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   min-height: 32px; padding: 6px 10px; font-size: 12px;
   justify-content: center; white-space: nowrap;
 }
+/* The countdowns in front of a move, sleep, close or start-over-there: ONE line - what,
+   the seconds, one Keep - with the reason in the tooltip (Robert 2026-09-25: "too long
+   too much unnecessary info"). The name is what gives way: it ellipsises, the seconds
+   and the button never move. Same surface, hairline and radius as every corner card. */
+.move-soon.line {
+  flex-direction: row; align-items: center; gap: 10px;
+  width: min(440px, calc(100vw - 36px));
+  padding: 7px 36px 7px 12px;
+}
+.move-soon.line .move-soon-say {
+  flex: 1 1 auto; min-width: 0; display: flex; gap: 0.3em; white-space: nowrap;
+}
+.move-soon.line .move-soon-say > span { flex: none; }
+.move-soon.line .move-soon-say > .move-soon-name {
+  flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
+}
+/* `--accent-text`, not `--accent`: the raw accent on the light theme's card measured 1.8:1;
+   this is the palette's 4.5:1 accent (6.9:1 light, 8.3:1 dark, measured). */
+.move-soon.line .move-soon-count { flex: none; font-size: 13px; color: var(--accent-text); }
+.move-soon.line .move-soon-keep {
+  flex: none; min-height: 28px; padding: 4px 12px; font-size: 12px;
+  justify-content: center; white-space: nowrap;
+}
+.move-soon.line .card-x { top: 50%; transform: translateY(-50%); }
+html.handheld .move-soon.line .card-x { top: 50%; }
 
 /* The dev-copy tour, same card shape and corner as `.move-soon` - it is the same kind
    of thing, a card the app put up on its own that walks alongside the work rather than
@@ -3418,12 +3626,13 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 /* --------------------------------------------------------------------------
    Quick actions, as icons.
 
-   The row used to be three word buttons that wrapped on a narrow sidebar. Fixed
-   square targets keep it on one line however many actions it grows to, and the
-   sentence that was the label lives on the tooltip instead. */
+   The row used to be three word buttons that wrapped on a narrow sidebar, then one
+   line of icons that became eight thin slivers. Now a grid of two even rows (App.tsx
+   sets `--quick-cols` to half the buttons), and the sentence that was the label lives
+   on the tooltip. */
 .quick-btn {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  position: relative; height: 36px; min-width: 0; padding: 0; color: var(--muted);
+  position: relative; height: 32px; min-width: 0; padding: 0; color: var(--muted);
 }
 .quick-btn:hover:not(:disabled) { color: var(--text); }
 .quick-btn.live { color: var(--ok); border-color: #35d07f33; }
@@ -4663,13 +4872,6 @@ button.chip:hover {
   font-size: 12px;
   text-align: center;
 }
-.autoclear-steps {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
 .autoclear-keep {
   align-self: flex-start;
   padding: 5px 10px;
@@ -4818,9 +5020,9 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
   gap: 10px; pointer-events: none;
   /* Never taller than the window: with five cards up the top one would otherwise be
      drawn off-screen, which is the same bug in a different direction. */
-  max-height: calc(100vh - 36px); overflow: hidden;
+  max-height: calc(100vh - 36px); overflow-y: auto;
 }
-.corner-stack > * { pointer-events: auto; }
+.corner-stack > * { pointer-events: auto; flex-shrink: 0; }
 /* Inside the stack a card is a row, not a fixed thing in a corner. Every one of these
    keeps its own width, padding and border - only the placement is taken away. */
 .corner-stack > .autoclear-card,
@@ -4909,106 +5111,6 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .lane-row.readable { cursor: pointer; }
 .lane-row.readable:hover { border-color: var(--line-strong); }
 
-/* ---- signing in to a browser on another machine ----------------------------
-   The chat keeps the left half of the pane column and the far machine's browser
-   takes the right. `.panes` is PADDED rather than covered, so the pane you are
-   talking to is still a whole pane - drawing a picture on top of it is the thing
-   this feature exists to avoid.
-
-   Surfaces follow design-vault/linear.app.md, the same ladder the pane header and
-   `.copy-menu` already use here: one hairline `--line`, `--surface` under the
-   header, `--bg` behind the picture, and no card shadow. */
-html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
-.login-split {
-  position: fixed; top: 0; right: 0; width: var(--login-w, 50vw); height: 100vh;
-  z-index: 50;
-  display: flex; flex-direction: column;
-  background: var(--bg);
-  border-left: 1px solid var(--line);
-}
-.login-head {
-  /* Wrapping is load-bearing, not a nicety: measured 2026-09-07 the row was 32px wider
-     than the column at every window size, so Close sat off the right edge with nothing
-     to scroll it back. */
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; row-gap: 5px;
-  padding: 7px 9px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-}
-.login-site, .login-where, .login-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.login-who { color: var(--muted); }
-.login-typing {
-  padding: 0 7px; border-radius: 99px;
-  border: 1px solid var(--accent); color: var(--accent-text); background: var(--accent-dim);
-}
-.login-site { font-weight: 600; color: var(--text); text-transform: capitalize; }
-.login-where { color: var(--muted); }
-.login-hint { color: var(--ok); }
-.login-badge {
-  margin-left: auto; padding: 0 6px; border-radius: 99px;
-  border: 1px solid var(--line); color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-/* Only the first badge is pushed to the right; the rest sit beside it. */
-.login-badge ~ .login-badge { margin-left: 0; }
-.login-badge.slow { color: var(--warn); border-color: var(--warn); }
-.login-badge.bad { color: var(--danger); border-color: var(--danger); }
-.login-btn {
-  padding: 3px 10px; border-radius: var(--r-sm);
-  border: 1px solid var(--line); background: transparent; color: var(--text);
-  font-size: 12px; cursor: pointer;
-  transition: border-color var(--fast), background var(--fast);
-}
-.login-btn:hover { border-color: var(--accent); }
-.login-btn.primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
-/* The edge you drag to make the column wider. A hairline that answers a 8px reach,
-   the same trick the pane splitter uses: the border is what is seen, the padding is
-   what is hit. */
-.login-grip {
-  position: absolute; left: -4px; top: 0; bottom: 0; width: 9px;
-  cursor: col-resize; z-index: 1;
-  touch-action: none;
-}
-.login-grip:hover, .login-grip:active { background: var(--accent-dim); }
-.login-zoom { display: flex; gap: 4px; align-items: center; }
-.login-zoom .login-btn { min-width: 30px; padding: 3px 7px; text-align: center; }
-.login-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; }
-.login-canvas { display: block; width: 100%; height: 100%; object-fit: fill; }
-/* The pointer, drawn here the instant the mouse moves so it never waits on a frame. */
-.login-spot {
-  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
-  border: 1px solid var(--accent); border-radius: 99px;
-  pointer-events: none;
-}
-.login-tip {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 6px 9px; font-size: 12px; color: var(--muted);
-  background: var(--surface); border-top: 1px solid var(--line);
-}
-.login-screen.typing { outline: 1px solid var(--accent); outline-offset: -1px; }
-.login-failed { padding: 14px; color: var(--text); font-size: 12px; overflow: auto; }
-.login-failed pre { white-space: pre-wrap; color: var(--muted); }
-
-/* The card, in `.corner-stack` with everything else the app puts in that corner. */
-.login-card {
-  width: 300px; padding: 10px 12px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  pointer-events: auto;
-}
-.login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.login-card-who { margin-top: 3px; font-size: 12px; color: var(--text); }
-.login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-.login-card-why { margin: -5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-.login-card-row { display: flex; gap: 7px; }
-
-/* A phone is not a second desk here: the picture is a desk-sized browser and the
-   keyboard is a desk keyboard. The card still shows, so the request is not lost. */
-@media (max-width: 720px) {
-  html.login-open .panes { padding-right: 6px; }
-  .login-split { display: none; }
-}
-
 /* What the card can SEE of the step it just showed - the half no node suite can answer.
    Same row shape as a check verdict, one step quieter. */
 .tour-look { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
@@ -5022,8 +5124,6 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .row-tags .elapsed.done { color: var(--text); opacity: 0.76; }
 .row-tags .session-last { color: var(--muted); }
 
-.keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
-.keep-open-toggle.active { color: var(--text); border-color: var(--text); }
 
 .owner-actions { display: contents; }
 .users-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: hidden; }
@@ -5084,3 +5184,94 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .issues-row.warning { border-left: 3px solid var(--warning, #bf8b28); }
 .issues-row.danger { border-left: 3px solid var(--danger, #c24b4b); }
 .issues-empty { margin: 4px 0; color: var(--muted); line-height: 1.5; }
+
+/* ---- The other machine's screen, in a pane (ScreenPane.tsx) ----
+   Follows design-vault/linear.app.md: surface ladder and hairline borders, no shadows.
+   The picture sits in a scrolling box; zoom sizes it (width x height) so a zoomed picture
+   scrolls like a page and the pinch point stays under the fingers. */
+.screen-pane { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.screen-box { flex: 1; min-height: 0; overflow: auto; display: flex; }
+/* Centred while it is smaller than the box; `margin: auto` rather than justify-content so
+   an overflowing picture still scrolls to its left and top edges. */
+.screen-stage { margin: auto; flex: none; position: relative; }
+.screen-video { display: block; position: absolute; inset: 0; background: #000; }
+.screen-video.hidden { visibility: hidden; }
+.pt-screen-icon { display: inline-flex; color: var(--muted); }
+.screen-card {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  width: min(340px, calc(100% - 32px)); padding: 12px 14px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.screen-pane.source .screen-card { position: static; transform: none; margin: auto; }
+.screen-card.over { background: var(--surface-3); }
+.screen-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.screen-card-body { margin-top: 5px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.screen-card-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.screen-card-actions:empty { display: none; }
+.screen-bar {
+  display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 3px 8px;
+  border-top: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--muted);
+}
+.screen-zoom { display: inline-flex; align-items: center; gap: 2px; }
+.screen-zoom button { min-width: 26px; height: 24px; }
+.screen-pct { font-variant-numeric: tabular-nums; min-width: 48px; }
+.screen-fit.on { color: var(--accent-text); }
+.screen-quality { flex: 1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.screen-control { margin-left: auto; }
+
+/* ---- First-run card (FirstRunCard.tsx) ---------------------------------------------
+   Welcome's own recipe, one level in: the `.setup-card` surface and hairline
+   (design-vault/linear.app.md, "Card (feature)"), no shadow, no gradient, tokens only so
+   both themes come from paletteFor. It lives in the sidebar, so every row wraps its words
+   instead of widening the rail. */
+.fr-card {
+  display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 2px;
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2);
+}
+.fr-h { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.fr-sub { margin: -3px 0 2px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.fr-row { display: flex; align-items: flex-start; gap: 9px; }
+.fr-row > .pill { flex: none; margin-top: 1px; }
+.fr-mark {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
+  border: 1px solid var(--line-strong); color: var(--ok);
+}
+.fr-row.done .fr-mark { border-color: var(--ok); }
+.fr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fr-name { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.35; }
+.fr-what { font-weight: 400; color: var(--muted); }
+.fr-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.fr-go { align-self: flex-start; margin-top: 4px; }
+/* ---- end first-run card ------------------------------------------------------------- */
+
+/* Keep choices stay beside the sessions they protect. Native inputs retain keyboard
+   and assistive-technology behavior; only their drawn box is customized. */
+.sessions-section { flex-wrap: wrap; }
+.keep-all, .session-keep-open {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 24px;
+  color: var(--muted); font-size: 11px; font-weight: 500;
+  white-space: nowrap; text-transform: none; letter-spacing: normal; cursor: pointer;
+}
+.keep-all { order: 2; flex-basis: 100%; }
+.session-keep-open { margin-top: 3px; }
+.keep-all:hover, .session-keep-open:hover,
+.keep-all:has(:checked), .session-keep-open:has(:checked) { color: var(--text); }
+.keep-checkbox {
+  appearance: none; -webkit-appearance: none; flex: none; display: grid; place-content: center;
+  width: 15px; height: 15px; margin: 0; border: 1px solid var(--muted);
+  border-radius: 4px; background: var(--surface); color: var(--accent-on); cursor: pointer;
+}
+.keep-checkbox:checked, .keep-checkbox:indeterminate { border-color: var(--accent); background: var(--accent); }
+.keep-checkbox::before {
+  content: ''; width: 7px; height: 4px; border-left: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor; margin-bottom: 2px; transform: rotate(-45deg); visibility: hidden;
+}
+.keep-checkbox:checked::before { visibility: visible; }
+.keep-checkbox:indeterminate::before {
+  visibility: visible; width: 7px; height: 0; border-left: 0; transform: none;
+}
+.keep-checkbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.keep-all:has(:disabled), .session-keep-open:has(:disabled) { opacity: .5; cursor: default; }
+.keep-checkbox:disabled { cursor: default; }

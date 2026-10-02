@@ -36,11 +36,16 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  */
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
-  tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
+  tellPane: 'pf tell <pane> "..." - one line handed to a pane from outside the window',
+  answerPane: 'GuardDeck codex-question-answer.mjs - conversation-bound async answers through pf call',
+  answerStatus: 'GuardDeck codex-question-answer.mjs - durable exact transcript delivery receipts',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot
   // is the agent inside it, at the end of its own work.
   armCloseWhenDone: 'pf close-when-done [pane] - a chat arming its own pane from inside it',
+  // The window closes finished panes by itself; `pf tidy` asks for the same sweep now,
+  // from a chat or the desk-sweep skill, with a dry run that names what it would close.
+  closeDone: 'pf tidy [--dry-run] - clears finished panes into Review from outside the window',
   // Armed by the `autoclear` Stop hook through the phone server (`pane-clear.mjs`), never
   // from this window: the decision needs the transcript's token count and the handoff on
   // disk, neither of which the renderer has. Its CANCEL half is a real button on the card.
@@ -70,9 +75,6 @@ const DESK_SIDE = {
   draft: 'pf composer <pane> - another chat reading a composer it cannot see',
   renderCost: 'pf cost [--seconds N] - profiling a window from outside it is the whole point',
   reloadWindow: 'pf reload - handing back a window nobody can reach to press Cmd+R in',
-  // The whole point of it is that the ask comes from OUTSIDE the window: a scheduled job
-  // that hit a login wall. The window only ever answers one - `openLogin` and the card.
-  needsLogin: 'pf needs-login <site> --url <url> - a script that cannot type a password',
   taskBrief: 'pf-ctl open --task - the app compiles the brief, no control in the window',
 }
 

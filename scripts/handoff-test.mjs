@@ -51,7 +51,7 @@ function bundle() {
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
       `export { sendHandoff, receiveHandoff, writeConversation } from ${p('src/main/handoff.ts')}`,
-      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError } from ${p('src/shared/handoff.ts')}`
+      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError, landingCopy } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -96,7 +96,54 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError, landingCopy } = mod
+
+// ---------------------------------------------------------------- landingCopy
+// Pure decision, no git and no disk: a blocked handoff must land in the first clean
+// merged free copy, or make the first missing label, or refuse by name - see
+// src/shared/handoff.ts. `handoff.log` 2026-09-23 is the incident this replaces: three
+// panes refused outright because the same-named checkout was busy, with clean lane
+// copies sitting right beside it unused.
+console.log('landingCopy')
+{
+  const copy = (label, over = {}) => ({
+    path: `/repo-${label}`,
+    label,
+    exists: true,
+    isCopy: true,
+    dirty: false,
+    unmerged: 0,
+    inUse: false,
+    ...over
+  })
+  const blocked = 'repo here has uncommitted work on this machine - not touching it'
+
+  // (a) same-named checkout dirty, -a exists clean merged free -> lands -a, make false.
+  const a = landingCopy(blocked, [copy('a')])
+  ok('a clean free copy is reused, not made', 'path' in a && a.path === '/repo-a' && a.make === false, JSON.stringify(a))
+
+  // (b) -a dirty, -b in use, -c missing -> make -c.
+  const b = landingCopy(blocked, [
+    copy('a', { dirty: true }),
+    copy('b', { inUse: true }),
+    { path: '/repo-c', label: 'c', exists: false, isCopy: false, dirty: false, unmerged: -1, inUse: false }
+  ])
+  ok('the first missing label is made when every existing one is busy', 'path' in b && b.path === '/repo-c' && b.label === 'c' && b.make === true, JSON.stringify(b))
+
+  // (c) every copy dirty or in use, none missing -> refusal names the blocked sentence
+  // and every copy with its reason.
+  const c = landingCopy(blocked, [copy('a', { dirty: true }), copy('b', { inUse: true })])
+  ok(
+    'no free copy at all refuses, naming the original reason',
+    'refusal' in c && c.refusal.includes(blocked),
+    JSON.stringify(c)
+  )
+  ok('...and names each copy and its own reason', /repo-a has uncommitted work/.test(c.refusal) && /repo-b is in use/.test(c.refusal), c.refusal)
+
+  // (d) unmerged: -1 (could not be told) is never treated as clean.
+  const d = landingCopy(blocked, [copy('a', { unmerged: -1 })])
+  ok('an unmerged reading that could not be checked is not clean', 'refusal' in d, JSON.stringify(d))
+}
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -384,6 +431,102 @@ ok(
 )
 rmSync(join(repo, 'handoff-safety.txt'))
 
+// ---------------------------------------------------- automatic handoff races
+// Automatic offload has no person watching the card. These cases must refuse before
+// `pushRepo` can create an auto-sync commit, or queue while the work is still alive.
+// The verified-idle fixture deliberately writes no handoff file: a stale in-memory count
+// must never substitute for a fresh pane-scoped handoff on disk.
+console.log('automatic handoff refusal and races')
+{
+  const automaticHead = git(repo, 'rev-parse', 'HEAD')
+  const automaticStatus = git(repo, 'status', '--porcelain')
+  let automaticDeliveries = 0
+  const automaticKills = []
+  const automaticBase = (pane) => ({
+    ...sender,
+    list: () => [pane],
+    snapshot: () => [{ cwd: repo, title: pane.title, agent: pane.agent, resumeId: 'conv123', scrollbackId: pane.id }],
+    kill: (id) => automaticKills.push(id),
+    deliver: async () => { automaticDeliveries++; return { ok: true, resumed: true, notes: [] } }
+  })
+  for (const [label, pane] of [
+    ['a completed conversation', { id: 'automatic-complete', title: 'complete', cwd: repo, agent: 'claude', status: 'idle', finished: true, lastOutput: 0, createdAt: 0 }],
+    ['a shell pane', { id: 'automatic-shell', title: 'shell', cwd: repo, agent: 'shell', status: 'idle', finished: false, lastOutput: 0, createdAt: 0 }],
+    ['an idle pane whose handoff count is unverified', { id: 'automatic-unverified', title: 'unverified', cwd: repo, agent: 'claude', status: 'idle', finished: false, handoffOpen: 1, handoffVerified: false, lastOutput: 0, createdAt: 0 }]
+  ]) {
+    const result = await sendHandoff(automaticBase(pane), 'pc', { ids: [pane.id], automatic: true })
+    ok(`${label} is refused automatically before mutation`, result[0]?.ok === false && automaticDeliveries === 0 && automaticKills.length === 0 && git(repo, 'rev-parse', 'HEAD') === automaticHead && git(repo, 'status', '--porcelain') === automaticStatus, result[0]?.error)
+  }
+  const staleDisk = { id: 'automatic-stale-disk', title: 'stale handoff', cwd: repo, agent: 'claude', status: 'idle', finished: false, handoffOpen: 1, handoffVerified: true, lastOutput: 0, createdAt: 0 }
+  const stale = await sendHandoff(automaticBase(staleDisk), 'pc', { ids: [staleDisk.id], automatic: true })
+  ok('an automatically eligible idle pane without a fresh exact handoff on disk refuses before mutation', stale[0]?.ok === false && /No fresh handoff/.test(stale[0]?.error ?? '') && automaticDeliveries === 0 && automaticKills.length === 0 && git(repo, 'rev-parse', 'HEAD') === automaticHead && git(repo, 'status', '--porcelain') === automaticStatus, stale[0]?.error)
+
+  // Robert 2026-09-29: a finished or stopped pane never moves automatically. An idle pane
+  // whose only activity is a background job, a subagent or an unsent draft, with no
+  // verified handoff of open steps, is stopped work: refused outright, nothing queued.
+  const stoppedQueue = []
+  for (const [label, extra] of [
+    ['background job', { backJob: true }],
+    ['subagent', { subagent: true }],
+    ['draft prompt', { drafting: true }]
+  ]) {
+    const pane = { id: `stopped-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, ...extra }
+    const result = await sendHandoff({
+      ...automaticBase(pane),
+      queue: (...args) => stoppedQueue.push(args)
+    }, 'pc', { ids: [pane.id], automatic: true })
+    ok(`a stopped pane with only a ${label} running is refused automatically, not queued`, result[0]?.ok === false && !result[0]?.pending && /No unfinished work/.test(result[0]?.error ?? '') && automaticDeliveries === 0 && automaticKills.length === 0, result[0]?.error)
+  }
+  ok('...and nothing was queued for them', stoppedQueue.length === 0, JSON.stringify(stoppedQueue))
+
+  // Unfinished work (a verified handoff with open steps) that also has live background
+  // work is queued, never delivered or closed while that work runs.
+  const queued = []
+  for (const [label, extra] of [
+    ['background job', { backJob: true }],
+    ['subagent', { subagent: true }],
+    ['draft prompt', { drafting: true }]
+  ]) {
+    const pane = { id: `queue-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', handoffOpen: 2, handoffVerified: true, lastOutput: 0, createdAt: 0, ...extra }
+    const result = await sendHandoff({
+      ...automaticBase(pane),
+      queue: (id, device, closeWhenDone, automatic) => queued.push([id, device, closeWhenDone, automatic])
+    }, 'pc', { ids: [pane.id], automatic: true })
+    ok(`an automatic ${label} queues rather than delivering or closing its source`, result[0]?.pending === true && automaticDeliveries === 0 && automaticKills.length === 0, result[0]?.error)
+  }
+  ok('queued active work retains its automatic flag for the later safety gate', queued.length === 3 && queued.every(([, device, closeWhenDone, automatic]) => device === 'pc' && closeWhenDone === false && automatic === true), JSON.stringify(queued))
+
+  for (const [label, change] of [
+    ['a new background job', (pane) => ({ ...pane, backJob: true })],
+    ['new keyboard input', (pane) => ({ ...pane, lastKeyboard: 99 })]
+  ]) {
+    let current = { id: `late-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastKeyboard: 0, lastOutput: 0, createdAt: 0 }
+    const beforeDelivery = automaticDeliveries
+    const result = await sendHandoff({
+      ...automaticBase(current),
+      list: () => [current],
+      tailOf: () => { current = change(current); return 'tail' }
+    }, 'pc', { ids: [current.id] })
+    ok(`${label} during preparation refuses before remote delivery or source close`, result[0]?.ok === false && /changed while preparing/.test(result[0]?.error ?? '') && automaticDeliveries === beforeDelivery && automaticKills.length === 0, result[0]?.error)
+  }
+
+  let acknowledged = { id: 'late-ack', title: 'acknowledged', cwd: repo, agent: 'claude', status: 'idle', lastKeyboard: 0, lastOutput: 0, createdAt: 0 }
+  const acknowledgedKills = []
+  const acknowledgedMoved = []
+  const afterAck = await sendHandoff({
+    ...automaticBase(acknowledged),
+    list: () => [acknowledged],
+    kill: (id) => acknowledgedKills.push(id),
+    moved: (id, device) => acknowledgedMoved.push([id, device]),
+    deliver: async () => {
+      automaticDeliveries++
+      acknowledged = { ...acknowledged, lastKeyboard: 1 }
+      return { ok: true, resumed: true, notes: [] }
+    }
+  }, 'pc', { ids: [acknowledged.id] })
+  ok('new activity after the receiver acknowledges keeps the source pane alive', afterAck[0]?.ok === true && afterAck[0]?.sourceKept === true && acknowledgedKills.length === 0 && acknowledgedMoved.length === 1, JSON.stringify(afterAck[0]))
+}
+
 // ---------------------------------------------------------------- Codex transcript transport
 // This is intentionally a synthetic rollout under a temporary CODEX_HOME. It proves the
 // wire/import contract without reading, writing, or needing a real user's Codex sessions.
@@ -604,6 +747,36 @@ console.log('move now')
   interrupted = 0
   const idle = await sendHandoff(nowSender, 'pc', { ids: ['s1'], now: true })
   ok('an idle pane moved with now is not interrupted and not asked to carry on', idle[0]?.ok === true && interrupted === 0 && received.at(-1)?.continueWith === undefined && started.at(-1)?.prompt === undefined, idle[0]?.error)
+}
+
+// ---------------------------------------------------------------- owed a prompt
+// An idle pane the app still owes a prompt - an automatic clear counting down, or its
+// resume prompt not yet sent - is held like a turn. s60-mulljm2l (2026-09-28 19:01Z) was
+// moved inside its clear's countdown: the PC resumed it at 259k tokens, un-cleared, and the
+// /clear was typed into the copy being closed.
+console.log('owed a prompt')
+{
+  const deliveriesBefore = received.length
+  const queued = []
+  const owedSender = {
+    ...sender,
+    list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, owedPrompt: true }],
+    busy: () => false,
+    queue: (id, device, closeAfter) => queued.push({ id, device, closeAfter })
+  }
+  const held = await sendHandoff(owedSender, 'pc', { ids: ['s1'] })
+  ok(
+    'an idle pane owed a prompt is queued, not delivered',
+    held[0]?.pending === true && queued.length === 1 && queued[0].id === 's1' && received.length === deliveriesBefore,
+    JSON.stringify({ item: held[0], queued, delivered: received.length - deliveriesBefore })
+  )
+  const beforeNow = received.length
+  const now = await sendHandoff(
+    { ...owedSender, queue: () => { throw new Error('a NOW move must never queue') }, interrupt: async () => true, selfDevice: () => 'mac' },
+    'pc',
+    { ids: ['s1'], now: true }
+  )
+  ok('...and a NOW move of it is unchanged: moved at once, never queued', now[0]?.ok === true && !now[0]?.pending && received.length === beforeNow + 1, now[0]?.error)
 }
 
 // ---------------------------------------------------------------- refusals

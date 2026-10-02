@@ -25,6 +25,9 @@ buildSync({
   platform: 'node',
   outfile
 })
+const holdOut = join(work, 'hold.bundle.cjs')
+buildSync({ absWorkingDir: root, entryPoints: ['src/shared/caffeinateHold.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: holdOut })
+const { CaffeinateHolds } = createRequire(import.meta.url)(holdOut)
 const { awakeVerdict, awakeBusy, awakeDisplayBusy, nextBusySince, AwakeKeeper, DEFAULT_MAX_HOLD_MS } =
   createRequire(import.meta.url)(outfile)
 
@@ -224,6 +227,62 @@ function keeper(panes, opts = {}) {
 
   assert.equal(awakeDisplayBusy([asking, working, recentKeys], NOW), 2)
   assert.equal(awakeBusy([asking, working, recentKeys], NOW), 3)
+}
+
+// --- caffeinate bookkeeping: a late 'exit' from the OLD child must not orphan the NEW one ---
+{
+  const live = new Set()
+  const procs = []
+  const spawnFake = (flag, watch) => {
+    const handlers = {}
+    const p = {
+      pid: 1000 + procs.length,
+      flag,
+      watch,
+      on: (ev, cb) => { handlers[ev] = cb },
+      // A real SIGTERM is delivered now but the 'exit' EVENT arrives later: the test fires it by hand.
+      kill: () => { live.delete(p) },
+      fireExit: () => handlers.exit?.(0)
+    }
+    live.add(p)
+    procs.push(p)
+    return p
+  }
+  const lines = []
+  const holds = new CaffeinateHolds(spawnFake, 4242, (l) => lines.push(l))
+  holds.start('system')
+  holds.start('system') // a second start while one is held is a no-op
+  assert.equal(live.size, 1)
+  assert.equal(procs[0].watch, 4242)
+  assert.equal(procs[0].flag, '-i')
+  holds.stop('system')
+  holds.start('system') // the NEW child
+  procs[0].fireExit() // the OLD child's exit event lands late
+  assert.equal(holds.tracked(), 1, 'a late exit of the old child must not clear the new slot')
+  holds.start('system') // the next tick: must NOT spawn a third
+  assert.equal(procs.length, 2, 'no extra caffeinate spawned')
+  assert.equal(live.size, 1, 'exactly one live process')
+  holds.stop('system')
+  assert.equal(live.size, 0, 'and it can be stopped, nothing left over')
+  assert.equal(holds.tracked(), 0)
+  // 25 stop+start cycles each with a late exit: still one live, one tracked.
+  for (let i = 0; i < 25; i++) {
+    const old = procs[procs.length - 1]
+    holds.start('system')
+    const cur = procs[procs.length - 1]
+    holds.stop('system')
+    holds.start('display')
+    old.fireExit()
+    cur.fireExit()
+    holds.stop('display')
+  }
+  holds.start('system')
+  holds.start('display')
+  assert.equal(live.size, 2)
+  assert.equal(holds.tracked(), 2)
+  holds.stopAll()
+  assert.equal(live.size, 0)
+  assert.ok(lines.some((l) => /started PID/.test(l)) && lines.some((l) => /stopping/.test(l)) && lines.some((l) => /exited/.test(l)))
 }
 
 console.log('awake: ok')

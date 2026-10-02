@@ -85,7 +85,7 @@ export const SPIN_WINDOW_MS = 30 * 60_000
 export interface Watch {
   /** When Chromium last said the renderer stopped answering input. 0 = it is answering. */
   unresponsiveSince: number
-  /** When the outstanding liveness probe was sent. 0 = none outstanding. */
+  /** When the outstanding liveness probe was sent, on the awake clock. 0 = none outstanding. */
   probeSentAt: number
   /** The renderer process died (`render-process-gone`) and there is nothing to reload. */
   gone: boolean
@@ -116,7 +116,28 @@ export function noteRecovered(w: Watch, forMs: number, now: number): Watch {
 
 export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
 
-export function decide(w: Watch, now: number): Act {
+/**
+ * A tick this late means the machine slept (or main itself stalled), not the renderer.
+ *
+ * 2026-10-01 01:41 and 01:52Z: two reloads inside a five-hour sleep, "no answer to the
+ * liveness probe for 1021965ms" and "600996ms". The probe went out just before a suspend
+ * and the first tick of a dark wake judged it, ahead of the answer queued behind that tick.
+ * The interval runs every PROBE_EVERY_MS, so a gap this long is the watch's own clock
+ * stopping: the outstanding probe and Chromium's unresponsive clock are dropped and the
+ * next tick asks again. Same threshold as `shared/wakeWatch.ts` uses for the update poll.
+ */
+export const SLEEP_GAP_MS = 30_000
+
+export function afterGap(w: Watch, gapMs: number): Watch {
+  return gapMs >= SLEEP_GAP_MS ? { ...w, probeSentAt: 0, unresponsiveSince: 0 } : w
+}
+
+/**
+ * `awake` is the clock `probeSentAt` was stamped with: time the machine was awake
+ * (`process.hrtime` on macOS stops during sleep), so a probe is never judged on hours the
+ * renderer could not have answered in. Every other field is wall time, `now`.
+ */
+export function decide(w: Watch, now: number, awake = now): Act {
   const spent = w.reloads >= MAX_RELOADS
   // A dead renderer is not a slow one: there is no page left to reload, so the window has
   // to be rebuilt. Said before the cooldown, because a process that is GONE is not going
@@ -132,7 +153,7 @@ export function decide(w: Watch, now: number): Act {
   // the spin has already ended, which is exactly how this one escaped for two hours.
   if (w.spins >= MAX_SPINS) return 'reload'
   if (w.unresponsiveSince && now - w.unresponsiveSince >= GRACE_MS) return 'reload'
-  if (w.probeSentAt && now - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
+  if (w.probeSentAt && awake - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
   return 'wait'
 }
 
@@ -209,4 +230,27 @@ export function afterAct(w: Watch, now: number): Watch {
     spins: 0,
     firstSpinAt: 0
   }
+}
+
+/** Signal numbers are the same on macOS and Linux for the ones worth naming. */
+const SIGNALS: Record<number, string> = { 1: 'SIGHUP', 2: 'SIGINT', 6: 'SIGABRT', 9: 'SIGKILL', 11: 'SIGSEGV', 15: 'SIGTERM' }
+
+/**
+ * Why the renderer went, in words, from Chromium's `render-process-gone` details.
+ *
+ * 2026-09-24 17:16: another chat ran `pkill -f "cat" -n`, which matches every process under
+ * "/Applications", and the notice said "the window stopped answering". It had answered
+ * fine; it was ended from outside. `killed` with a signal number is that case, and naming
+ * it is what points the reader at the right culprit.
+ */
+export function goneWhy(reason: string, exitCode: number, platform: string): string {
+  const sig = platform === 'win32' ? undefined : SIGNALS[exitCode]
+  if (reason === 'killed') {
+    if (sig === 'SIGKILL') return 'ended by another program or the system, SIGKILL'
+    if (sig) return `ended by another program, ${sig}`
+    return `ended by another program (exit ${exitCode})`
+  }
+  if (reason === 'oom') return 'ran out of memory'
+  if (reason === 'crashed') return `crashed (exit ${exitCode}${sig ? `, ${sig}` : ''})`
+  return `${reason} (exit ${exitCode})`
 }

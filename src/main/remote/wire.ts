@@ -62,6 +62,12 @@ export interface PeerIdentity {
   /** The owner can accept one prompt intent and perform its verified submit sequence locally. */
   promptSubmit?: boolean
   /**
+   * The build can show its screen in the other machine's pane and answers `screen:*`
+   * frames. Absent = older: the viewer says `Update PaneForge on <machine> first` rather
+   * than waiting ten seconds for an answer that will never come.
+   */
+  screenView?: boolean
+  /**
    * Whether somebody is at that device's screen, as of the moment it said so.
    *
    * Absent means the build is older than this field, and an older build is not evidence
@@ -544,6 +550,7 @@ function identityOf(m: Msg): PeerIdentity {
     version: String(m.version ?? ''),
     ...(typeof m.person === 'boolean' ? { person: m.person } : {}),
     ...(m.promptSubmit === true ? { promptSubmit: true } : {}),
+    ...(m.screenView === true ? { screenView: true } : {}),
     ...(Array.isArray(m.handoffResume) ? { handoffResume: m.handoffResume.filter((p): p is string => p === 'claude' || p === 'codex') } : {})
   }
 }

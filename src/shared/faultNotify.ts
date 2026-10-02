@@ -127,9 +127,16 @@ export function decide(
 export function faultMessage(f: Fault, o: { device?: string; last?: boolean } = {}): string {
   const where = o.device ? `PaneForge on ${o.device}` : 'PaneForge'
   const first = f.detail.split('\n')[0].slice(0, 300)
+  // A renderer ended from outside (another program's kill, the system) never stopped
+  // answering, and saying it did sends the reader after the wrong culprit (2026-09-24).
+  const gone = f.kind === 'renderer' ? /^recreate \(process gone - (ended|ran out)/.exec(first) : null
   const lines = [
     f.kind === 'renderer'
-      ? `${where}: the window stopped answering.`
+      ? gone
+        ? gone[1] === 'ended'
+          ? `${where}: the window was ended from outside the app and has been rebuilt.`
+          : `${where}: the window ran out of memory and has been rebuilt.`
+        : `${where}: the window stopped answering.`
       : `${where} hit a fault it stayed up through.`,
     '',
     `${f.kind}: ${first}`,

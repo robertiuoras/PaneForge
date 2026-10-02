@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { projectsRoot } from './config'
+import { basename, isAbsolute, join, resolve } from 'node:path'
+import { getConfig, projectsRoot, setConfigStrict } from './config'
 import { looksLikeRoster, readRoster } from './clients'
 import { CLIENTS_DIR, clientLabel } from '../shared/clientName'
 import { checkoutOwners, type FolderFacts } from '../shared/checkout'
@@ -40,9 +40,12 @@ export function createProject(typed: string, root = projectsRoot()): Project | n
   const name = folderNameFor(typed)
   if (!name) return null
   try {
-    if (!existsSync(root)) return null
     const path = join(root, name)
-    // `recursive` so an existing folder is a success rather than EEXIST - see above.
+    // `recursive` so an existing folder is a success rather than EEXIST - see above - and
+    // so a projects folder that is not there yet is made with it. On a fresh machine the
+    // root is only `defaultRoot()`'s guess (`~/Projects`), and refusing here left the
+    // first-run card and New session with no way to make ANY folder. A saved root that
+    // vanished never reaches this: `projectsRoot()` has already swapped it for the guess.
     mkdirSync(path, { recursive: true })
     if (!statSync(path).isDirectory()) return null
     return listProjects(root).find((p) => p.path === path) ?? { name, path, lastUsed: 0, isGit: false }
@@ -52,6 +55,12 @@ export function createProject(typed: string, root = projectsRoot()): Project | n
 }
 
 export function listProjects(root = projectsRoot()): Project[] {
+  const archived = new Set(getConfig().archivedClientPaths ?? [])
+  return listAllProjects(root).filter((p) => !p.client || !archived.has(p.path))
+}
+
+/** Routing keeps seeing clients whose launcher entry was archived. */
+export function listAllProjects(root = projectsRoot()): Project[] {
   if (!existsSync(root)) return []
   const used = lastUsedByPathSlug()
 
@@ -70,7 +79,7 @@ export function listProjects(root = projectsRoot()): Project[] {
     // A linked worktree's `.git` is a FILE saying which repository it belongs to, so the
     // two cases are told apart by what `.git` IS, never by what the folder is called.
     const git = gitEntry(join(path, '.git'))
-    facts.push({ name, isGit: git.dir, gitFile: git.file })
+    facts.push({ name, isGit: git.dir, gitFile: git.file, branch: git.branch, origin: git.origin })
     projects.push({
       name,
       path,
@@ -91,6 +100,27 @@ export function listProjects(root = projectsRoot()): Project[] {
   // folder, and the lane a pane lands in is `laneFor`'s decision as it is everywhere else.
   projects.push(...clientRows(root, used, owners))
   return projects.sort((a, b) => b.lastUsed - a.lastUsed || a.name.localeCompare(b.name))
+}
+
+export function listArchivedClients(root = projectsRoot()): Project[] {
+  const all = listAllProjects(root)
+  return (getConfig().archivedClientPaths ?? []).map((path) =>
+    all.find((p) => p.client && p.path === path) ??
+    { name: basename(path), path, lastUsed: 0, isGit: false })
+}
+
+/** Only launcher visibility changes. Never touch the roster, folders or sessions. */
+export function setClientArchived(path: string, archived: boolean, root = projectsRoot()): void {
+  if (typeof path !== 'string' || !isAbsolute(path) || typeof archived !== 'boolean') {
+    throw new Error('Choose an exact client folder and archive or restore it.')
+  }
+  const saved = getConfig().archivedClientPaths ?? []
+  if (archived && !listAllProjects(root).some((p) => p.client && p.path === path)) {
+    throw new Error('This folder is not a client in the current projects list.')
+  }
+  const next = saved.filter((p) => p !== path)
+  if (archived) next.push(path)
+  setConfigStrict({ archivedClientPaths: next })
 }
 
 /** Local shortcuts belong only to the session picker, never routing or project workflows. */
@@ -158,9 +188,21 @@ function clientRows(root: string, used: Map<string, number>, copies: Map<string,
 }
 
 /** What `.git` is here: a repository's own directory, or a linked worktree's pointer. */
-function gitEntry(path: string): { dir: boolean; file: string | null } {
+function gitEntry(path: string): { dir: boolean; file: string | null; branch?: string; origin?: string } {
   try {
-    if (statSync(path).isDirectory()) return { dir: true, file: null }
+    if (statSync(path).isDirectory()) {
+      let branch: string | undefined
+      let origin: string | undefined
+      try {
+        branch = /^ref: refs\/heads\/(.+)$/m.exec(readFileSync(join(path, 'HEAD'), 'utf8').trim())?.[1]
+        // Only the exact origin section counts. Quoted/escaped values stay unmatched,
+        // rather than guessing about Git config syntax and hiding an unrelated project.
+        const config = readFileSync(join(path, 'config'), 'utf8').slice(0, 65536)
+        const section = /^\[remote "origin"\]\s*\r?\n([^\[]*)/m.exec(config)?.[1]
+        origin = section && /^\s*url\s*=\s*([^"\r\n]+?)\s*$/m.exec(section)?.[1]
+      } catch { /* Missing metadata keeps a repository visible. */ }
+      return { dir: true, file: null, branch, origin }
+    }
   } catch {
     return { dir: false, file: null }
   }

@@ -26,6 +26,34 @@ export interface ComposerRead {
 }
 
 /**
+ * How far under its box Claude Code leaves the caret: a status line of one to three rows,
+ * the permission-mode row and, past ~200k of context, a right-aligned `new task? /clear to
+ * save 204.2k tokens` row - with the caret on the empty row under that (2.1.286, pane s42
+ * on 1 Oct: five rows below the closing rule).
+ */
+const PARKED_BELOW = 8
+
+/**
+ * The box above a caret Claude Code parked under its footer, or null.
+ *
+ * Read anchored at the caret, that screen had no composer, so an unsent-draft flag that
+ * only an empty-box read clears held a finished pane open for 77 minutes. Strict on
+ * purpose, because a caret below the box is usually a pane that has moved on: the caret's
+ * row is empty, every row between it and the box is footer-shaped (indented, or blank),
+ * and the first row that is not is the box's own closing rule.
+ */
+function parkedBox(read: (row: number) => string, cursorRow: number): ReturnType<typeof composerAt> {
+  if (read(cursorRow).trim()) return null
+  for (let r = cursorRow - 1; r >= Math.max(1, cursorRow - PARKED_BELOW); r--) {
+    const line = read(r)
+    if (!line.trim() || /^[ \u00a0]{2}/.test(line)) continue
+    const box = composerAt(read, r - 1)
+    return box && box.bottom === r - 1 ? box : null
+  }
+  return null
+}
+
+/**
  * Read the composer out of a screen.
  *
  * `cursorRow` is where the caret sits, as an index into `rows`. That is the anchor
@@ -44,7 +72,7 @@ export function readComposer(
 ): ComposerRead | null {
   if (cursorRow < 0 || cursorRow >= rows.length) return null
   const read = (r: number): string => rows[r] ?? ''
-  const box = composerAt(read, cursorRow, opts)
+  const box = composerAt(read, cursorRow, opts) ?? (opts.codexCols ? null : parkedBox(read, cursorRow))
   if (!box) return null
   // The first row carries the CLI's own marker, so the typed text starts past it. Every
   // row below is a continuation the CLI indents to line up under that column - dropping

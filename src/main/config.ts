@@ -14,10 +14,10 @@ import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
-import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
+import { DEFAULT_RECLAIM, migrateReclaimV5, type ReclaimConfig } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
-import { DEFAULT_SOUNDS } from '../shared/sounds'
+import { DEFAULT_SOUNDS, quietIdleSounds } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
@@ -181,7 +181,7 @@ function defaults(): Config {
     mouseSelect: true,
     autoFixUi: true,
     notifyOnIdle: true,
-    soundOnIdle: true,
+    soundOnIdle: false,
     // Silent with no credentials on the machine, so this default sends nothing anywhere it
     // was not already set up to send.
     telegramAsk: true,
@@ -194,6 +194,7 @@ function defaults(): Config {
     hiddenBlurbs: [],
     discordPresence: true,
     discordStyle: migrateRows(DEFAULT_DISCORD_STYLE),
+    discordSettingsAt: 0,
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',
@@ -254,6 +255,9 @@ function defaults(): Config {
     deadDev: DEFAULT_DEAD_DEV,
     // On. A finished pane becomes a Review row and a `--resume` away; see shared/doneClose.ts.
     autoCloseDone: true,
+    // On. Only fires on a Claude Code pane's first ask, and only says anything the rule
+    // scored evidence for - see shared/modelAdvice.ts.
+    modelAdvice: true,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // The token line a session clears itself at, and whether the app watches the CLIs that
@@ -306,6 +310,7 @@ export function getConfig(): Config {
       ...base,
       ...raw,
       ...(raw.offloadDefaultsV4 ? {} : { offloadDefaultsV4: true }),
+      ...quietIdleSounds(raw),
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },
@@ -468,7 +473,7 @@ function migrateReclaim(
   merged.defaultsV2 = true
   merged.defaultsV3 = true
   merged.defaultsV4 = true
-  return merged
+  return migrateReclaimV5(merged, raw)
 }
 
 /**
@@ -500,13 +505,14 @@ function migrateReclaimV3(merged: ReclaimConfig, raw: ReclaimConfig | undefined)
  * already carries `defaultsV3` and a ten in it. Only the old switch value moves.
  */
 function migrateReclaimV4(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
-  if (raw?.defaultsV4) return merged
+  // Chained like V3 -> V4: every config in existence carries `defaultsV4`.
+  if (raw?.defaultsV4) return migrateReclaimV5(merged, raw)
   const OLD_SWITCH_MINUTES = 10
   if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
     merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
   }
   merged.defaultsV4 = true
-  return merged
+  return migrateReclaimV5(merged, raw)
 }
 
 function migrateKeys(raw: Partial<Config>): Record<string, string> {

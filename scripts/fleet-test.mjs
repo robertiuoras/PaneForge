@@ -30,7 +30,9 @@ buildSync({
   outfile: out
 })
 const {
+  chatPhase,
   density,
+  finishedTurn,
   fleetOrder,
   fleetRow,
   fleetSections,
@@ -399,6 +401,35 @@ is(
   assert.equal(idleShell({ agent: 'shell', runSince: 5 }), false)
   assert.equal(idleShell({ agent: 'claude' }), false)
   checks += 4
+}
+
+// A finished turn whose reply left nothing is not waiting for anybody (Robert,
+// 2026-09-27, pane s9-muig454z: "why does it say its waiting when clearly its not").
+{
+  const done = sess({ status: 'idle', engaged: true, finished: true, lastOutput: 100 })
+  const asked = sess({ status: 'idle', engaged: true, lastOutput: 100 })
+  is(fleetState(done), 'needsYou', 'closing/sleeping rules still see a finished turn')
+  ok(finishedTurn(done), 'finished reply = finished turn')
+  is(fleetRow(done).label, 'done', 'the row says done, not waiting for you')
+  is(fleetRow(done).motion, 'still', 'a finished pane does not call for a person')
+  is(fleetRow(asked).label, 'waiting for you', 'a reply that left something still waits')
+  is(fleetWaiting([done, asked]), 1, 'only the pane that wants somebody is counted')
+  is(fleetSections([done, asked]).map((g) => [g.key, g.sessions.length]), [['yourMove', 1], ['idle', 1]], 'finished pane leaves Your move')
+  is(fleetOrder([done, asked]).map((x) => x.id), [asked.id, done.id], 'the pane that asked ranks first')
+  ok(!finishedTurn({ ...done, asking: true }), 'a question on screen beats a stale finished reading')
+  ok(!finishedTurn({ ...done, status: 'working' }), 'a new turn is not finished')
+  // One chat state, the same four words as PaneForge Next (wr-03, 2026-10-02).
+  is(chatPhase(done), 'done', 'finished, no countdown = done')
+  is(chatPhase({ ...done, doneClosingAt: 999 }), 'closing', 'finished with a close countdown = closing')
+  is(fleetRow({ ...done, doneClosingAt: 999 }).label, 'closing', 'the row says closing while the countdown runs')
+  is(chatPhase(asked), 'waiting', 'a reply that left something = waiting')
+  is(chatPhase({ ...asked, status: 'working' }), 'working', 'a running turn = working')
+  is(chatPhase({ ...done, backJob: 'npm test' }), 'working', 'a background job still running = working')
+  is(chatPhase({ ...done, asking: true, doneClosingAt: 999 }), 'waiting', 'a question on screen beats a countdown')
+  checks += 7
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  ok(/s\.finished \? 'done' : 'waiting'/.test(app), 'the card word reads finished')
+  ok(/!finishedTurn\(row\)/.test(app), 'the attention list leaves finished panes out')
 }
 
 console.log(`\n${checks} checks - all good`)

@@ -60,16 +60,66 @@ export function mergeImportConflicts(text) {
     if (!both.some((l) => /\b(import|require|use)\b/.test(l))) return null
     // Ours first, theirs after, and a line both sides added only appears once.
     const seen = new Set()
+    const kept = []
     for (const l of both) {
       const key = l.trim()
       if (!key || seen.has(key)) continue
       seen.add(key)
-      out.push(l)
+      kept.push(l)
     }
+    const joined = joinSameSource(kept)
+    if (joined === null) return null
+    out.push(...joined)
     healed++
     i = end + 1
   }
   return healed ? out.join('\n') : null
+}
+
+/** `import { a, type B } from 'x'` on one line - the only shape two sides can be folded in. */
+const BRACE_IMPORT = /^(\s*)import\s+(type\s+)?\{([^}]*)\}\s+from\s+(['"])([^'"]+)\4\s*;?\s*$/
+const SOURCE = /\bfrom\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)/
+
+/**
+ * Two lines importing from ONE module are one line each side edited, not two additions.
+ *
+ * 2026-09-25, faec0266 "merge lane a": master had
+ * `import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'`
+ * and lane a had the same line with three more names. The union kept both, every name
+ * was declared twice, and master stopped compiling (TS2300 Duplicate identifier).
+ * Plain brace imports are folded into one line holding every name either side had;
+ * any other shape importing one module twice is left for a person.
+ */
+function joinSameSource(lines) {
+  const bySource = new Map()
+  for (const l of lines) {
+    const m = SOURCE.exec(l)
+    if (!m) continue
+    const src = m[1] ?? m[2]
+    bySource.set(src, [...(bySource.get(src) ?? []), l])
+  }
+  const out = []
+  const done = new Set()
+  for (const l of lines) {
+    const m = SOURCE.exec(l)
+    const group = m ? bySource.get(m[1] ?? m[2]) : null
+    if (!group || group.length < 2) {
+      out.push(l)
+      continue
+    }
+    if (done.has(group)) continue
+    done.add(group)
+    const parsed = group.map((g) => BRACE_IMPORT.exec(g))
+    if (parsed.some((p) => !p || Boolean(p[2]) !== Boolean(parsed[0][2]))) return null
+    const names = []
+    for (const p of parsed)
+      for (const n of p[3].split(',').map((s) => s.trim()).filter(Boolean))
+        if (!names.includes(n)) names.push(n)
+    const [, indent, typeOnly, , quote, src] = parsed[0]
+    const semi = group[0].trimEnd().endsWith(';') ? ';' : ''
+    out.push(`${indent}import ${typeOnly ?? ''}{ ${names.join(', ')} } from ${quote}${src}${quote}${semi}`)
+  }
+  return out
 }
 
 /**
@@ -217,6 +267,194 @@ function dedupe(lines) {
     out.push(l)
   }
   return out
+}
+
+/** A markdown table row, and the `|---|---|` rule under a header that starts a table. */
+const TABLE_ROW = /^\s*\|.*\|\s*$/
+const TABLE_RULE = /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/
+const BULLET = /^\s*[-*] \S/
+const HEADING = /^#{1,6} /
+/** "18 source notes." - a count of the list under it, written by whatever generates the file. */
+const COUNTER = /^(\d+)( [^\d|].*\.)$/
+
+const listItem = (l) => (TABLE_ROW.test(l) && !TABLE_RULE.test(l)) || BULLET.test(l)
+
+/** How many list items sit under line `at`, up to the next heading. */
+function itemsUnder(lines, at) {
+  let n = 0
+  for (const l of lines.slice(at + 1)) {
+    if (HEADING.test(l)) break
+    if (listItem(l)) n++
+  }
+  return n
+}
+
+/** Every "<n><suffix>" line in `text` states the number of items under it. */
+function countsTrue(text, suffix) {
+  const lines = text.split('\n')
+  return lines.every((l, i) => {
+    const m = COUNTER.exec(l)
+    return !m || m[2] !== suffix || Number(m[1]) === itemsUnder(lines, i)
+  })
+}
+
+/**
+ * The count lines a merge may count again: each "<n><suffix>" shape that some side has and
+ * that, in ALL three sides (base, ours, theirs), states exactly the number of list items
+ * under it. research-lab's library/README.md has one per category ("18 source notes.") and
+ * both chats bump it, so every pair filing into one category conflicted there - or, when both
+ * wrote the same number, merged to a count one short. A count that was ever off on any side
+ * (research-lab before 2026-10: "122 source notes." over 145 bullets) is not one: left alone.
+ */
+export function countedSuffixes(sides) {
+  const found = new Set()
+  for (const text of sides) for (const l of text.split('\n')) {
+    const m = COUNTER.exec(l)
+    if (m) found.add(m[2])
+  }
+  return new Set([...found].filter((suffix) => sides.every((text) => countsTrue(text, suffix))))
+}
+
+/** Those count lines set to 0, so three sides that only differ in them merge without asking. */
+export function maskCounts(text, suffixes) {
+  return text
+    .split('\n')
+    .map((l) => {
+      const m = COUNTER.exec(l)
+      return m && suffixes.has(m[2]) ? `0${m[2]}` : l
+    })
+    .join('\n')
+}
+
+/** Those count lines counted again, in the merged text. */
+export function recount(text, suffixes) {
+  const lines = text.split('\n')
+  return lines
+    .map((l, i) => {
+      const m = COUNTER.exec(l)
+      return m && suffixes.has(m[2]) ? `${itemsUnder(lines, i)}${m[2]}` : l
+    })
+    .join('\n')
+}
+
+/**
+ * Two lanes that each ADDED items to one markdown list - table rows or bullets - at the same
+ * spot, or refuse.
+ *
+ * research-lab files every finding as one row of CATALOG.md and one bullet of
+ * library/README.md, always in the same place, so any two research chats at once conflicted
+ * there (CATALOG.md 7 and README.md 3 of its refused files since 2026-09-01; the alerts on
+ * screen at 3:49am on 2026-10-02). Takes diff3 text: a hunk is settled only when its base
+ * section is EMPTY, because without the base a row one side rewrote (research-lab 4c61956:
+ * "AI diagnostic offer" -> "... and agency offers") looks exactly like a row it added, and
+ * keeping both would put the old wording back. Count lines above a list are not this
+ * function's: `maskCounts` takes them out first and `recount` puts them back.
+ */
+export function mergeListAddConflicts(diff3) {
+  const lines = diff3.split('\n')
+  const out = []
+  let healed = 0
+  for (let i = 0; i < lines.length; ) {
+    if (!lines[i].startsWith('<<<<<<<')) {
+      out.push(lines[i])
+      i++
+      continue
+    }
+    let base = -1
+    let sep = -1
+    let end = -1
+    for (let j = i + 1; j < lines.length; j++) {
+      if (base < 0 && lines[j].startsWith('|||||||')) base = j
+      else if (base >= 0 && sep < 0 && lines[j].startsWith('=======')) sep = j
+      else if (sep >= 0 && lines[j].startsWith('>>>>>>>')) {
+        end = j
+        break
+      }
+    }
+    // No base section, or one with lines in it: that is a rewrite, or nobody can tell.
+    if (base < 0 || sep !== base + 1 || end < 0) return null
+    const ours = lines.slice(i + 1, base)
+    const theirs = lines.slice(sep + 1, end)
+    if (!ours.length || !theirs.length) return null
+    if (![...ours, ...theirs].every(listItem)) return null
+    out.push(...dedupe([...ours, ...theirs]))
+    healed++
+    i = end + 1
+  }
+  return healed ? out.join('\n') : null
+}
+
+/** Key order is not content: `{a, b}` and `{b, a}` are the same entry. */
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`
+  if (v && typeof v === 'object')
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canon(v[k])}`)
+      .join(',')}}`
+  return JSON.stringify(v)
+}
+
+/**
+ * Two lanes that each ADDED whole entries to one generated JSON list, or refuse.
+ *
+ * research-lab's library/index.json gets one entry per finding, at the top: 6 of 6 of its
+ * refusals since 2026-09-18 were two lanes each adding their own. Git cuts those hunks in
+ * the MIDDLE of entries (neighbours share lines like `"tags": []`), so no rule reading the
+ * markers can settle them - parsed, the answer is plain. Takes the three whole versions.
+ *
+ * Settled only when every side is an array of objects with a unique `id`, every entry the
+ * base had is still there unchanged and in the same order on both sides, and an id both
+ * sides added has the same body. The result is written the way the file already was, and
+ * a file that is not exactly what JSON.stringify writes is never rewritten at all.
+ */
+export function mergeJsonListAdds(base, ours, theirs) {
+  let b, o, t
+  try {
+    ;[b, o, t] = [JSON.parse(base), JSON.parse(ours), JSON.parse(theirs)]
+  } catch {
+    return null
+  }
+  if (![b, o, t].every(Array.isArray)) return null
+  const idOf = (e) =>
+    e && typeof e === 'object' && !Array.isArray(e) && (typeof e.id === 'string' || typeof e.id === 'number')
+      ? String(e.id)
+      : null
+  const byId = (list) => {
+    const m = new Map()
+    for (const e of list) {
+      const id = idOf(e)
+      if (id === null || m.has(id)) return null
+      m.set(id, canon(e))
+    }
+    return m
+  }
+  const [bi, oi, ti] = [byId(b), byId(o), byId(t)]
+  if (!bi || !oi || !ti) return null
+  for (const [id, body] of bi) if (oi.get(id) !== body || ti.get(id) !== body) return null
+  const baseOrder = (list) => list.map(idOf).filter((id) => bi.has(id)).join('\n')
+  const want = [...bi.keys()].join('\n')
+  if (baseOrder(o) !== want || baseOrder(t) !== want) return null
+
+  const indent = /^\[\r?\n([ \t]+)/.exec(ours)?.[1] ?? 2
+  const nl = ours.endsWith('\n') ? '\n' : ''
+  const write = (list) => JSON.stringify(list, null, indent) + nl
+  if (write(o) !== ours || write(t) !== theirs) return null
+
+  // Ours as it is; each of theirs goes in just before the entry it preceded on their side,
+  // so two lanes that both added at the top read ours first, then theirs.
+  const out = [...o]
+  let before = null
+  for (let k = t.length - 1; k >= 0; k--) {
+    const id = idOf(t[k])
+    if (oi.has(id)) {
+      if (oi.get(id) !== canon(t[k])) return null
+    } else {
+      out.splice(before === null ? out.length : out.findIndex((x) => idOf(x) === before), 0, t[k])
+    }
+    before = id
+  }
+  return write(out)
 }
 
 /**

@@ -212,7 +212,10 @@ ok(
 ok('the sidebar has no "Other copies" list any more', !/Other<span|Other copies/.test(strip))
 ok('no copy row is drawn', !/<LaneRow|lane-tag/.test(strip))
 const app = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'App.tsx'), 'utf8')
-ok('a session card carries no copy chip', !/<SessionCopies\b/.test(app))
+// ...but every card says its PROJECT and which copy, as plain text on its own line, not a
+// button into the old copies card (Robert, later 2026-09-23: "how do i know what lane im
+// on? ... if session renamed then i dont know what project im in").
+ok('a session card says its project and copy as plain text', /<SessionCopies session=\{s\} boards=\{laneBoards\} \/>/.test(app) && !/onOpen/.test(readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'SessionCopies.tsx'), 'utf8')))
 ok('and nothing opens the old copies card or its help card', !/<LaneDialog\b|<LaneHelp\b/.test(app))
 const notice = (board, now) => words.copiesNotice({ repo: '/Users/x/Projects/demo', device: null, releasing: null, lastShip: null, hold: null, ...board }, now)
 const entry = (x) => ({ lane: 'a', dir: '/Users/x/Projects/demo-a', branch: 'lane-a', from: null, session: null, ownerPane: null, held: false, seen: 0, ready: false, conflicted: false, adoptable: false, resolver: null, ...x })
@@ -221,6 +224,14 @@ ok('a copy a chat is working in says nothing', notice({ lanes: [entry({ held: tr
 const clash = notice({ lanes: [entry({ conflicted: true })] })
 ok('a clash no chat has taken is one line with a button', Boolean(clash?.fix) && clash.text === 'Two chats changed the same lines in demo.', JSON.stringify(clash))
 ok('a clash a chat is already fixing says nothing', notice({ lanes: [entry({ conflicted: true, resolver: 'abc' })] }) === null)
+// The app hands every clash to a chat by itself (LaneStrip), so a fresh one on screen was
+// a button for a job already being done - two of them at 3:49am on 2026-10-02, Robert:
+// "would rather fixed permanently than see these alerts ... but no silent failures". A
+// clash is the person's only once no chat has taken it for CLASH_QUIET_MS.
+const now = Date.now()
+ok('a clash that just happened says nothing while a chat is handed it', notice({ lanes: [entry({ conflicted: true, conflictSince: now - 60_000 })] }, now) === null)
+const ignored = notice({ lanes: [entry({ conflicted: true, conflictSince: now - words.CLASH_QUIET_MS })] }, now)
+ok('...and one no chat took in that time is said, with the button', Boolean(ignored?.fix) && /^Two chats changed the same lines/.test(ignored.text), JSON.stringify(ignored))
 const stale = notice({ lanes: [entry({ ready: true })], hold: { reason: 'the typecheck fails on master', at: Date.now() - 7 * 3600_000 } })
 ok('finished work held back for hours is one line, with nothing to press', Boolean(stale) && !stale.fix && /^One chat's finished work has waited 7h to go into demo: /.test(stale.text), JSON.stringify(stale))
 for (const n of [clash, stale])

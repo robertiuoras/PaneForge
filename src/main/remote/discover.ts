@@ -10,6 +10,7 @@
 import { EventEmitter } from 'node:events'
 import { createSocket, type Socket } from 'node:dgram'
 import { networkInterfaces } from 'node:os'
+import { isTailnetAddress } from '../../shared/tailnet'
 
 export const DISCOVERY_PORT = 7312
 
@@ -172,9 +173,19 @@ export class Discovery extends EventEmitter {
  * Ethernet (or with WSL and Docker adapters, which is most of them) would only ever
  * announce on whichever one won.
  */
+// Windows can throw ERR_SYSTEM_ERROR while an adapter changes. Discovery is
+// best-effort; an address refresh must not tear down an established device link.
+function interfaces(): ReturnType<typeof networkInterfaces> {
+  try {
+    return networkInterfaces()
+  } catch {
+    return {}
+  }
+}
+
 export function broadcastAddresses(): string[] {
   const out = new Set<string>(['255.255.255.255'])
-  for (const list of Object.values(networkInterfaces())) {
+  for (const list of Object.values(interfaces())) {
     for (const net of list ?? []) {
       if (net.family !== 'IPv4' || net.internal) continue
       const ip = net.address.split('.').map(Number)
@@ -186,13 +197,19 @@ export function broadcastAddresses(): string[] {
   return [...out]
 }
 
-/** This machine's LAN addresses, shown so the other device can be pointed at one. */
+/**
+ * This machine's LAN addresses, shown so the other device can be pointed at one.
+ *
+ * A Tailscale address is the one that still works when the two machines are on
+ * different networks, so it sorts first: an invite tries `addresses` in order, and
+ * the plain-LAN ones only work when both desks share a network anyway.
+ */
 export function localAddresses(): string[] {
   const out: string[] = []
-  for (const list of Object.values(networkInterfaces())) {
+  for (const list of Object.values(interfaces())) {
     for (const net of list ?? []) {
       if (net.family === 'IPv4' && !net.internal) out.push(net.address)
     }
   }
-  return out
+  return out.sort((a, b) => Number(isTailnetAddress(b)) - Number(isTailnetAddress(a)))
 }

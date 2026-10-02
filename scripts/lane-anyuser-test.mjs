@@ -21,7 +21,7 @@
 //   node scripts/lane-anyuser-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -117,6 +117,18 @@ execFileSync(
   { cwd: repoRoot, stdio: 'pipe' }
 )
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
+
+// tsc emits `./logWrite` with no extension (right for the bundled app, unloadable by Node);
+// same fix as lane-owner-test: add the extension in the emitted copy, not in src.
+for (const f of readdirSync(join(out, 'main'))) {
+  if (!f.endsWith('.js')) continue
+  const at = join(out, 'main', f)
+  const fixed = readFileSync(at, 'utf8').replace(
+    /(from\s+['"])(\.\.?\/[^'"]+?)(['"])/g,
+    (all, head, spec, tail) => (/\.[a-z]+$/i.test(spec) ? all : `${head}${spec}.js${tail}`)
+  )
+  writeFileSync(at, fixed)
+}
 
 const load = () => import(`${pathToFileURL(join(out, 'main', 'laneBoard.js')).href}?n=${++loads}`)
 

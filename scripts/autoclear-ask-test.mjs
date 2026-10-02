@@ -7,7 +7,9 @@ import { transformSync, buildSync } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const source = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-const from = source.indexOf("ipcMain.handle('autoclear:ask'")
+// The handler body is a named function (the request-file watcher calls it too), and the
+// IPC line that follows it only delegates - so the slice starts at the function.
+const from = source.indexOf('function autoClearAsk(')
 const to = source.indexOf("\nipcMain.handle('autoclear:cancel'", from)
 assert.ok(from >= 0 && to > from, 'autoclear ask handler is present as a bounded IPC block')
 const handlerSource = transformSync(source.slice(from, to), { loader: 'ts', format: 'cjs', target: 'node20' }).code
@@ -15,7 +17,7 @@ const NOW = 1_000_000_000
 const shared = buildSync({entryPoints:[join(root,'src/shared/autoclear.ts')],bundle:true,platform:'node',format:'esm',write:false}).outputFiles[0].text
 const {hasFreshPaneHandoff, briefAnchor} = await import('data:text/javascript;base64,'+Buffer.from(shared).toString('base64'))
 
-function invoke(agent, handoff) {
+function invoke(agent, handoff, { pinned = false, held = '', native = 'native1' } = {}) {
   let handler
   let arms = 0
   const pane = { id: 'pane1', agent, cwd: '/project' }
@@ -24,7 +26,8 @@ function invoke(agent, handoff) {
     list: () => [pane],
     armAutoClear(id, plan) { arms++; return { ok: true, id, plan } }
   }
-  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'hasFreshPaneHandoff', 'briefAnchor', 'existsSync', 'Date', handlerSource)(
+  const keptContexts = new Map(held ? [['pane1', held]] : [])
+  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'hasFreshPaneHandoff', 'briefAnchor', 'existsSync', 'Date', 'keptOpen', 'keptContexts', 'resumeIdFor', handlerSource)(
     ipcMain,
     (raw) => raw,
     { owns: () => false },
@@ -36,10 +39,13 @@ function invoke(agent, handoff) {
     (id, hand) => hasFreshPaneHandoff(id, hand, NOW),
     briefAnchor,
     () => false,
-    { now: () => NOW }
+    { now: () => NOW },
+    () => pinned,
+    keptContexts,
+    () => native
   )
   const result = handler({}, { paneId: 'pane1', prompt: 'continue', steps: ['untrusted step'], seconds: 30, noResume: false })
-  return { result, arms }
+  return { result, arms, keptContexts }
 }
 
 const owned = (overrides = {}) => ({
@@ -70,4 +76,15 @@ for (const agent of ['codex', 'antigravity']) {
 const claude = invoke('claude', owned({ path: null, mtimeMs: 0, open: 0, steps: [] }))
 assert.equal(claude.result.ok, true, 'the established Claude Stop-hook path keeps its existing contract')
 assert.equal(claude.arms, 1, 'Claude still reaches the manager for its lifecycle checks')
+for (const agent of ['claude', 'codex', 'antigravity']) {
+  for (const preference of [{ pinned: true }, { held: 'native1' }]) {
+    const out = invoke(agent, owned(), preference)
+    assert.equal(out.result.ok, false, `${agent} respects keep-open and cancelled session`)
+    assert.equal(out.arms, 0, 'a kept session cannot arm again')
+  }
+  const fresh = invoke(agent, owned(), { held: 'old-native' })
+  assert.equal(fresh.result.ok, true, 'a new native conversation can clear normally')
+  assert.equal(fresh.keptContexts.size, 0, 'obsolete cancellation is discarded')
+}
+assert.equal(invoke('unknown-agent', owned()).arms, 0, 'unknown agents never receive a clear command')
 console.log('autoclear ask: non-Claude handoff guard behaved')

@@ -118,14 +118,20 @@ export function continueAfterRestore(
  *
  *   - the FIRST pane, which is the one being looked at;
  *   - a pane launched with a prompt, which was opened to do that work;
- *   - a pane the restart caught mid-turn, which `continueAfterRestore` is about to finish.
+ *   - a pane the restart caught mid-turn, which `continueAfterRestore` is about to finish;
+ *   - a pane the app still OWES a prompt (`owed` rows in the queued-prompt ledger): asleep it
+ *     has no composer, so the prompt is lost (six panes, 2026-10-02 18:44Z). It comes back
+ *     running whether or not auto-continue is on, because a person or the app queued those
+ *     rows; it does not also get continueAfterRestore's prompt, which is decided separately.
  */
 export function restoreAsleep(
   req: RestoredClock & { prompt?: string },
   index: number,
-  recoverEnabled: boolean
+  recoverEnabled: boolean,
+  owed = 0
 ): boolean {
   if (index === 0) return false
+  if (owed > 0) return false
   if (req.prompt) return false
   if (continueAfterRestore(req, recoverEnabled)) return false
   return true
@@ -150,4 +156,14 @@ export function restoreAsleep(
  */
 export function deskToWrite<T>(pending: T[] | null, live: T[]): T[] {
   return pending?.length ? [...pending, ...live] : live
+}
+
+/**
+ * How the launch log says the last desk was left. The hang watchdog writes `update` so the
+ * panes reopen unasked, which made a freeze read "left by an update" (2026-10-01 08:25:54Z,
+ * 18 panes, same version before and after); its marker gets the true wording.
+ */
+export function deskLeftBy(desk: { reason: 'quit' | 'update' | 'live'; relaunch?: 'watchdog' }): string {
+  if (desk.relaunch === 'watchdog') return 'by a hang restart (the app stopped answering)'
+  return desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'
 }

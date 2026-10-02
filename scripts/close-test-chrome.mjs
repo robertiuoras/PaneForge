@@ -27,6 +27,16 @@ async function descendantsOf(pid) {
   return descendants.reverse()
 }
 
+// How long a killed test Chrome gets to actually go. On the PC `taskkill /T /F` answers
+// SUCCESS for every process in the tree and they still take 34s and 58s to leave the
+// process table (measured 2026-09-23, chrome-headless-shell 131, two runs: 'exit' fired
+// 33982ms and 57808ms after taskkill returned). 5s turned every Chrome-driven fit suite's
+// passing run into "Test Chrome did not exit", and that red suite held every lane merge.
+// The kill is not in doubt there, only its speed, so Windows waits for it.
+export function exitWaitMs(platform = process.platform) {
+  return platform === 'win32' ? 90_000 : 5_000
+}
+
 // Close the browser through its own CDP connection first so Chromium reaps its children.
 // Windows kill() alone leaves children holding the profile. The fallback targets only
 // the browser PID spawned by this test, never any user's browser or process-name list.
@@ -71,8 +81,21 @@ export async function closeTestChrome(chrome, profile, ws) {
     }
     // taskkill can report an already-exited child while successfully stopping the tree.
     // Require the actual owned parent to exit and its profile to be removable below.
-    if (!await waitForExit(5_000)) throw new Error('Test Chrome did not exit', { cause: killError })
+    if (!await waitForExit(exitWaitMs())) throw new Error('Test Chrome did not exit', { cause: killError })
   }
   try { ws?.close() } catch { /* an already-closed socket cannot skip profile cleanup */ }
-  rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  // The parent leaving is not the helpers leaving. On the PC they go as slowly as the
+  // parent does (above) and hold the profile open meanwhile: rmSync's own retries ran out
+  // in ~2s with EPERM on a confirmfit run whose assertions had all passed (2026-09-23).
+  // Same budget as the exit wait - the removal has to succeed, only later.
+  const deadline = Date.now() + exitWaitMs()
+  for (;;) {
+    try {
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      return
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(error?.code) || Date.now() > deadline) throw error
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
+  }
 }

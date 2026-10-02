@@ -9,6 +9,7 @@
  */
 
 import type { PhonePeer } from './types'
+import { isTailnetAddress } from './tailnet'
 
 export type Origin = PhonePeer['origin']
 
@@ -29,7 +30,7 @@ export function originOf(address: string): Origin {
   const a = Number(v4[1])
   const b = Number(v4[2])
   // 100.64/10 is carrier-grade NAT, which on a desk with Tailscale on it means the tailnet.
-  if (a === 100 && b >= 64 && b <= 127) return 'tailnet'
+  if (isTailnetAddress(address)) return 'tailnet'
   if (a === 127) return 'this machine'
   if (a === 10) return 'this network'
   if (a === 192 && b === 168) return 'this network'

@@ -43,6 +43,14 @@ export interface DraftOptions {
    * has been chased three times and is not this feature's to reopen.
    */
   killClears: boolean
+  /**
+   * A `\` right before Enter is a new line in the box, not a send. Claude Code does this
+   * (seen in a dev copy 2026-09-23: a 77-word line ending in `\` was filed as a sent prompt
+   * while it still sat in the composer). Codex 0.155.1 does not - measured in a pty the same
+   * day, it sent the line with the backslash on the end - so the pane says which it is
+   * (`continuesOnBackslash`), and every preset leaves it off. `enterContinues` is the rule.
+   */
+  backslashNewline: boolean
 }
 
 /** The complete reconstruction: everything typed, paste included, nothing flattened. */
@@ -53,7 +61,8 @@ export const DRAFT_OPTIONS: DraftOptions = {
   paste: true,
   escapeAbandons: true,
   enterSubmits: true,
-  killClears: true
+  killClears: true,
+  backslashNewline: false
 }
 
 /**
@@ -71,7 +80,8 @@ export const SLASH_OPTIONS: DraftOptions = {
   paste: false,
   escapeAbandons: false,
   enterSubmits: false,
-  killClears: false
+  killClears: false,
+  backslashNewline: false
 }
 
 /**
@@ -96,7 +106,8 @@ export const SUBMIT_OPTIONS: DraftOptions = {
   paste: true,
   escapeAbandons: true,
   enterSubmits: false,
-  killClears: true
+  killClears: true,
+  backslashNewline: false
 }
 
 /**
@@ -111,7 +122,8 @@ export const LANE_OPTIONS: DraftOptions = {
   paste: false,
   escapeAbandons: true,
   enterSubmits: true,
-  killClears: true
+  killClears: true,
+  backslashNewline: false
 }
 
 export interface DraftState {
@@ -131,6 +143,14 @@ export interface DraftState {
   certain: boolean
   /** Mid bracketed paste: the closing marker has not arrived yet. */
   inPaste: boolean
+  /**
+   * The draft ends in a paste big enough that Claude Code shows it folded, as
+   * "[Pasted text #1]". Measured on v2.1.280 in a pty 2026-09-23 (same at 30 and 60 rows):
+   * a paste folds past 800 characters or at four lines. Enter after a folded paste SENDS
+   * even when the paste ends in `\`; after a short paste ending in `\` it is a new line,
+   * exactly as when the `\` is typed.
+   */
+  folded?: boolean
 }
 
 export function newDraft(): DraftState {
@@ -141,11 +161,27 @@ export interface DraftResult {
   state: DraftState
   /** Lines Enter was pressed on during this chunk, trimmed, oldest first. */
   submitted: string[]
+  /** An Enter in this chunk made a new line in the box instead of sending (`backslashNewline`). */
+  continued: boolean
 }
 
 function cap(text: string, o: DraftOptions): string {
   if (text.length <= o.max) return text
   return o.keep === 'head' ? text.slice(0, o.max) : text.slice(-o.max)
+}
+
+/** Claude Code's fold point for a paste: more characters than this, or this many line breaks. */
+const FOLD_CHARS = 800
+const FOLD_BREAKS = 3
+
+/**
+ * Will Enter on this draft make a new line in the box instead of sending it, in an agent
+ * whose composer does that (`continuesOnBackslash`)? The character before the cursor has to
+ * be the `\` itself: `foo \ ` + Enter sends (measured). Only when this parser has followed
+ * every edit, because after an arrow key the cursor may not be at the end.
+ */
+export function enterContinues(draft: DraftState): boolean {
+  return draft.certain && !draft.inPaste && !draft.folded && draft.text.endsWith('\\')
 }
 
 /** Erase back over trailing whitespace and then one word - Ctrl-W. */
@@ -167,12 +203,19 @@ export function feedDraft(
   const o = { ...DRAFT_OPTIONS, ...options }
   const submitted: string[] = []
   let { text, certain, inPaste } = prev
+  let folded = prev.folded ?? false
+  let continued = false
+  // The size of the paste in progress, for `folded`. Counted within this chunk: xterm hands
+  // a whole paste over as one write, so a paste split across chunks is the rare case, and
+  // an undercount there reads a folded paste as a short one.
+  let pasteChars = 0
+  let pasteBreaks = 0
 
-  if (!chunk) return { state: { text, certain, inPaste }, submitted }
+  if (!chunk) return { state: { text, certain, inPaste, folded }, submitted, continued }
   // The old slashTurn rule, kept because it is the reading that errs toward "a real
   // prompt": anything it cannot follow leaves the line alone rather than corrupting it.
   if (o.skipEscapeChunks && chunk.charCodeAt(0) === 0x1b) {
-    return { state: { text, certain, inPaste }, submitted }
+    return { state: { text, certain, inPaste, folded }, submitted, continued }
   }
 
   /**
@@ -199,10 +242,12 @@ export function feedDraft(
     submitted.push(text.trim())
     text = ''
     certain = true
+    folded = false
   }
   const abandon = (): void => {
     text = ''
     certain = true
+    folded = false
   }
 
   for (let i = 0; i < chunk.length; i++) {
@@ -233,9 +278,12 @@ export function feedDraft(
 
         if (introducer === '[' && params === '200' && final === '~') {
           if (o.paste) inPaste = true
+          pasteChars = 0
+          pasteBreaks = 0
           continue
         }
         if (introducer === '[' && params === '201' && final === '~') {
+          if (inPaste) folded = pasteChars > FOLD_CHARS || pasteBreaks >= FOLD_BREAKS
           inPaste = false
           continue
         }
@@ -270,6 +318,7 @@ export function feedDraft(
         i += 1
         if (!inPaste) {
           text = cap(text + '\n', o)
+          folded = false
           continue
         }
         continue
@@ -287,8 +336,12 @@ export function feedDraft(
       if (code === 13) {
         if (chunk[i + 1] === '\n') i++
         text = cap(text + '\n', o)
+        pasteChars++
+        pasteBreaks++
       } else if (code === 10 || code >= 0x20 || code === 9) {
         text = cap(text + chunk[i], o)
+        pasteChars++
+        if (code === 10) pasteBreaks++
       }
       continue
     }
@@ -297,6 +350,12 @@ export function feedDraft(
       if (code === 13 && chunk[i + 1] === '\n') i++
       if (burst && i < chunk.length - 1) {
         text = cap(text + '\n', o)
+        continue
+      }
+      // The box keeps the line and shows the backslash as a line break.
+      if (o.backslashNewline && enterContinues({ text, certain, inPaste, folded })) {
+        text = cap(text.slice(0, -1) + '\n', o)
+        continued = true
         continue
       }
       if (o.enterSubmits) submit()
@@ -328,9 +387,10 @@ export function feedDraft(
     }
     if (code < 0x20) continue
     text = cap(text + chunk[i], o)
+    folded = false
   }
 
-  return { state: { text, certain, inPaste }, submitted }
+  return { state: { text, certain, inPaste, folded }, submitted, continued }
 }
 
 /** One line, no newlines, capped - what a hover label and a chip can show. */
@@ -389,4 +449,59 @@ export function looksSplittable(text: string, min = 120): boolean {
         .map((s) => s.trim())
         .filter((s) => s.length > 12 && DOING.test(s))
   return jobs.length >= 3
+}
+
+/**
+ * The keystrokes that empty an agent CLI's prompt box, however many lines it holds.
+ *
+ * Which key does that is not the same in a shell and in an agent, and sending both is
+ * worse than either: Escape empties PowerShell's line but leaves Claude Code's box alone,
+ * Ctrl-U empties Claude Code's box (offered back on Ctrl-Y) but arrives at a PowerShell
+ * prompt as a literal character that turns the command into one it cannot find. One key
+ * each, both measured - a shell pane is sent Escape by its caller, never this.
+ *
+ * One Ctrl-U is not enough, though, and that was the bug: measured against a real Claude
+ * Code REPL, it empties a ONE-LINE box and leaves every earlier line of a shift+Enter
+ * draft exactly where it was. "/clear" then landed on the end of line one and the whole
+ * draft went to the model as a prompt - the run kept its context and burned a turn saying
+ * so. The wipe is a loop now: Ctrl-K takes whatever the cursor is sitting in front of,
+ * Ctrl-U the head behind it, Backspace joins the emptied line to the one above. One round
+ * per line walks a draft of any shape back to nothing, and a round that runs past the top
+ * is three no-ops on an empty box - so overshooting is free and undershooting is the bug.
+ *
+ * A draft the reconstruction has lost track of gets the flat budget rather than a count
+ * derived from text already known to be wrong.
+ *
+ * Caller: the /clear button (`App.tsx` `clearPane`), which empties the box before typing
+ * the command - a leftover line would ride along with it. Capped at 24 rounds; a round is
+ * three bytes.
+ */
+export function composerWipe(draft: DraftState | undefined): string {
+  const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
+  const rounds = Math.min(24, Math.max(4, lines + 2))
+  return '\x0b\x15\x7f'.repeat(rounds)
+}
+
+/** How long an unsent-draft flag sits untouched before the screen is asked about it. */
+export const DRAFT_RECHECK_IDLE_MS = 60_000
+/** ...and how often after that, per pane. */
+export const DRAFT_RECHECK_EVERY_MS = 30_000
+
+/**
+ * Is it time to read this pane's prompt box to see whether its draft flag still holds?
+ *
+ * `certain` goes false on any arrow, Home/End or Alt chord, and only Enter, Ctrl-C or Ctrl-U
+ * reset it - so a draft cleared any other way (Esc Esc, deleted a word at a time, sent from
+ * the phone) kept `drafting` set for good, and `drafting` holds a finished pane open. s42 on
+ * 1 Oct: finished 11:53pm Thu, held until Robert came back at 1:13am Fri. A minute of no
+ * keys on an idle agent pane, then a read every 30 s; `main/sessions.ts` `recheckDraft`
+ * clears the flag only on an EMPTY box read with nothing changed meanwhile.
+ */
+export function draftRecheckDue(
+  p: { drafting?: boolean; status: string; runSince?: number; agent: string; lastKeyboard: number },
+  lastCheck: number,
+  now: number
+): boolean {
+  return Boolean(p.drafting) && p.status === 'idle' && !p.runSince && p.agent !== 'shell' &&
+    now - p.lastKeyboard >= DRAFT_RECHECK_IDLE_MS && now - lastCheck >= DRAFT_RECHECK_EVERY_MS
 }

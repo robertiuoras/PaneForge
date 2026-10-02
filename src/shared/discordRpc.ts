@@ -88,6 +88,13 @@ export interface PresenceCounts {
   tokensToday?: number
   /** the same, over the last seven days including today */
   tokensWeek?: number
+  /**
+   * The name of another desk that is connected to this one and so already counts every
+   * pane here. Set, this machine says nothing: a Discord account shows ONE presence, and
+   * the PC's own desk of one pane went up as "1/1 session running" over the Mac's 7/15
+   * (2026-09-23).
+   */
+  countedBy?: string
 }
 
 /** The few fields of a pane the presence reads, so a caller can pass anything shaped like one. */
@@ -157,6 +164,169 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
   }
 }
 
+/** A desk's own numbers, as it tells the machines linked to it. */
+export type DeskCounts = Pick<
+  PresenceCounts,
+  'running' | 'total' | 'asleep' | 'names' | 'oldestRunSince' | 'tokensToday' | 'tokensWeek'
+>
+
+/**
+ * The Discord switch and the card's look, stamped with when a person last changed them.
+ *
+ * They travel with the desk report because the machine that speaks is often not the one
+ * somebody is sitting at: a switch flipped on the Mac has to reach the card the PC is
+ * sending. Every machine takes the newest it hears of, so a change made anywhere is the
+ * setting everywhere.
+ */
+export interface DiscordSettings {
+  on: boolean
+  style: DiscordStyle
+  /** epoch ms a person last changed them; 0 = never, which every change beats */
+  at: number
+}
+
+/**
+ * What one machine tells every machine linked to it about itself: its OWN panes only, and
+ * whether it can reach Discord. Sent both ways over the device link, because either end
+ * may be the one Discord is open on.
+ */
+export interface DeskReport {
+  counts: DeskCounts
+  /** PaneForge there is connected to a running Discord */
+  discord: boolean
+  /** its Discord settings; absent from a build older than settings that travel */
+  settings?: DiscordSettings
+}
+
+/** This machine, as the presence sees it. */
+export interface DeskSelf {
+  /** its paired-device id - the tie-break every desk agrees on */
+  id: string
+  /** PaneForge here is connected to a running Discord */
+  discord: boolean
+  /** this machine's own panes, counted - never the ones it mirrors from another */
+  own: PresenceCounts
+}
+
+/** Another machine linked to this one, either way round. */
+export interface DeskLink {
+  id: string
+  name: string
+  /** what it last said about itself; absent from a build older than desk reports */
+  report?: DeskReport
+  /** every pane it has, when this machine is connected to it */
+  panes?: PresenceSession[]
+}
+
+/**
+ * A desk report as it came off the wire, or nothing if it is not one. Shapes are checked
+ * where they land: a count that is not a small whole number is not a count.
+ */
+export function readDeskReport(raw: unknown): DeskReport | undefined {
+  const r = raw as { counts?: Record<string, unknown>; discord?: unknown } | null
+  const c = r?.counts
+  if (!c || typeof c !== 'object') return undefined
+  const n = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined
+  const running = n(c.running)
+  const total = n(c.total)
+  if (running === undefined || total === undefined) return undefined
+  const s = (r as { settings?: Record<string, unknown> }).settings
+  const style = readStyle(s?.style)
+  return {
+    counts: {
+      running: Math.min(running, total),
+      total,
+      asleep: Math.min(n(c.asleep) ?? 0, total),
+      names: Array.isArray(c.names) ? c.names.filter((x): x is string => typeof x === 'string').slice(0, 50) : [],
+      oldestRunSince: n(c.oldestRunSince) || undefined,
+      tokensToday: n(c.tokensToday),
+      tokensWeek: n(c.tokensWeek)
+    },
+    discord: r?.discord === true,
+    ...(style && typeof s?.on === 'boolean' && n(s?.at) !== undefined
+      ? { settings: { on: s.on, style, at: n(s.at) as number } }
+      : {})
+  }
+}
+
+/**
+ * Whether this copy of the app may put anything on the Discord profile at all.
+ *
+ * A test copy (`npm run try`, any named profile) is not anybody's desk. It starts with the
+ * switch the installed app had, reaches the same Discord, and is linked to none of the
+ * machines the real desk adds up, so its own handful of idle panes went on the profile
+ * while the real desk ran turns - "8 sessions idle" with 18 running (Robert, 2026-10-01:
+ * "not updated properly shows 8 idle session its completly wrong").
+ */
+export function presenceAllowed(on: boolean, profile: string): boolean {
+  return on && !profile
+}
+
+/**
+ * Settings a linked machine has that a person changed more recently than the ones here,
+ * or nothing. Newest wins and a tie keeps what is here, so two machines settle on one
+ * answer and stay there.
+ */
+export function newerSettings(own: DiscordSettings, links: DeskLink[]): DiscordSettings | undefined {
+  let best: DiscordSettings | undefined
+  for (const l of links) {
+    const theirs = l.report?.settings
+    if (theirs && theirs.at > (best ?? own).at) best = theirs
+  }
+  return best
+}
+
+/**
+ * The profile's numbers for the whole desk, and whether this machine is the one that
+ * says them.
+ *
+ * A Discord account shows ONE presence, and Robert runs Discord and PaneForge on both
+ * machines. The rule this replaces - "a desk with another desk connected to it stays quiet,
+ * because that desk counts its panes" - assumed a connected desk mirrors every pane. It
+ * mirrors the ones somebody picked: measured 2026-09-27, the Mac (14 panes, work going in
+ * five) went quiet for the PC, whose desk was the ONE Mac pane it mirrored, and the
+ * profile said "1 session idle".
+ *
+ * So every machine adds up every machine: its own panes plus what each linked machine
+ * says about its own (or, from a build too old to say, that machine's pane list), each
+ * machine once. And of the machines that can reach Discord, the one with the lowest
+ * device id speaks; the rest name it in `countedBy` and send a clear. Each machine tells
+ * the others whether it can reach Discord, so the pick follows Discord to whichever
+ * machine it is open on.
+ */
+export function wholeDesk(self: DeskSelf, links: DeskLink[]): PresenceCounts {
+  const counts: PresenceCounts = { ...self.own, names: [...self.own.names] }
+  const heard = new Map<string, DeskLink>()
+  for (const l of links) {
+    if (!l.id || l.id === self.id) continue
+    const had = heard.get(l.id)
+    // The same machine, linked both ways, is two links. What it says about itself beats a
+    // pane list read off it.
+    if (!had || (!had.report && l.report)) heard.set(l.id, { ...had, ...l, report: l.report ?? had?.report, panes: l.panes ?? had?.panes })
+  }
+  const speakers: Array<{ id: string; name: string }> = self.discord ? [{ id: self.id, name: '' }] : []
+  for (const l of heard.values()) {
+    const theirs: DeskCounts | undefined = l.report?.counts ?? (l.panes ? countPresence(l.panes, 0) : undefined)
+    if (theirs) {
+      counts.running += theirs.running
+      counts.total += theirs.total
+      counts.asleep += theirs.asleep
+      for (const name of theirs.names) if (!counts.names.includes(name)) counts.names.push(name)
+      if (theirs.oldestRunSince)
+        counts.oldestRunSince = Math.min(counts.oldestRunSince ?? theirs.oldestRunSince, theirs.oldestRunSince)
+      // Tokens are spent on the machine the agent runs on, so the day's total is a sum too.
+      if (theirs.tokensToday !== undefined) counts.tokensToday = (counts.tokensToday ?? 0) + theirs.tokensToday
+      if (theirs.tokensWeek !== undefined) counts.tokensWeek = (counts.tokensWeek ?? 0) + theirs.tokensWeek
+    }
+    if (l.report?.discord) speakers.push({ id: l.id, name: l.name })
+  }
+  speakers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const speaker = speakers[0]
+  if (speaker && speaker.id !== self.id) counts.countedBy = speaker.name
+  return counts
+}
+
 /**
  * What Discord itself last said about the presence - the only honest answer to "is this
  * working", and the reason the settings tab can stop guessing.
@@ -188,6 +358,8 @@ export interface PresenceStatus {
   cleared: boolean
   /** Discord refused the last frame, in its own words */
   error: string | null
+  /** another desk shows this one's panes, so this machine sends nothing (`PresenceCounts.countedBy`) */
+  countedBy?: string | null
 }
 
 export const NO_PRESENCE_STATUS: PresenceStatus = {
@@ -255,8 +427,23 @@ export interface DiscordButton {
  * existed has them and nothing else; `migrateRows` is the only thing that reads them.
  */
 export interface DiscordStyle {
+  /**
+   * The ready-made look the lines are built from, or `custom` for lines written by hand
+   * under Advanced. Anything but `custom` REBUILDS `rows` (`presetRows`), so the look
+   * and the two switches below are the whole of what a person picks.
+   */
+  preset: DiscordPresetId
+  /** say how many chats are waiting, not just how many are working */
+  idle: boolean
+  /** say how many tokens every agent spent today */
+  tokens: boolean
   /** the whole card's wording, in the order the user put it */
   rows: DiscordRow[]
+  /**
+   * The hand-written lines, kept while a ready-made look is picked, so choosing "Your own
+   * lines" again brings them back. A click on a look is not a delete (`pickLook`).
+   */
+  ownRows?: DiscordRow[]
   /** show Discord's elapsed clock under the lines */
   elapsed: boolean
   /** up to MAX_BUTTONS links under the presence */
@@ -285,19 +472,96 @@ export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
 export const DEFAULT_LINK_LABEL = 'toolstash.xyz/paneforge'
 export const DEFAULT_LINK_URL = 'https://toolstash.xyz/paneforge'
 
+/**
+ * The lines every card had before the ready-made looks: "3/6 sessions running", the
+ * project folders under it, "6 sessions idle" while nothing runs. Still the starting
+ * point a hand-written card is migrated from, and how an untouched old config is told
+ * apart from one somebody wrote.
+ */
 export const DEFAULT_ROWS: DiscordRow[] = [
   { id: 'running', text: DEFAULT_DETAILS, when: 'running', on: true },
   { id: 'projects', text: DEFAULT_STATE, when: 'running', on: true },
   { id: 'idle', text: DEFAULT_IDLE_DETAILS, when: 'idle', on: true }
 ]
 
+export type DiscordPresetId = 'counts' | 'fraction' | 'projects' | 'custom'
+
+/**
+ * The looks a person picks from, in the order the settings tab offers them. Counts only
+ * unless the look says otherwise: a Discord profile is public, so the folder names are a
+ * look somebody chooses, never the default (Robert, 2026-09-27).
+ */
+export const DISCORD_PRESETS: ReadonlyArray<{
+  id: Exclude<DiscordPresetId, 'custom'>
+  label: string
+  hint: string
+}> = [
+  { id: 'counts', label: 'Working and waiting', hint: 'How many chats are working, and how many are waiting.' },
+  { id: 'fraction', label: 'Out of all', hint: 'How many chats are working, out of every chat you have open.' },
+  {
+    id: 'projects',
+    label: 'With project names',
+    hint: 'Also names the folders being worked on. Anyone who can see your profile can read them.'
+  }
+]
+
+/**
+ * The lines a look is made of. Line one is always the numbers; line two is the project
+ * names for that look, otherwise today's tokens when that switch is on. A row that has
+ * nothing to say takes no line, so the order below is also the order they are drawn in.
+ */
+export function presetRows(preset: Exclude<DiscordPresetId, 'custom'>, idle: boolean, tokens: boolean): DiscordRow[] {
+  const spent = '{tokens} tokens today'
+  const rows: DiscordRow[] = [
+    {
+      id: 'running',
+      text: (preset === 'fraction' ? '{running}/{total} {sessions} running' : '{running} running') + (idle ? ' · {idle} idle' : ''),
+      when: 'running',
+      on: true
+    }
+  ]
+  if (preset === 'projects')
+    rows.push({ id: 'projects', text: tokens ? `on {projects} · ${spent}` : 'on {projects}', when: 'running', on: true })
+  rows.push({ id: 'idle', text: idle ? '{total} {sessions} idle' : '{total} {sessions} open', when: 'idle', on: true })
+  if (tokens) rows.push({ id: 'tokens', text: spent, when: preset === 'projects' ? 'idle' : 'always', on: true })
+  return rows
+}
+
+/**
+ * A style with a new look or switch, its lines rebuilt to match. A hand-written card
+ * keeps its lines: the switches that change wording belong to the looks.
+ */
+export function withLook(
+  style: DiscordStyle,
+  patch: Partial<Pick<DiscordStyle, 'preset' | 'idle' | 'tokens'>>
+): DiscordStyle {
+  const next = { ...style, ...patch }
+  return next.preset === 'custom' ? next : { ...next, rows: presetRows(next.preset, next.idle, next.tokens) }
+}
+
+/**
+ * A look picked in Settings. Leaving "Your own lines" keeps them in `ownRows`; picking it
+ * again brings them back, or starts from the look's lines when there were none.
+ */
+export function pickLook(style: DiscordStyle, preset: DiscordPresetId): DiscordStyle {
+  if (preset === style.preset) return style
+  const copy = (rows: DiscordRow[]): DiscordRow[] => rows.map((r) => ({ ...r }))
+  if (preset === 'custom') return { ...style, preset, rows: copy(style.ownRows ?? style.rows) }
+  return withLook({ ...style, ...(style.preset === 'custom' ? { ownRows: copy(style.rows) } : {}) }, { preset })
+}
+
 export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
-  rows: DEFAULT_ROWS.map((r) => ({ ...r })),
+  preset: 'counts',
+  idle: true,
+  tokens: false,
+  rows: presetRows('counts', true, false),
   elapsed: true,
   buttons: [
     { id: 'link', label: DEFAULT_LINK_LABEL, url: DEFAULT_LINK_URL, on: true }
   ]
 }
+
+const PRESET_IDS: ReadonlyArray<string> = [...DISCORD_PRESETS.map((p) => p.id), 'custom']
 
 /** A row id nothing else on the card is using. */
 export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
@@ -315,6 +579,24 @@ export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
  */
 export function migrateRows(raw: Partial<DiscordStyle> | undefined): DiscordStyle {
   const base = raw ?? {}
+  const style = {
+    ...migrateWording(base),
+    ...(Array.isArray(base.ownRows) && base.ownRows.length ? { ownRows: base.ownRows.map((r) => ({ ...r })) } : {})
+  }
+  // A look is a look: its lines are rebuilt from it every time, so a wording change in a
+  // later version reaches everyone on that look rather than living on in their config.
+  if (base.preset && PRESET_IDS.includes(base.preset))
+    return withLook({ ...style, preset: base.preset, idle: base.idle !== false, tokens: base.tokens === true }, {})
+  // Written before the looks existed. Lines nobody ever changed are the old default,
+  // which named project folders on a public profile - they become the new default. Lines
+  // somebody wrote are theirs, kept exactly, as a hand-written card.
+  const untouched = JSON.stringify(style.rows) === JSON.stringify(DEFAULT_ROWS)
+  return untouched
+    ? withLook({ ...style, preset: DEFAULT_DISCORD_STYLE.preset, idle: true, tokens: false }, {})
+    : { ...style, preset: 'custom', idle: true, tokens: needsTokens(style) }
+}
+
+function migrateWording(base: Partial<DiscordStyle>): Omit<DiscordStyle, 'preset' | 'idle' | 'tokens'> {
   if (Array.isArray(base.rows) && base.rows.length) {
     return {
       rows: base.rows.map((r) => ({ ...r })),
@@ -409,8 +691,98 @@ export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['{tokensWeek}', 'the same over the last seven days']
 ]
 
+/**
+ * One button per `DISCORD_TOKENS` entry, in plain words, for the "insert this" chips in
+ * the editor. `label` is what the button says; `phrase` is what gets added to the line -
+ * never the raw `{token}` itself, so nobody has to know that syntax exists to build a
+ * line. Order matches `DISCORD_TOKENS`.
+ */
+export const TOKEN_PHRASES: ReadonlyArray<{ token: string; label: string; phrase: string }> = [
+  { token: '{running}', label: 'Chats working', phrase: '{running} running' },
+  { token: '{total}', label: 'All chats', phrase: '{total} {sessions} total' },
+  { token: '{idle}', label: 'Chats waiting', phrase: '{idle} idle' },
+  { token: '{asleep}', label: 'Chats asleep', phrase: '{asleep} asleep' },
+  { token: '{sessions}', label: 'Working out of all', phrase: DEFAULT_DETAILS },
+  { token: '{projects}', label: 'Projects', phrase: 'on {projects}' },
+  { token: '{project}', label: 'First project', phrase: 'on {project}' },
+  { token: '{tokens}', label: 'Tokens today', phrase: '{tokens} tokens today' },
+  { token: '{tokensWeek}', label: 'Tokens this week', phrase: '{tokensWeek} tokens this week' }
+]
+
+/**
+ * A whole ready-made line, for the "Add a line" picker - a complete row with sensible
+ * wording and timing, so starting a new line never needs typing.
+ */
+export const PRESET_ROWS: ReadonlyArray<{ label: string; text: string; when: RowWhen }> = [
+  { label: 'Chats working', text: DEFAULT_DETAILS, when: 'running' },
+  { label: 'Projects being worked on', text: DEFAULT_STATE, when: 'running' },
+  { label: 'Chats asleep', text: '{asleep} asleep', when: 'always' },
+  { label: 'Tokens spent today', text: '{tokens} tokens today', when: 'always' },
+  { label: 'Tokens spent this week', text: '{tokensWeek} tokens this week', when: 'always' }
+]
+
+/**
+ * Adds `phrase` to `text`, or takes it back out if it is already there - the chip is a
+ * toggle, not just an inserter. Joined with " · ", the same separator the rest of the
+ * app uses to run short facts together, and never put in front of an empty line.
+ */
+export function togglePhrase(text: string, phrase: string): string {
+  const parts = text
+    .split(' · ')
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const at = parts.indexOf(phrase)
+  if (at >= 0) {
+    parts.splice(at, 1)
+  } else {
+    parts.push(phrase)
+  }
+  return parts.join(' · ')
+}
+
+/**
+ * A style as it came off the device link, or nothing if it is not one. Every field is
+ * rebuilt from checked parts, so a malformed row can never reach the card - Discord
+ * throws the WHOLE presence away over one bad field.
+ */
+export function readStyle(raw: unknown): DiscordStyle | undefined {
+  const r = raw as Record<string, unknown> | null
+  if (!r || typeof r !== 'object' || !Array.isArray(r.rows)) return undefined
+  const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined)
+  const readRows = (list: unknown): DiscordRow[] => {
+    const out: DiscordRow[] = []
+    for (const x of (Array.isArray(list) ? list : []).slice(0, 20) as Array<Record<string, unknown> | null>) {
+      const id = str(x?.id, 40)
+      const text = str(x?.text, 300)
+      if (!id || text === undefined) continue
+      const when = x?.when === 'running' || x?.when === 'idle' ? x.when : 'always'
+      out.push({ id, text, when, on: x?.on !== false })
+    }
+    return out
+  }
+  const rows = readRows(r.rows)
+  if (!rows.length) return undefined
+  const ownRows = readRows(r.ownRows)
+  const buttons: DiscordButton[] = []
+  for (const x of (Array.isArray(r.buttons) ? r.buttons : []).slice(0, MAX_BUTTONS) as Array<Record<string, unknown> | null>) {
+    const id = str(x?.id, 40)
+    const label = str(x?.label, LABEL_MAX)
+    const url = str(x?.url, URL_MAX)
+    if (id && label !== undefined && url !== undefined) buttons.push({ id, label, url, on: x?.on !== false })
+  }
+  return migrateRows({
+    preset: typeof r.preset === 'string' && PRESET_IDS.includes(r.preset) ? (r.preset as DiscordPresetId) : 'custom',
+    idle: r.idle !== false,
+    tokens: r.tokens === true,
+    rows,
+    ...(ownRows.length ? { ownRows } : {}),
+    elapsed: r.elapsed !== false,
+    buttons
+  })
+}
+
 /** Whether anything on the card asks for the token numbers, which cost a disk walk. */
-export function needsTokens(style: DiscordStyle): boolean {
+export function needsTokens(style: Pick<DiscordStyle, 'rows'>): boolean {
   return (style.rows ?? []).some((r) => r.on && /\{tokens(Week)?\}/.test(r.text))
 }
 
@@ -506,7 +878,7 @@ export function buildActivity(
   /** test seam; the app never passes it */
   now: number = Date.now()
 ): Record<string, unknown> | null {
-  if (c.total <= 0) return null
+  if (c.total <= 0 || c.countedBy) return null
   const rows = visibleRows(c, style)
   if (!rows.length) return null
 

@@ -15,8 +15,25 @@
 
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, readFile, rename, writeFile, appendFile } from 'node:fs/promises'
+import { appendFileSync } from 'node:fs'
+import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { BEAT_MS, beat, decide, fresh, HANG_MS, type MainWatchState } from '../shared/mainWatch'
+import {
+  BEAT_MS,
+  beat,
+  decide,
+  describeTasklist,
+  fresh,
+  HANG_MS,
+  silenceLine,
+  machineBusyPct,
+  READ_MACHINE_AFTER_MS,
+  STARVED_HANG_FACTOR,
+  type CpuTimes,
+  type MainWatchState,
+  type Vitals
+} from '../shared/mainWatch'
+import { readPressure } from './memory'
 
 interface Hello {
   t: 'hello'
@@ -35,33 +52,72 @@ interface Hello {
 let hello: Hello | null = null
 let watch: MainWatchState = fresh()
 let hangMs = 0
+/** The most recent beat's own reported vitals, for the silence line when they stop. */
+let last: { at: number; vitals: Vitals | null } | null = null
+let beatsReceived = 0
+/** os.cpus() times as of the previous tick, so act() can read machine load over one tick. */
+let prevCpus: CpuTimes[] = cpus().map((c) => ({ ...c.times }))
+let acted = false
+const startedAt = Date.now()
+/** The machine reported memory pressure on the last tick of a silence (see `STARVED_HANG_FACTOR`). */
+let starved = false
+/** When the "waiting instead of relaunching" line was written for the current silence; 0 = not yet. */
+let starvedSaidAt = 0
 
 const port = process.parentPort
 
 port.on('message', (e) => {
-  const msg = e.data as { t?: string } | null
+  const msg = e.data as { t?: string; now?: number; vitals?: Vitals } | null
   if (!msg || typeof msg.t !== 'string') return
   if (msg.t === 'hello') {
     hello = msg as Hello
     hangMs = (hello.hangMs ?? 0) > 0 ? hello.hangMs ?? 0 : 0
-  } else if (msg.t === 'beat') watch = beat(watch)
+  } else if (msg.t === 'beat') {
+    if (starvedSaidAt && hello) {
+      const silentS = Math.round((watch.silentTicks * BEAT_MS) / 1000)
+      void note(hello, `main: beating again after ${silentS}s of silence while memory was short - not relaunched, every pane kept`)
+    }
+    starvedSaidAt = 0
+    starved = false
+    watch = beat(watch)
+    beatsReceived++
+    // Tolerate a beat with no vitals: an older main, or one that failed to compute them.
+    last = { at: Date.now(), vitals: msg.vitals ?? null }
+  }
 })
 
 const timer = setInterval(() => {
   const now = Date.now()
-  const next = decide(watch, now, hangMs || HANG_MS)
+  const nowCpus = cpus().map((c) => ({ ...c.times }))
+  const limit = hangMs || HANG_MS
+  // Only a silence asks about memory, and early: the reading is cached and refreshed in the
+  // background, so asking from 10 s on means the answer at 75 s is a fresh one.
+  starved = watch.receivedBeat && watch.silentTicks * BEAT_MS >= READ_MACHINE_AFTER_MS && readPressure() !== 'normal'
+  const next = decide(watch, now, limit, starved)
   watch = next.state
-  if (next.action !== 'act') return
+  if (next.action !== 'act') {
+    const silentMs = watch.silentTicks * BEAT_MS
+    if (starved && !starvedSaidAt && hello && silentMs >= limit) {
+      starvedSaidAt = now
+      const waitMin = Math.round((limit * STARVED_HANG_FACTOR) / 60_000)
+      void note(
+        hello,
+        `main: no heartbeat for ${Math.round(silentMs / 1000)}s, but the machine is short of memory (${Math.round(freemem() / 1048576)}MB free of ${Math.round(totalmem() / 1048576)}MB) - waiting up to ${waitMin} min instead of relaunching, which would end every pane`
+      )
+    }
+    prevCpus = nowCpus
+    return
+  }
   clearInterval(timer)
-  act(now)
+  act(now, prevCpus, nowCpus)
 }, BEAT_MS)
 
-function act(now: number): void {
+function act(now: number, cpusBefore: CpuTimes[], cpusAfter: CpuTimes[]): void {
   const h = hello
   if (!h) return
+  acted = true
   const silent = Math.round((watch.silentTicks * BEAT_MS) / 1000)
   const what = h.packaged ? 'relaunching' : 'stopping it, this is a development copy so it will not be reopened'
-  const line = `main: no heartbeat for ${silent}s - ${what} (pid ${h.pid})`
   // Disk can be why the main process wedged. The evidence writes are best effort and share
   // one six-second budget, after which recovery proceeds even if their I/O is still stuck.
   let recovered = false
@@ -72,9 +128,56 @@ function act(now: number): void {
   }
   const budget = setTimeout(recover, 6_000)
   budget.unref?.()
-  void Promise.allSettled([note(h, line), sample(h), markDeskForRestart(h)]).then(() => {
+  const lastEntry = last && last.vitals ? { agoS: Math.round((now - last.at) / 1000), vitals: last.vitals } : null
+  // Only the log line waits on the OS reading; the sample and the desk start at once, so a
+  // slow tasklist never pushes them past the budget.
+  const noted = readOsProc(h.pid, h.platform).then((proc) =>
+    note(
+      h,
+      silenceLine({
+        silentS: silent,
+        what,
+        pid: h.pid,
+        last: lastEntry,
+        machine: {
+          freeMb: Math.round(freemem() / 1048576),
+          totalMb: Math.round(totalmem() / 1048576),
+          busyPct: machineBusyPct(cpusBefore, cpusAfter)
+        },
+        proc
+      })
+    )
+  )
+  void Promise.allSettled([noted, sample(h), markDeskForRestart(h)]).then(() => {
     clearTimeout(budget)
     recover()
+  })
+}
+
+/**
+ * Windows' own view of main's pid (`tasklist`), or `ps` elsewhere. Resolves null on error or
+ * timeout rather than rejecting, so a hung OS query never delays the six-second recovery
+ * budget beyond its own bound.
+ */
+function readOsProc(pid: number, platform: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (platform === 'win32') {
+      execFile(
+        'tasklist',
+        ['/FI', `PID eq ${pid}`, '/V', '/FO', 'CSV', '/NH'],
+        { timeout: 2_500, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) return resolve(null)
+          resolve(describeTasklist(stdout))
+        }
+      )
+    } else {
+      execFile('ps', ['-o', 'time=,%cpu=,rss=,state=', '-p', String(pid)], { timeout: 2_500 }, (err, stdout) => {
+        if (err || !stdout) return resolve(null)
+        const line = stdout.trim().replace(/\s+/g, ' ')
+        resolve(line ? `ps says ${line} (TIME %CPU RSS-KB STATE)` : null)
+      })
+    }
   })
 }
 
@@ -146,6 +249,8 @@ async function markDeskForRestart(h: Hello): Promise<void> {
     const clearedAt = Number.isFinite(clearValue) && clearValue > 0 ? clearValue : 0
     if (!desk || (clearedAt > 0 && clearedAt >= generation(desk))) return
     desk.reason = 'update'
+    // Wording only: the launch log says "hang restart" rather than "update" (see `Desk.relaunch`).
+    desk.relaunch = 'watchdog'
     desk.clean = true
     desk.at = Date.now()
     desk.writtenAt = Math.max(Date.now(), generation(desk) + 1, clearedAt + 1)
@@ -214,3 +319,21 @@ function launchRecovery(command: string, args: string[], pid: number): void {
 function quote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`
 }
+
+/**
+ * The helper's own exit, from inside itself. A utilityProcess killed from outside
+ * (`TerminateProcess`, an OS OOM kill) runs no exit handler at all - so a `main watchdog:
+ * stopped (0)` line in the parent's log with no matching line here, next to it, is how a
+ * kill from outside is told apart from the helper quitting on its own. Best effort: a
+ * process already exiting is not the place to risk an unhandled throw.
+ */
+process.on('exit', (code) => {
+  try {
+    if (!hello) return
+    const uptimeS = Math.round((Date.now() - startedAt) / 1000)
+    const line = `main watchdog: helper exiting by itself (code ${code}) after ${uptimeS}s, ${beatsReceived} beats received, acted=${acted}`
+    appendFileSync(join(hello.userData, 'paneforge-errors.log'), `[${new Date().toISOString()}] ${line}\n`)
+  } catch {
+    /* an unwritable profile, or no userData yet: best effort only */
+  }
+})

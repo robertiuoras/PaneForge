@@ -31,11 +31,23 @@ export interface Desk {
   reason: DeskReason
   /** Internal ordering generation; unlike `at`, this changes for every disk snapshot. */
   writtenAt?: number
+  /**
+   * Set only by the hang watchdog, which writes `reason: 'update'` on purpose so the panes
+   * reopen unasked. It changes no behaviour: it only lets the launch log say "hang restart"
+   * instead of calling a freeze an update (2026-10-01 08:25:54Z, 18 panes, no update).
+   */
+  relaunch?: 'watchdog'
 }
 
 /** Older than this and those panes are not the desk you remember leaving. */
 export const MAX_DESK_AGE_MS = 7 * 24 * 60 * 60 * 1000
-/** Twelve CLIs starting at once on a cold boot pegs the machine. */
+/**
+ * Twelve CLIs starting at once on a cold boot pegs the machine - so at most this many
+ * restored panes come back with their agent RUNNING. Every other pane still comes back,
+ * asleep: a card with no process costs nothing, and a press wakes it in its conversation.
+ * It used to cap the panes themselves, and the thirteenth was simply lost (2026-09-23
+ * 06:46: "desk offered 12 pane(s) (+1 more not offered)" after a crash with 13 open).
+ */
 export const MAX_RESTORE = 12
 /** A burst of pane changes settles for this long before it costs a write. */
 const DEBOUNCE_MS = 1500
@@ -115,7 +127,8 @@ export function readDesk(): Desk | null {
         at: typeof raw.at === 'number' ? raw.at : 0,
         clean: Boolean(raw.clean),
         reason: raw.reason === 'quit' || raw.reason === 'update' ? raw.reason : 'live',
-        writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0
+        writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0,
+        ...(raw.relaunch === 'watchdog' ? { relaunch: 'watchdog' as const } : {})
       }
     } catch {
       return null
@@ -159,7 +172,8 @@ export function readPreviousDesk(): Desk | null {
       at: typeof raw.at === 'number' ? raw.at : 0,
       clean: Boolean(raw.clean),
       reason: raw.reason === 'quit' || raw.reason === 'update' ? raw.reason : 'live',
-      writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0
+      writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0,
+      ...(raw.relaunch === 'watchdog' ? { relaunch: 'watchdog' as const } : {})
     }
   } catch {
     return null

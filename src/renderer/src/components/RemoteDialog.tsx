@@ -9,6 +9,7 @@ import type {
   RemoteState
 } from '@shared/types'
 import { reachWords } from '@shared/net'
+import { isTailnetAddress } from '@shared/tailnet'
 import { handoffReport } from '@shared/handoff'
 import { versionGap } from '@shared/remoteVersion'
 import { ageWords, jobsSummary, type BackJob } from '@shared/backJobs'
@@ -16,9 +17,11 @@ import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import AgentPicker from './AgentPicker'
 import Blurb from './Blurb'
+import InstallConsole from './InstallConsole'
 import useDialogFocus from './useDialogFocus'
 import { Checkbox, Switch } from './Controls'
 import Select from './Select'
+import { isMac } from '../platform'
 import './devices-mobile.css'
 
 const api = window.api
@@ -613,6 +616,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
   const [manual, setManual] = useState(false)
   const [name, setName] = useState(state?.self.name ?? '')
   const [showCode, setShowCode] = useState(false)
+  const [installingTailscale, setInstallingTailscale] = useState(false)
   /**
    * The device whose launcher is open, and what it answered when asked what it has.
    * Both come from over there: this machine's projects root and this machine's
@@ -966,6 +970,35 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     : 'No network - nothing to invite anyone to yet.'}
                 </span>
               </div>
+              {!self.addresses.some(isTailnetAddress) && (
+                <div className="dev-tailnet">
+                  <span className="hint">
+                    Machines on different Wi-Fi or networks? Install Tailscale (free) on both
+                    and sign in with the same account, then pair as usual.
+                  </span>
+                  {isMac ? (
+                    <button
+                      className="ghost small"
+                      onClick={() => api.openExternal('https://tailscale.com/download/mac')}
+                    >
+                      Install Tailscale
+                    </button>
+                  ) : (
+                    <>
+                      <button className="ghost small" onClick={() => setInstallingTailscale(true)}>
+                        Install Tailscale
+                      </button>
+                      {installingTailscale && (
+                        <InstallConsole
+                          agentId="__tailscale__"
+                          onDone={() => setInstallingTailscale(false)}
+                          start={() => void api.installTailscale()}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <Fold label="Pair by hand">
                 <div className="dev-field">
                   <span className="dev-key">Pairing code</span>

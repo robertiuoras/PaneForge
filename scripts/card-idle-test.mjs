@@ -50,7 +50,6 @@ for (const f of [
   'OffloadSoon.tsx',
   'AutoClearToast.tsx',
   'StopServer.tsx',
-  'LoginCard.tsx',
   'UpdateToast.tsx',
   'TourCard.tsx'
 ]) {

@@ -87,9 +87,9 @@ for (const mode of ['plain', 'staged', 'empty', 'cancel']) {
     lastByteAt: { current: 0 }, lastBusyCheck: Date.now(), checkBusy: noop, settle2: undefined,
     window: { clearTimeout: noop, setTimeout: noop }, armWipeCheck: noop, bumpTotal: noop,
     dead: false, scrollIntent: { current: 0 }, setScrolledUp: noop,
-    wipeTimer: undefined, wipeSnap: null, makeKeeper: () => x => x, readingSnapshot: false
+    wipeTimer: undefined, wipeSnap: null, dropWipeSnap: noop, makeKeeper: () => x => x, readingSnapshot: false
   }
-  const cancel = runInNewContext(js(between('    let gone = false', '    /**\n     * Whether the agent')) + js(between('    const receiveReset =', '    /**\n     * Full repair')) + '\n(() => { gone = true; finishInitialReplay?.(); initialReplay = undefined })', context)
+  const cancel = runInNewContext(js(between('    let gone = false', '    /**\n     * Whether the agent')) + js(between('    let widenForReset:', '    /**\n     * Full repair')) + '\n(() => { gone = true; finishInitialReplay?.(); initialReplay = undefined })', context)
   const completed = job.run()
   if (mode === 'cancel') {
     cancel()

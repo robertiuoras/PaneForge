@@ -48,8 +48,6 @@ export interface MoveSoonProps {
   soons: CloseSoon[]
   /** Leave these panes alone - the same `keepOpen` the card menu and the mascot call. */
   onKeep: (ids: string[]) => void
-  /** Stop waiting and do it now. */
-  onNow: (ids: string[]) => void
 }
 
 /**
@@ -87,13 +85,42 @@ const TICK_SKEW_MS = 12
  * upstream), and the machine is named because "moving a pane" without saying where is a
  * sentence somebody has to go and investigate.
  */
-export function moveSoonWords(soon: CloseSoon): string {
+export function moveSoonWords(soon: CloseSoon): [before: string, who: string, after: string] {
   const who = soon.names.length === 1 ? soon.names[0] : `${soon.names.length} panes`
-  if (soon.sleep) return `Putting ${who} to sleep`
-  return soon.move ? `Moving ${who} to ${soon.move.deviceName}` : `Closing ${who}`
+  if (soon.sleep) return ['Putting', who, 'to sleep']
+  return soon.move ? ['Moving', who, `to ${soon.move.deviceName}`] : ['Closing', who, '']
 }
 
-export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React.JSX.Element | null {
+/**
+ * Why, for the card's tooltip. It was a second line on every card, and with the buttons
+ * a countdown was four lines stacked per pane - Robert, 2026-09-25: "its too long too much
+ * unnecessary info". The sentence above says what and when; this is for whoever asks.
+ */
+export function moveSoonWhy(soon: CloseSoon): string {
+  if (soon.why === 'turn') return 'Its turn just ended.'
+  if (soon.why === 'idle')
+    return soon.sleep
+      ? 'Quiet a long time. Its card and conversation stay - a press wakes it.'
+      : 'Quiet a long time. Review keeps its reply - Continue brings it back.'
+  return 'This machine is low on memory.'
+}
+
+/**
+ * The sentence, with only the pane NAME allowed to give way: on one line a long name used
+ * to push "to Gamer-PC" off the end, and where it is going is the half worth reading.
+ */
+export function MoveSoonSay({ words }: { words: [string, string, string] }): React.JSX.Element {
+  const [before, who, after] = words
+  return (
+    <div className="move-soon-say">
+      <span>{before}</span>
+      <span className="move-soon-name">{who}</span>
+      {after ? <span>{after}</span> : null}
+    </div>
+  )
+}
+
+export default function MoveSoon({ soons, onKeep }: MoveSoonProps): React.JSX.Element | null {
   // One tick for the whole stack, mounted only while something is counting: this is the
   // shape `AskCountdown` uses, and a subscription that exists when there is nothing
   // counting is a wakeup an hour for a card nobody is looking at.
@@ -121,29 +148,21 @@ export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React
   return (
     <>
       {soons.map((soon) => (
-        <div className="move-soon" role="status" data-testid="move-soon" key={soonKey(soon)}>
+        // One line: what, when, one answer. The safe answer only - the countdown already
+        // is the "do it", so a second button saying "now" was a line nobody needed.
+        <div
+          className="move-soon line"
+          role="status"
+          data-testid="move-soon"
+          key={soonKey(soon)}
+          title={moveSoonWhy(soon)}
+        >
           <CardX onDismiss={() => onKeep(soon.ids)} />
-          <div className="move-soon-say">
-            {moveSoonWords(soon)} in{' '}
-            <span className="move-soon-count">{secondsLeft(soon.deadline, now)}s</span>
-          </div>
-          <div className="move-soon-why">
-            {soon.why === 'idle'
-              ? soon.sleep
-                ? 'It has been quiet a long time. Everything on it is kept - a press wakes it.'
-                : 'It has been quiet a long time.'
-              : soon.why === 'turn'
-                ? 'Its turn just ended.'
-                : 'This machine is running out of memory.'}
-          </div>
-          <div className="move-soon-acts">
-            <button type="button" className="primary" onClick={() => onKeep(soon.ids)}>
-              {soon.sleep ? 'Keep it awake' : soon.move ? 'Keep it here' : 'Keep it open'}
-            </button>
-            <button type="button" className="ghost" onClick={() => onNow(soon.ids)}>
-              {soon.sleep ? 'Sleep now' : soon.move ? 'Move now' : 'Close now'}
-            </button>
-          </div>
+          <MoveSoonSay words={moveSoonWords(soon)} />
+          <span className="move-soon-count">{secondsLeft(soon.deadline, now)}s</span>
+          <button type="button" className="primary move-soon-keep" onClick={() => onKeep(soon.ids)}>
+            {soon.move ? 'Keep here' : 'Keep'}
+          </button>
         </div>
       ))}
     </>

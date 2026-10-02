@@ -50,6 +50,20 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   console.log('reply-read: last reply, prompt, running agent ok')
 }
 
+// 1b. A background Workflow graph is out the same way (2026-09-27: pane s5 closed on a
+// running research graph because only Agent/SendMessage counted; result text is the real one).
+{
+  const lines = [
+    assistant([{ type: 'tool_use', id: 'toolu_01MZ', name: 'Workflow', input: { scriptPath: '/x/research-verify.mjs', args: {} } }]),
+    user([{ tool_use_id: 'toolu_01MZ', type: 'tool_result', content: "Workflow launched in background. Task ID: wtzhrpsxe\nSummary: Breadth-first research: parallel lanes, adversarial verification, sourced synthesis\nRun ID: wf_c14fc25e-2b0" }]),
+    assistant([{ type: 'text', text: 'Research is running.\n\nNext steps:\n1. Waiting on the research run.' }])
+  ]
+  assert.equal(readClaudeReply(lines.join('\n')).runningAgents, 1, 'a launched workflow with no notification is running')
+  const note = row({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>wtzhrpsxe</task-id>\n<tool-use-id>toolu_01MZ</tool-use-id>\n<status>completed</status>\n</task-notification>' })
+  assert.equal(readClaudeReply([...lines, note].join('\n')).runningAgents, 0, 'its notification ends it')
+  console.log('reply-read: background workflow ok')
+}
+
 // 2. A foreground agent's result IS its report; an errored launch is nothing.
 {
   const fg = [
@@ -105,7 +119,25 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(r.text, 'Done: two fixes.')
   assert.equal(r.prompt, 'audit the last week')
   assert.equal(r.runningAgents, 0)
+  assert.equal(r.promptAt, Date.parse('2026-09-22T11:35:51.060Z'), 'the prompt carries its row time')
   console.log('reply-read: codex rollout ok')
+}
+
+// 5b. A PASTED prompt is the person, and its row time is when the pane was last asked.
+// The real row (s81-muk0ypqg, transcript 21b47890, 2026-09-27 16:31:51.955Z): a string
+// opening `\n\n<pasted_content id="05c9">`, with no closing tag in that row.
+{
+  const pasted = row({ parentUuid: 'p', isSidechain: false, promptId: 'q', type: 'user', message: { role: 'user', content: '\n\n<pasted_content id="05c9">\nGoal: finished PaneForge chats CLOSE themselves instead of "resting to free memory".\nnever kill the running PaneForge.' }, uuid: 'u2', timestamp: '2026-09-27T16:31:51.955Z', promptSource: 'typed', cwd: '/x', sessionId: 's', version: '2.1.0' })
+  const r = readClaudeReply([user('first ask'), assistant([{ type: 'text', text: 'first answer' }]), pasted, assistant([{ type: 'text', text: 'second answer' }])].join('\n'))
+  assert.match(r.prompt, /^Goal: finished PaneForge chats CLOSE themselves/, 'the tags are gone, the words kept')
+  assert.equal(r.promptAt, Date.parse('2026-09-27T16:31:51.955Z'), 'the pasted row is the newest prompt')
+  const closed = readClaudeReply(user('<pasted_content id="1">\nfix it\n</pasted_content id="1">'))
+  assert.equal(closed.prompt, 'fix it', 'a closed paste reads as its words')
+  const harness = readClaudeReply([user('real ask'), user('<command-name>/clear</command-name>')].join('\n'))
+  assert.equal(harness.prompt, 'real ask', 'every other < is still the harness')
+  assert.equal(harness.promptAt, Date.parse('2026-09-22T20:29:53.697Z'))
+  assert.equal(readClaudeReply(assistant([{ type: 'text', text: 'x' }])).promptAt, undefined, 'no prompt in the tail: no time')
+  console.log('reply-read: pasted prompts and their time ok')
 }
 
 // 6. Which machine a step names.
@@ -115,4 +147,47 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(machineOf('Approve the invoice'), null)
   assert.equal(machineOf('Restart it on the Windows machine'), 'pc')
   console.log('reply-read: machine words ok')
+}
+
+// 7. A Stop hook's feedback is not the person, and its reply is not the report. s42 on 1 Oct
+// (`fixtures/claude-stophook-followup.jsonl`, its own rows trimmed): the full report with
+// `**Next steps:**`, then the AUTO-CLEAR hook's `isMeta` row, then a two-line follow-up.
+// The Review row and the GuardDeck card carried the follow-up alone, and the hook's words
+// were read as what Robert last typed.
+{
+  const { readFileSync } = await import('node:fs')
+  const s42 = readClaudeReply(readFileSync(join(root, 'scripts/fixtures/claude-stophook-followup.jsonl'), 'utf8'))
+  assert.ok(s42.text.startsWith("I can't release this one myself"), 'the report comes first')
+  assert.ok(s42.text.includes('**Next steps:**\n1. Say "release"'), 'with its own steps')
+  assert.ok(s42.text.endsWith('so whichever chat cuts the release runs them.'), 'and the follow-up after it')
+  assert.ok(!/Stop hook feedback|AUTO-CLEAR/.test(s42.text), 'the hook is in neither')
+  assert.equal(s42.prompt, undefined, 'a hook row is never the typed prompt')
+  // A follow-up with its own steps is the report now; one with no hook before it stays alone.
+  const hook = row({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nwrite a handoff' }, timestamp: '2026-09-22T20:29:55.000Z' })
+  const said = (t) => assistant([{ type: 'text', text: t }])
+  assert.equal(readClaudeReply([said('Report.\n\n**Next steps:**\n- None'), hook, said('New report.\n\n## Next steps\n- None')].join('\n')).text, 'New report.\n\n## Next steps\n- None')
+  assert.equal(readClaudeReply([said('Report.\n\nNext steps: None'), user('go on'), said('Short answer.')].join('\n')).text, 'Short answer.', 'a typed prompt ends the old report')
+  assert.equal(readClaudeReply([said('Report.\n\nNext steps: None'), hook, said('Wrote it.'), hook, said('Done.')].join('\n')).text, 'Report.\n\nNext steps: None\n\nDone.', 'two hooks: still the report first')
+  console.log('reply-read: stop-hook follow-up keeps the report ok')
+}
+
+// When the transcript's last turn ended - the only turn end a pane resumed onto a finished
+// conversation ever gets (`seedTurnEnd`). Row shapes from a real Claude jsonl (PC s8,
+// 2026-10-02: ... stop_hook_summary, turn_duration, cost-state) and a real Codex rollout.
+{
+  const sys = (subtype, timestamp) => row({ parentUuid: 'p', isSidechain: false, type: 'system', subtype, durationMs: 1200, timestamp, uuid: 's' })
+  const cost = row({ type: 'cost-state', sessionId: 's' })
+  const done = [user('fix it'), assistant([{ type: 'text', text: 'Fixed.' }]), sys('stop_hook_summary', '2026-10-02T06:52:30.816Z'), sys('turn_duration', '2026-10-02T06:52:30.838Z'), cost]
+  assert.equal(readClaudeReply(done.join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.838Z'), 'turn_duration ends it, bookkeeping after it does not reopen it')
+  assert.equal(readClaudeReply(done.slice(0, 3).join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.816Z'), 'a stop_hook_summary alone ends it')
+  assert.equal(readClaudeReply(done.slice(0, 2).join('\n')).turnEndedAt, undefined, 'a reply with no end row is still a turn in flight')
+  const hook = row({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nwrite a handoff' }, timestamp: '2026-10-02T06:52:31.000Z' })
+  assert.equal(readClaudeReply([...done, hook].join('\n')).turnEndedAt, undefined, 'a Stop hook answer reopens the turn')
+  assert.equal(readClaudeReply([...done, user('and the next thing')].join('\n')).turnEndedAt, undefined, 'a new prompt reopens it')
+  assert.equal(readClaudeReply([...done, row({ ...JSON.parse(sys('turn_duration', '2026-10-02T07:00:00.000Z')), isSidechain: true })].join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.838Z'), 'a subagent turn is not the pane turn')
+  const ev = (type, timestamp) => row({ timestamp, type: 'event_msg', payload: { type, turn_id: 't' } })
+  const codex = [ev('task_started', '2026-10-02T09:30:00.000Z'), row({ type: 'response_item', timestamp: '2026-10-02T09:39:20.000Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Reviewed.' }] } }), ev('task_complete', '2026-10-02T09:39:22.068Z'), row({ timestamp: '2026-10-02T09:39:22.100Z', type: 'event_msg', payload: { type: 'token_count' } })]
+  assert.equal(readCodexReply(codex.join('\n')).turnEndedAt, Date.parse('2026-10-02T09:39:22.068Z'), 'codex task_complete ends it')
+  assert.equal(readCodexReply([...codex, ev('task_started', '2026-10-02T09:40:00.000Z')].join('\n')).turnEndedAt, undefined, 'codex task_started reopens it')
+  console.log('reply-read: last turn end ok')
 }

@@ -633,6 +633,20 @@ export const SOUNDS: SoundDef[] = [
   }
 ]
 
+/**
+ * The one-time move of the alert sounds (`soundOnIdle`: finished, went silent, asked, bell)
+ * to OFF. Robert, 2026-09-23: "dont need sounds when session is stopped/waiting".
+ *
+ * `defaults()` is WRITTEN at first launch, so every saved config carries `soundOnIdle: true`
+ * and a changed default alone would never reach it. Only a config without the marker moves;
+ * a switch turned back on after this keeps its answer.
+ */
+export function quietIdleSounds(raw: {
+  idleSoundsOffV1?: boolean
+}): { soundOnIdle?: false; idleSoundsOffV1: true } {
+  return raw.idleSoundsOffV1 ? { idleSoundsOffV1: true } : { soundOnIdle: false, idleSoundsOffV1: true }
+}
+
 /** The sounds each alert starts on: exactly what the app played before it had a picker. */
 export const DEFAULT_SOUNDS: SoundConfig = {
   done: 'chime',

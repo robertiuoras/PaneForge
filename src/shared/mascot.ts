@@ -699,27 +699,6 @@ export function countdownEnd(now: number, dues: (number | undefined)[]): number 
 export const KEEP_MINUTES = 10
 
 /**
- * ...and the SECOND time somebody keeps the same pane, ten minutes is the wrong answer.
- *
- * A keep does not change anything the sweep measures - the pane is still quiet, the
- * machine is still short - so at minute ten the identical card arms and the pane goes
- * anyway. From the desk that reads as the press having done nothing: Robert, 2026-09-18,
- * "it was kept open but still closed" about a pane kept at 14:38:37 and slept at
- * 14:48:50, ten minutes and thirteen seconds later, with `you kept it open` in the log
- * in between.
- *
- * So the hold doubles with each press, to two hours - the same ladder `sleepHoldMs`
- * climbs for a refusal, for the same reason: the first press is "not now", the third is
- * a person telling the app it has the wrong pane. It resets when the pane next does
- * something, because the count lives with the window's sweep and not on disk.
- */
-export const KEEP_HOLD_MAX_MS = 2 * 60 * 60_000
-export function keepHoldMs(presses: number): number {
-  const n = Math.max(1, Math.floor(presses))
-  return Math.min(KEEP_HOLD_MAX_MS, KEEP_MINUTES * 60_000 * 2 ** (n - 1))
-}
-
-/**
  * The countdown, in words. `names` are already `paneWord` strings.
  *
  * `toDevice` turns it into the OTHER thing the ladder does by itself. A close counted

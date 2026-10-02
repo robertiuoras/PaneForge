@@ -33,7 +33,9 @@ const pane = (id, extra = {}) => ({
 const measure = (panes) => {
   const started = performance.now()
   const close = idleClosePlan(panes, cfg, now, false)
-  const sleep = idleSleepPlan(panes, cfg, now, false)
+  // Sleep only fires under measured memory pressure now (Robert 2026-09-25) - 'tight' so
+  // this still measures the same 50-pane sleep-eligible case it always did.
+  const sleep = idleSleepPlan(panes, cfg, now, false, 'tight')
   return { close: close.length, sleep: sleep.length, ms: performance.now() - started }
 }
 

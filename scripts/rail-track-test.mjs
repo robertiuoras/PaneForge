@@ -64,6 +64,9 @@ const MEASURE = `(() => {
     const w = wrap.getBoundingClientRect()
     const v = vp.getBoundingClientRect()
     const r = rail.getBoundingClientRect()
+    const screen = host.querySelector('.xterm-screen').getBoundingClientRect()
+    const tag = rail.querySelector('.mark').getBoundingClientRect()
+    const index = wrap.querySelector('.prompt-index summary').getBoundingClientRect()
     const scale = vp.offsetWidth > 0 ? v.width / vp.offsetWidth : 1
     out.push({
       id: id.slice(0, 8),
@@ -72,7 +75,9 @@ const MEASURE = `(() => {
       bar: +((vp.offsetWidth - vp.clientWidth) * scale).toFixed(1),
       railRight: +(w.right - r.right).toFixed(1),
       railH: +r.height.toFixed(1),
-      vpH: +v.height.toFixed(1)
+      vpH: +v.height.toFixed(1),
+      tagGap: +(tag.left - screen.right).toFixed(1),
+      indexGap: +(screen.top - index.bottom).toFixed(1)
     })
   }
   return out
@@ -106,6 +111,8 @@ const judge = (rows, where) => {
   ok(rows.length > 0, `${where}: a pane with a tag on its rail was measured`)
   for (const p of rows) {
     console.log(`   ${where} ${JSON.stringify(p)}`)
+    ok(p.tagGap >= 0, `${where}: tags do not cover terminal text (${p.tagGap}px gap)`)
+    ok(p.indexGap >= 0, `${where}: prompt control is above terminal text (${p.indexGap}px gap)`)
     ok(
       Math.abs(p.railRight - (p.gap + p.bar)) <= 1.5,
       `${where}: rail's right edge is beside the terminal (${p.railRight} vs ${(p.gap + p.bar).toFixed(1)})`

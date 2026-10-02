@@ -1,0 +1,251 @@
+// Regression test for "could not open eugenie-a from History" (Robert, 2026-09-24).
+//
+// What happened, from the logs on the Mac (userData, all times UTC):
+//   06:50:07  reclaim.log   the memory sweep closed Codex pane s68 (`Eugenie A | clients`,
+//                           folder clients/clients/eugenie-a). Its lane-ledger hold on the
+//                           `clients` main folder (pane s68, session 01a0d200...) stayed.
+//   06:56:46  offload.log   History `Open again` -> "you chose this machine" ... and no
+//   06:57:02                `started` line after either press: `laneFor` threw.
+//   ~07:02                  the gone-sweep (`GONE_MS`, 15 min after the hold's last beat
+//                           at 06:46:52) released the hold. Too late for both presses.
+// The chain: `ledgerTakenFolders` counted the CLOSED pane's hold, so `resolveLane` saw
+// `clients` in use and looked for a spare copy holding `clients/eugenie-a` - which no copy
+// can, because that folder was never committed. It refused with "No free lane containing
+// this folder in clients ... lane pool", read by Robert as "is lane closed?".
+//
+// Real git, real ledger file, the real `ledgerTakenFolders` and `resolveLane` bundled from
+// src - only the desk (the pane list) and History's "this pane ended" are handed in.
+//
+//   node scripts/reopen-hold-test.mjs
+
+import { buildSync, transformSync } from 'esbuild'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const repoRoot = resolve(here, '..')
+const root = join(realpathSync(tmpdir()), 'paneforge-reopen-hold-test')
+rmSync(root, { recursive: true, force: true })
+mkdirSync(root, { recursive: true })
+
+let failed = 0
+const ok = (name, cond, detail) => {
+  console.log(`${cond ? 'ok  ' : 'FAIL'}  ${name}`)
+  if (!cond) {
+    failed++
+    if (detail) console.log(`      ${detail}`)
+  }
+}
+
+function load(entry, name) {
+  const out = join(root, `${name}.bundle.mjs`)
+  buildSync({
+    absWorkingDir: repoRoot,
+    entryPoints: [entry],
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node20',
+    external: ['electron'],
+    outfile: out
+  })
+  return import(pathToFileURL(out).href)
+}
+
+// The ledger is found by scanning `~/Projects` (`~/Desktop/Projects` too on Windows), so
+// the whole fixture lives under a home of its own. Read per call by `os.homedir()`.
+const home = join(root, 'home')
+const projects = join(home, 'Projects')
+mkdirSync(join(home, 'Desktop'), { recursive: true })
+process.env.HOME = home
+process.env.USERPROFILE = home
+
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim()
+
+const repo = join(projects, 'clients')
+mkdirSync(join(repo, 'clients', 'alison'), { recursive: true })
+writeFileSync(join(repo, 'clients', 'alison', 'README.md'), '# alison\n')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c', 'd', 'e', 'f'] }) + '\n')
+git(repo, 'init', '-q', '-b', 'main')
+git(repo, 'config', 'user.email', 'test@example.com')
+git(repo, 'config', 'user.name', 'test')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'first')
+// Same shape as the real repo that day: copies a and b on disk, branches c-f left behind.
+git(repo, 'worktree', 'add', '-q', '-b', 'lane-a', join(projects, 'clients-a'))
+git(repo, 'worktree', 'add', '-q', '-b', 'lane-b', join(projects, 'clients-b'))
+for (const l of ['c', 'd', 'e', 'f']) git(repo, 'branch', `lane-${l}`)
+// The client folder that exists only on this disk - `?? clients/eugenie-a/` in git status.
+const eugenie = join(repo, 'clients', 'eugenie-a')
+mkdirSync(eugenie, { recursive: true })
+writeFileSync(join(eugenie, 'README.md'), '# eugenie\n')
+
+const CLOSED = 's68-muf4ibe8'
+const LIVE = 's75-muf630ho'
+const OTHER_COPY = 's3-other-running-copy'
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({
+    lanes: {
+      main: { session: '01a0d200-90fc-7691-b5fb-e6fb61ad6e97', cwd: eugenie, pane: CLOSED, visitor: true },
+      // Ledger keys are allocation slots, not physical folder names. This chat has kept
+      // copy a while its current slot is f; wake must reserve the recorded folder.
+      f: { session: '1d5f0797-4773-4283-98ca-5e5006c72fe5', cwd: join(projects, 'clients-a', 'clients', 'alison'), pane: LIVE }
+    }
+  })
+)
+
+const shared = await load(join('src', 'shared', 'laneTaken.ts'), 'laneTaken')
+const { ledgerTakenFolders } = await load(join('src', 'main', 'laneLedger.ts'), 'laneLedger')
+const { resolveLane } = await load(join('src', 'main', 'lanes.ts'), 'lanes')
+// Absent before the fix; the checks below then fail on what the app DOES, not on an import.
+const holdIsOver = shared.holdIsOver ?? (() => false)
+
+// The desk at 06:56: s75 working in copy a, s68 gone from the desk, its History row ended.
+const desk = [{ id: LIVE, cwd: join(projects, 'clients-a', 'clients', 'alison'), status: 'idle' }]
+const ended = (pane) => pane === CLOSED
+const over = (pane) => holdIsOver(pane, desk, ended)
+const same = (a, b) => resolve(a).toLowerCase() === resolve(b).toLowerCase()
+
+// --- the rule, on its own --------------------------------------------------------------
+ok('a hold for a pane that left the desk and whose History row ended is over', holdIsOver(CLOSED, desk, ended) === true)
+ok('a hold for a pane still working on the desk is not over', holdIsOver(LIVE, desk, ended) === false)
+ok(
+  'a hold for an ASLEEP pane is not over - it is one press from working there again',
+  holdIsOver('s9', [{ id: 's9', cwd: repo, status: 'exited', asleep: 1 }], () => true) === false
+)
+ok(
+  'a pane on the desk that exited and is not asleep holds nothing (same as takenFolders)',
+  holdIsOver('s9', [{ id: 's9', cwd: repo, status: 'exited' }], () => false) === true
+)
+ok(
+  'a pane this app never saw keeps its hold - it may be another running copy of the app',
+  holdIsOver(OTHER_COPY, desk, ended) === false
+)
+
+// --- the refusal Robert saw, still reachable when the hold is real ----------------------
+// A hold that counts (nobody closed it) with a copy pool that cannot hold the folder.
+const strict = ledgerTakenFolders('', () => false)
+let refusal = ''
+try {
+  await resolveLane(eugenie, [...desk.map((s) => s.cwd), ...strict])
+} catch (e) {
+  refusal = String(e?.message ?? e)
+}
+ok('with the main folder genuinely in use, the untracked client folder is still refused', refusal !== '', 'resolveLane did not refuse')
+ok(
+  'the refusal is written for somebody who has never used git',
+  refusal && !/\b(lane|lanes|worktree|checkout|commit|pool)\b/i.test(refusal),
+  refusal
+)
+ok('...and names the project and what to do', /clients/.test(refusal) && /Close the other clients chat/.test(refusal), refusal)
+
+// --- the fix: the closed pane's own hold does not block its reopen ----------------------
+const taken = ledgerTakenFolders('', over)
+ok('the closed pane s68 no longer holds the clients main folder', !taken.some((t) => same(t, repo)), JSON.stringify(taken))
+ok('the live pane s75 still holds copy a', taken.some((t) => same(t, join(projects, 'clients-a'))), JSON.stringify(taken))
+
+let placed = null
+let why = ''
+try {
+  placed = await resolveLane(eugenie, [...desk.map((s) => s.cwd), ...taken])
+} catch (e) {
+  why = String(e?.message ?? e)
+}
+ok('History `Open again` on Eugenie A opens in its own folder instead of refusing', placed && same(placed.cwd, eugenie), why || JSON.stringify(placed))
+ok('...without making a copy it did not need', !existsSync(join(projects, 'clients-c')))
+
+// A second running copy's hold is untouched by this: unknown pane, no History row.
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({ lanes: { main: { session: 'x', cwd: repo, pane: OTHER_COPY } } })
+)
+ok(
+  "another running copy's hold still keeps the main folder taken",
+  ledgerTakenFolders('', over).some((t) => same(t, repo))
+)
+
+// --- a restart renames every pane, and the hold keeps the old name -----------------------
+// 2026-10-01 6:25pm: the watchdog relaunched the app; chat 3's hold on copy b still named
+// `s23-mup2zzuo`, the restored pane was `s3-mup9scda`, and the first press moved the chat
+// out of its own folder into a fresh copy. The conversation is what survived the restart.
+const CHAT = '8acc967e-90f6-400d-a3fc-3dfad7982c14'
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({ lanes: { b: { session: CHAT, cwd: join(projects, 'clients-b'), pane: 's23-mup2zzuo' } } })
+)
+const restarted = (pane) => holdIsOver(pane, [{ id: 's3-mup9scda', cwd: join(projects, 'clients-b'), status: 'exited', asleep: 1 }], () => false)
+ok(
+  'the old pane id alone still reads as somebody else (unknown pane, History never ended it)',
+  ledgerTakenFolders('s3-mup9scda', restarted).some((t) => same(t, join(projects, 'clients-b')))
+)
+ok(
+  'the restored pane resuming the SAME chat does not count that hold against itself',
+  !ledgerTakenFolders('s3-mup9scda', restarted, CHAT).some((t) => same(t, join(projects, 'clients-b')))
+)
+ok(
+  'a different chat still finds copy b taken by that hold',
+  ledgerTakenFolders('s9-new', restarted, 'another-chat').some((t) => same(t, join(projects, 'clients-b')))
+)
+
+// Execute the real placement entry point against synthetic git checkouts. Exact
+// resumes never call the allocator or return-to-base, including clean checkouts.
+const main = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
+const start = main.indexOf('async function laneFor(')
+const end = main.indexOf('\n/**', start)
+let occupants = []
+let folders = []
+let config = { autoLane: true }
+const deps = {
+  getConfig: () => config, detectLane: async () => 'a',
+  manager: { list: () => occupants }, takenFolders: () => folders,
+  ledgerTakenFolders: () => [], holdOver: () => false,
+  resolve, dirname, existsSync, samePath: same,
+  landGit: async (cwd, args) => { try { return { ok: true, out: git(cwd, ...args) } } catch { return { ok: false, out: '' } } },
+  laneExtras: async () => ({ env: {} }),
+  returnToBase: () => { throw new Error('unexpected relocation') },
+  resolveLane: () => { throw new Error('unexpected allocation') }
+}
+const compiled = transformSync(main.slice(start, end), { loader: 'ts' }).code
+const place = new Function(...Object.keys(deps), `${compiled}; return laneFor`)(...Object.values(deps))
+const request = { cwd: eugenie, agent: 'codex', resume: true, resumeId: 'native-original' }
+let result = await place(request)
+ok('exact resume keeps its untracked original folder', result.cwd === eugenie)
+folders = [join(repo, 'clients', 'alison')]
+try { await place(request); refusal = '' } catch (e) { refusal = e.message }
+ok('exact resume refuses another chat in the same checkout, including sibling client folders', /still in use/.test(refusal), refusal)
+config = { autoLane: false }
+result = await place(request)
+ok('with copies turned off, an exact resume opens in its own folder beside the other chat', result.cwd === eugenie && !result.laneNote, result)
+config = { autoLane: true }
+folders = []
+occupants = [{ id: 'existing', title: 'Original owner', resumeId: request.resumeId, status: 'idle' }]
+try { await place(request); refusal = '' } catch (e) { refusal = e.message }
+ok('exact resume refuses a second process with the same native identity', /already open/.test(refusal), refusal)
+result = await place(request, [], 'existing')
+ok('waking the same owner excludes its own identity', result.cwd === eugenie)
+occupants = []
+result = await place({ ...request, cwd: join(projects, 'clients-a') })
+ok('even a clean exact resume stays in its original copy', same(result.cwd, join(projects, 'clients-a')))
+
+// A restored pane gets a NEW id, so its own pre-restart claim looks like somebody else's
+// (pane 2, 2026-10-02 18:34Z). The claim carries the Claude conversation the pane is in.
+const CONVO = '1651028c-3346-45d0-9765-b9931fbc6378'
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({ lanes: { main: { session: CONVO, cwd: repo, pane: 's60-before-restart' } } })
+)
+ok('a claim by another conversation still holds the folder', ledgerTakenFolders('s1-new', () => false, 'other-convo').some((t) => same(t, repo)))
+ok("the waking pane's own pre-restart claim (same conversation) does not hold it",
+  !ledgerTakenFolders('s1-new', () => false, CONVO).some((t) => same(t, repo)))
+ok('with no conversation known the claim holds as before', ledgerTakenFolders('s1-new', () => false).some((t) => same(t, repo)))
+
+rmSync(root, { recursive: true, force: true })
+if (failed) {
+  console.log(`\nreopen-hold: ${failed} FAILED`)
+  process.exit(1)
+}
+console.log('\nreopen-hold: all checks passed')
