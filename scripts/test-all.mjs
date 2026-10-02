@@ -362,6 +362,7 @@ const TESTS = [
   ['splitplan', 'split-plan-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
+  ['tailnettrust', 'tailnet-trust-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],

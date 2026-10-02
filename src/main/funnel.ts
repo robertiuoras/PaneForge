@@ -59,12 +59,14 @@ export function findTailscale(): string {
   return ''
 }
 
-async function runReal(
+/** One tailscale CLI call. Never throws, never blocks: a timeout is a non-zero code. */
+export async function runTailscale(
   binary: string,
-  args: string[]
+  args: string[],
+  timeout = CALL_MS
 ): Promise<{ out: string; err: string; code: number }> {
   return await new Promise((resolve) => {
-    execFile(binary, args, { windowsHide: true, timeout: CALL_MS }, (err, out, stderr) => {
+    execFile(binary, args, { windowsHide: true, timeout }, (err, out, stderr) => {
       const code = err && typeof (err as { code?: number }).code === 'number' ? (err as { code: number }).code : err ? 1 : 0
       resolve({ out: String(out ?? ''), err: String(stderr ?? ''), code })
     })
@@ -82,7 +84,7 @@ export class Funnel {
   }
 
   private run(args: string[]): Promise<{ out: string; err: string; code: number }> {
-    const run = this.deps.run ?? runReal
+    const run = this.deps.run ?? runTailscale
     return run(this.binary, args)
   }
 
