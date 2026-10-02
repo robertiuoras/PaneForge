@@ -90,6 +90,7 @@ const TESTS = [
   ['remotereset', 'remote-reset-test.mjs'],
   ['terminalprotocol', 'terminal-protocol-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
+  ['clirevive', 'cli-revive-test.mjs'],
   ['closedpipe', 'closedpipe-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
