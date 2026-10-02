@@ -151,6 +151,7 @@
     "test:settingsearch": "node scripts/settings-search-test.mjs",
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:limitwave": "node scripts/limit-wave-test.mjs",
+    "test:reviewpush": "node scripts/review-push-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
     "test:paneerror": "node scripts/pane-error-test.mjs",
     "test:sleep": "node scripts/sleep-test.mjs",
