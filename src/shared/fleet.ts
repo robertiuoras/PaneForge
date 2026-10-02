@@ -71,6 +71,24 @@ export interface FleetPane {
    * closing, sleeping or handing off, which only care that the turn is over.
    */
   finished?: boolean
+  /** epoch ms a finished pane's close countdown ends (`Session.doneClosingAt`) */
+  doneClosingAt?: number
+}
+
+/**
+ * The one word a chat is in, the same four words in PaneForge and PaneForge Next (wr-03,
+ * 2026-10-02): `working` (a turn or its background job is running), `waiting` (the turn
+ * is over and something is left for a person), `done` (over, nothing left), `closing`
+ * (done, and its close countdown is running).
+ */
+export type ChatPhase = 'working' | 'waiting' | 'done' | 'closing'
+
+export function chatPhase(s: FleetPane): ChatPhase {
+  const state = fleetState(s)
+  if (state === 'working' || state === 'starting' || state === 'stalled') return 'working'
+  if (finishedTurn(s)) return s.doneClosingAt ? 'closing' : 'done'
+  if (state === 'exited' || state === 'ready') return 'done'
+  return 'waiting'
 }
 
 export type FleetState =
@@ -202,7 +220,7 @@ export function finishedTurn(s: FleetPane): boolean {
 
 export function fleetRow(s: FleetPane): FleetRow {
   const state = fleetState(s)
-  if (finishedTurn(s)) return { state, label: 'done', motion: 'still', since: s.lastOutput, rank: RANK.ready }
+  if (finishedTurn(s)) return { state, label: s.doneClosingAt ? 'closing' : 'done', motion: 'still', since: s.lastOutput, rank: RANK.ready }
   const since =
     state === 'stalled'
       ? s.stalledSince

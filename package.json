@@ -327,6 +327,7 @@
     "test:pressurelog": "node scripts/pressurelog-test.mjs",
     "test:autoclear": "node scripts/autoclear-test.mjs",
     "test:autoclearhook": "node scripts/autoclear-hook-test.mjs",
+    "test:autoclearcycle": "node scripts/autoclear-cycle-test.mjs",
     "test:autoclearlag": "node scripts/autoclear-lag-test.mjs",
     "test:cwdgone": "node scripts/cwd-gone-test.mjs",
     "test:panetrust": "node scripts/pane-trust-test.mjs",

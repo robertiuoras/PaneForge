@@ -72,6 +72,20 @@ say(
   mds.every((m) => JSON.stringify(shared.actionableNextSteps(m)) === JSON.stringify(hook.actionableNextSteps(m)))
 )
 
+const shapes = [
+  ['## Next steps\n1. do it', null],
+  ['## Next steps\nNone', null],
+  ['## Next steps\n**None**', null],
+  ['## Next steps\n', null],
+  ['## State\nx\n**Next steps:** finish it', 'no-next-steps'],
+  ['## Next steps\nFinish the parser and run the suite.\n## Gotchas\n1. x', 'steps-not-a-list']
+]
+say(
+  'handoff shape judgement: app and hook agree, prose and a missing heading are refused',
+  shapes.every(([m, want]) => shared.handoffShapeProblem(m) === want && hook.handoffShapeProblem(m) === want),
+  JSON.stringify(shapes.map(([m]) => [shared.handoffShapeProblem(m), hook.handoffShapeProblem(m)]))
+)
+
 // ---------------------------------------------------------------- the hook, as Claude Code runs it
 
 const home = join(work, 'home')
