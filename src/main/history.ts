@@ -328,9 +328,9 @@ export function recordData(id: string, chunk: string): void {
   }
 }
 
-export function recordEnd(id: string, resumeId?: string): void {
+export function recordEnd(id: string, resumeId?: string, closedBecause?: string): void {
   flushSync()
-  writeEnd(id, resumeId)
+  writeEnd(id, resumeId, closedBecause)
 }
 
 /**
@@ -355,10 +355,10 @@ export function ended(id: string): boolean {
  */
 export function endAll(ids: string[], resumeFor?: (id: string) => string | undefined): void {
   flushSync()
-  for (const id of ids) writeEnd(id, resumeFor?.(id))
+  for (const id of ids) writeEnd(id, resumeFor?.(id), 'PaneForge quit or restarted with it open')
 }
 
-function writeEnd(id: string, resumeId?: string): void {
+function writeEnd(id: string, resumeId?: string, closedBecause?: string): void {
   try {
     const raw = readFileSync(metaFile(id), 'utf8')
     const entry = JSON.parse(raw) as HistoryEntry
@@ -367,6 +367,7 @@ function writeEnd(id: string, resumeId?: string): void {
     // HistoryEntry.resumeId. Never cleared: a pane that closes without one keeps
     // whatever earlier close recorded.
     if (resumeId) entry.resumeId = resumeId
+    if (closedBecause) entry.closedBecause = closedBecause
     entry.bytes = sizes.get(id) ?? entry.bytes
     entry.cols = widths.get(id) ?? entry.cols
     entry.rows = heights.get(id) ?? entry.rows

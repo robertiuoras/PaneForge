@@ -1294,6 +1294,11 @@ export interface HistoryEntry {
   model?: string
   startedAt: number
   endedAt?: number
+  /**
+   * Why it closed and what that was judged on, in plain words (`closedBecause`,
+   * `shared/closeWhenDone.ts`), so a later chat can read why a pane stopped.
+   */
+  closedBecause?: string
   bytes: number
   /**
    * What this session was asked to do, in one line - the first thing typed at the agent.

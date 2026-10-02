@@ -9,7 +9,7 @@ import { basename, join } from 'node:path'
 import { app } from 'electron'
 import { profileName } from './profile'
 import { doneReviewId, doneVerdict, folderLeftover, type DoneReading } from '../shared/doneClose'
-import { machineOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
+import { machineOf, openTurnOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
 import { summaryOf, type FinishedNote } from '../shared/finishedDigest'
 import type { ReviewInput, ReviewRecord } from '../shared/reviews'
 import type { HistoryEntry } from '../shared/types'
@@ -116,7 +116,8 @@ export interface DoneCloseDeps {
   record: (input: ReviewInput, native: { title: string; provider: string; cwd: string; nativeSessionId: string }) => ReviewRecord
   /** The row's GuardDeck card and phone push (`reviews.ts` `sendReviewNotice`); `looked`/`opener` = no push. */
   notify: (reviewId: string, looked?: boolean, opener?: string) => void
-  close: (id: string, reportedAt: number) => { closed: boolean; reason?: string }
+  /** `why` is the plain-words reason the close-request line and History's `closedBecause` keep. */
+  close: (id: string, reportedAt: number, why: string) => { closed: boolean; reason?: string }
   noteClose: (reviewId: string, reason?: string, closedAt?: string) => void
   writeNotice: (path: string, body: string) => void
   activity: (what: string, why: string) => void
@@ -189,7 +190,8 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const agent = r.agent
     const file = d.transcriptFor(id)
     const reply = file ? readReply(agent, file, now) : undefined
-    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents }, now, quietMs)
+    const openTurn = openTurnOf(reply, now) ?? undefined
+    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents, openTurn }, now, quietMs)
     if (!verdict.close) {
       say(id, `stays - ${verdict.reason}`)
       continue
@@ -263,7 +265,12 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
       continue
     }
     const opener = d.openerOf?.(id)
-    const res = d.close(id, now)
+    const iso = (t: number): string => new Date(t).toISOString()
+    const why = `finished: the screen said its turn ended at ${iso(r.turnEndedAt)}, ` +
+      `its conversation's last entry is ${reply.lastEntry ? `${reply.lastEntry.kind}${reply.lastEntry.at ? ` (${iso(reply.lastEntry.at)})` : ''}` : 'unknown'}` +
+      `${reply.turnEndedAt ? `, turn-end row ${iso(reply.turnEndedAt)}` : ', no turn-end row'}, ` +
+      `quiet ${Math.round((now - Math.max(r.turnEndedAt, r.lastKeyboard)) / 1000)}s, ${verdict.read ? 'read' : 'unread'}, reply leaves nothing to do (${reviewId})`
+    const res = d.close(id, now, why)
     if (res.closed) {
       warnings.delete(id)
       d.setClosing?.(id, undefined)

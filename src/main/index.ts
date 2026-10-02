@@ -1805,7 +1805,7 @@ function doneCloseDeps(): DoneCloseDeps {
         : null,
     record: (input, native) => recordReview(input, native, true),
     notify: sendReviewNotice,
-    close: (id, at) => manager.closeAfterResult(id, at),
+    close: (id, at, why) => manager.closeAfterResult(id, at, why),
     noteClose: noteReviewClose,
     writeNotice: (path, body) => {
       if (!mayNotify()) return

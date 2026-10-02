@@ -35,6 +35,12 @@ export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | '
   /** Subagents launched in the background and not yet reported back. */
   runningAgents?: number
   /**
+   * The transcript says the turn is still open (`shared/replyRead.ts` `openTurnOf`), in
+   * words. Read with the reply. The screen's footer is not enough: s105 (2026-10-02) closed
+   * mid-turn, between two Chrome tool calls, on a footer read that had gone quiet.
+   */
+  openTurn?: string
+  /**
    * A pane this one opened (`pf open` from inside it) is still open, or their one summary
    * (`shared/finishedDigest.ts`) has not been handed to it yet. It is where that summary
    * lands, so it stays open until then - Robert, 2026-09-23: "get summary in 1 session and
@@ -212,6 +218,7 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   // 2026-10-01, twelve in eight minutes, held by a handoff with open steps).
   const held = closeHeldBy(p, now)
   if (held.length) return { close: false, reason: `session has ${held.join(', ')}` }
+  if (p.openTurn) return { close: false, reason: `its turn is still open - ${p.openTurn}` }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }
