@@ -55,6 +55,8 @@ const row = (over = {}) => ({
   ok('already reviewed -> no push', P.reviewPush(row({ reviewedAt: '2026-10-02T00:01:00.000Z' }), 'mac') === null)
   ok('already pushed -> no push', P.reviewPush(row({ pushSentAt: '2026-10-02T00:01:00.000Z' }), 'mac') === null)
   ok('a copy of the other machine\'s row -> no push (owner sends it)', P.reviewPush(row({ origin: { id: 'pc', name: 'PC', platform: 'win32' } }), 'mac') === null)
+  ok('a pane with an opener -> no push (the opener reports its steps)', P.reviewPush(row(), 'mac', false, 's1-opener') === null)
+  ok('no opener -> still pushes', P.reviewPush(row(), 'mac', false, undefined) !== null)
   ok('notify off -> no push', P.reviewPush(row({ notify: false }), 'mac') === null)
   ok('shell job -> no push', P.reviewPush(row({ provider: 'shell' }), 'mac') === null)
 }

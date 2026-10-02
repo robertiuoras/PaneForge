@@ -394,10 +394,10 @@ const PUSH_RETRY_MS = [30_000, 120_000];
  * `npm run try` copy never buzzes the phone. `pushSentAt` is written only after TaskDriver
  * accepted it; its `dedupe_key` makes a retry after a crash a no-op there.
  */
-function pushOnce(record: ReviewRecord, looked: boolean): void {
+function pushOnce(record: ReviewRecord, looked: boolean, opener?: string): void {
   if (!app.isPackaged || profileName() || pushing.has(record.id)) return;
   const machine = process.platform === "win32" ? "pc" : "mac";
-  const payload = reviewPush({ ...record, reviewedAt: receipt(record.id) ?? record.reviewedAt }, machine, looked);
+  const payload = reviewPush({ ...record, reviewedAt: receipt(record.id) ?? record.reviewedAt }, machine, looked, opener);
   if (!payload) return;
   pushing.add(record.id);
   const log = (line: string) =>
@@ -420,8 +420,8 @@ function pushOnce(record: ReviewRecord, looked: boolean): void {
   };
   attempt(0);
 }
-function spoolNotice(record: ReviewRecord, looked = false): ReviewRecord {
-  pushOnce(record, looked);
+function spoolNotice(record: ReviewRecord, looked = false, opener?: string): ReviewRecord {
+  pushOnce(record, looked, opener);
   if (
     !record.notify ||
     iso(record.reviewedAt) ||
@@ -671,10 +671,10 @@ export function recordReview(
   return saved;
 }
 /** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
-/** `looked`: the person was reading the chat when it finished, so the phone is not told. */
-export function sendReviewNotice(id: string, looked = false): void {
+/** `looked`: the person was reading the chat when it finished, so the phone is not told; `opener`: the pane that opened it reports its steps, so it sends none of its own. */
+export function sendReviewNotice(id: string, looked = false, opener?: string): void {
   const r = validId(id) ? read(id) : null;
-  if (r) spoolNotice(r, looked);
+  if (r) spoolNotice(r, looked, opener);
 }
 export function listReviews(history: HistoryEntry[] = []): ReviewRecord[] {
   const saved = existsSync(root())
