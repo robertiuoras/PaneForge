@@ -1351,6 +1351,47 @@ const ANSWERING =
     '...and so is a Claude one')
   ok(promptStillInBox('\u2022 Working (3s \u2022 esc to interrupt)\n\u203a \n', P) === false, 'an empty Codex composer still reads as gone')
   ok(promptStillInBox('\u276f \n', 'go') === null, 'a prompt too short to recognise answers null')
+  // s46-mud47sld (2026-09-22 20:17Z): a 2334-char brief wrapped over ~20 composer rows,
+  // with words split at the right edge.
+  const BIG = ('Robert asked: prove the queued brief off the screen and never off the run clock. ').repeat(30).slice(0, 2334)
+  const RULE60 = '\u2500'.repeat(60)
+  const wrapped = []
+  for (let i = 0; i < BIG.length; i += 118) wrapped.push((i ? '  ' : '\u276f ') + BIG.slice(i, i + 118))
+  ok(wrapped.length >= 19, 'the fixture really wraps over about twenty rows', String(wrapped.length))
+  ok(
+    promptStillInBox('\u273b Running SessionStart hooks\u2026 (2s \u00b7 esc to interrupt)\n' + RULE60 + '\n' + wrapped.join('\n') + '\n' + RULE60 + '\n', BIG) === true,
+    'a long prompt wrapped over twenty rows, split mid-word, is still in the box'
+  )
+  ok(
+    promptStillInBox(wrapped.slice(-6).join('\n') + '\n' + RULE60 + '\n  \u23f5\u23f5 bypass permissions on\n', BIG) === true,
+    '...and so is one scrolled so only its tail rows are on screen'
+  )
+  ok(
+    promptStillInBox(RULE60 + '\n\u276f [Pasted text #1 +20 lines]\n' + RULE60 + '\n', BIG) === true,
+    '...and one Claude Code folded into a pasted-text token'
+  )
+  ok(
+    promptStillInBox('> ' + BIG.slice(0, 118) + '\n\u23fa on it\n' + RULE60 + '\n\u276f \n' + RULE60 + '\n', BIG) === false,
+    'the same long prompt submitted leaves an empty composer'
+  )
+  ok(promptStillInBox('\u2500'.repeat(60) + '\n\u276f Continuethehandoff:workitsNextstepsinorder\n' + '\u2500'.repeat(60) + '\n', 'Continue the handoff: work its Next steps in order') === true, 'a prompt whose spaces were drawn as cursor moves is still in the box')
+  // Narrow pane: the first 24 letters are split over several 10-column rows.
+  const narrow = []
+  for (let i = 0; i < BIG.length; i += 10) narrow.push((i ? '  ' : '❯ ') + BIG.slice(i, i + 10))
+  ok(
+    promptStillInBox(RULE60 + '\n' + narrow.slice(0, 5).join('\n') + '\n' + RULE60 + '\n', BIG) === true,
+    'a prompt wrapped at ten columns, its opening split over several rows, is still in the box'
+  )
+  // Head scrolled out of the composer, marker row and rules on screen: the tail alone answers true.
+  ok(
+    promptStillInBox(RULE60 + '\n❯ ' + BIG.slice(-45) + '\n' + RULE60 + '\n', BIG) === true,
+    'a composer whose head is gone but whose tail is present still holds the prompt'
+  )
+  ok(
+    promptStillInBox(wrapped.slice(-2).join('\n') + '\n\u23fa Working on it\n' + RULE60 + '\nBash command\n', BIG) === null,
+    'a submitted echo whose head scrolled off, with a reply and a rule under it, is not read as held'
+  )
+  ok(promptStillInBox(RULE60 + '\n\u276f go on now\n' + RULE60 + '\n', 'go on now') === true, 'a short prompt is still read once its spaces are counted')
 }
 
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.

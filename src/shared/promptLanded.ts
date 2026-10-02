@@ -35,10 +35,8 @@ import { inputStart } from './promptBox'
 const NEEDLE_CHARS = 24
 const MIN_NEEDLE = 8
 
-/** One line of the prompt, flattened the way a drawn composer flattens it. */
-function flatten(text: string): string {
-  return String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
-}
+/** Blanks removed: Claude draws spaces as cursor moves, so a stripped stream loses them. */
+const squash = (text: string): string => String(text ?? '').replace(/[\s\u00a0]+/g, '').toLowerCase()
 
 /** A drawn horizontal rule, which is where the composer's own rows stop. */
 const RULE = /^[\s]*[─-╿]{8,}[\s]*$/
@@ -49,8 +47,20 @@ const RULE = /^[\s]*[─-╿]{8,}[\s]*$/
  * recognise. A caller may never read `null` as either answer.
  */
 export function promptStillInBox(painted: string, prompt: string): boolean | null {
-  const needle = flatten(String(prompt ?? '').split('\n').find((l) => l.trim()) ?? '').slice(0, NEEDLE_CHARS)
-  if (needle.length < MIN_NEEDLE) return null
+  // Matched with every blank squeezed out: a long prompt wraps across rows, and a word
+  // split at the right edge reads `wo rd` once the rows are joined (s46-mud47sld: a
+  // 2334-char brief wrapped over ~20 rows). The head is the first line's opening letters;
+  // the tail is the prompt's closing letters, for a composer scrolled so its head is gone.
+  const first = String(prompt ?? '').split('\n').find((l) => l.trim()) ?? ''
+  // Too short is judged with its spaces kept, as before: `go on now` is still worth reading.
+  if (first.replace(/[\s\u00a0]+/g, ' ').trim().length < MIN_NEEDLE) return null
+  const head = squash(first).slice(0, NEEDLE_CHARS)
+  const whole = squash(prompt)
+  const tail = whole.length > NEEDLE_CHARS * 2 ? whole.slice(-NEEDLE_CHARS) : ''
+  const holds = (text: string): boolean => {
+    const flat = squash(text)
+    return flat.includes(head) || (!!tail && flat.includes(tail)) || PASTED.test(text)
+  }
   const raw = String(painted ?? '').split('\n').map((r) => r.replace(/\r+$/, ''))
   const rows = raw.map((r) => r.replace(/[\s\u00a0]+$/, ''))
   // An EMPTY composer is the marker and nothing else, and `inputStart` answers 0 for that -
@@ -66,7 +76,15 @@ export function promptStillInBox(painted: string, prompt: string): boolean | nul
       break
     }
   }
-  if (at < 0) return null
+  if (at < 0) {
+    // No marker on screen: a composer taller than the screen has scrolled its first row
+    // off the top. What is left of it sits above the last rule, and it ENDS with the prompt's
+    // tail - a submitted echo further up has the CLI's reply and a rule drawn after it.
+    let end = -1
+    for (let r = rows.length - 1; r >= 0; r--) if (RULE.test(rows[r])) { end = r; break }
+    if (end <= 0 || !tail) return null
+    return squash(rows.slice(0, end).join('\n')).endsWith(tail) ? true : null
+  }
   // The composer is the marker row plus the rows it wrapped onto, which end at the rule
   // the CLI draws under it (or at the end of what has been painted).
   let block = rows[at].slice(inputStart(raw[at]))
@@ -75,7 +93,7 @@ export function promptStillInBox(painted: string, prompt: string): boolean | nul
     if (!row.trim() || RULE.test(row)) break
     block += ' ' + row
   }
-  return flatten(block).includes(needle) || PASTED.test(block)
+  return holds(block)
 }
 
 /**
