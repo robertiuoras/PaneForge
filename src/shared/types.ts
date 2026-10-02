@@ -151,6 +151,8 @@ export interface CodexWorker {
   name: string
   nickname?: string
   model?: string
+  /** The model the launch asked for; Claude background tasks only. Not proof of what ran. */
+  requestedModel?: string
   effort?: string
   state: 'running' | 'completed' | 'interrupted' | 'unknown' | 'stale'
   /** Native event times only; an absent start never becomes an estimated duration. */
