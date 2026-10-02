@@ -364,6 +364,7 @@ const TESTS = [
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
+  ['lanemergeitself', 'lane-merge-itself-test.mjs'],
   ['lanecompletion', 'lane-completion-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]

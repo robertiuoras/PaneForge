@@ -41,8 +41,15 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - The app's retry clock visits every known ledger under the project roots, including repos
   with no open panes, one at a time in fair order. Installed recovery prefers its bundled
   engine; `PANEFORGE_ENGINE` still overrides it and development falls back to the checkout.
-  Semantic conflicts use the existing bounded resolver dispatch. Authorized guarded edits
-  renew the resolver's lease and preserve its open merge (`test:laneowner`, `test:lanedispatch`).
+  A semantic conflict whose chat went quiet raises ONE GuardDeck card per episode
+  (`clashCards`, `c.card.since`), never a resolver pane; the take-over line reaches only the
+  lane's own chat (hook `stuck`, LaneStrip `laneOwner`). Temp-folder repos never notify.
+  Authorized guarded edits renew the resolver's lease and preserve its open merge
+  (`test:laneowner`, `test:lanedispatch`).
+- `ready` that took master in re-runs the lane's typecheck before marking it
+  (`laneTypecheckFailure`). Every merge (catch-up and release) renumbers a lane's
+  `migrations/` file that took a number the other side also added (`renumberMigrations`,
+  amends the merge commit; `test:lanemergeitself`).
 - The same clock visits empty boards. Unready abandoned dirty or clean-ahead work gets one
   completion owner per repo. `paneforge-recovery.json` stores the reservation separately
   from ordinary lane writes; an exclusive directory lock serializes recovery transactions.

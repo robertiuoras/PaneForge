@@ -268,6 +268,27 @@ check('guard-only SessionEnd stamps the actual owner ended synchronously', Numbe
 const carried = hook.run('claim', '--prefer', 'a', '--cwd', hook.dir, '--session', 'next-native-owner')
 check('same pane after clear carries guard-only dirty work', carried.code === 0 && JSON.parse(carried.out).lane === 'a' && hook.state().lanes.a.session === 'next-native-owner' && readFileSync(join(hook.dir, 'source.txt'), 'utf8') === 'dirty guard-only intent', carried.err)
 
+// The completion pane is the one pane lane.mjs still opens, so it is where seedTrust is
+// pinned (the conflict path raises a card now and opens nothing): the pane's folder gets
+// the repo's Claude Code trust entry, so it does not stop on the trust prompt. A stand-in
+// pf-ctl beside lane.mjs answers the open; no LANE_COMPLETION_LOG, so the real path runs.
+{
+  const t = fixture('trust')
+  writeFileSync(join(t.repo, 'scripts', 'pf-ctl.mjs'), "console.log('opened pane-t')\n")
+  const claudeHome = join(root, 'claude')
+  mkdirSync(claudeHome, { recursive: true })
+  const claudeJson = join(claudeHome, '.claude.json')
+  writeFileSync(claudeJson, JSON.stringify({ projects: { [realpathSync(t.repo)]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(ls:*)'], history: ['private'] } } }))
+  writeFileSync(join(t.dir, 'source.txt'), 'trust intent\n')
+  t.run('release', '--session', 'original', '--gone')
+  const env = { ...t.env }
+  delete env.PF_CTL_NO_APP
+  delete env.LANE_COMPLETION_LOG
+  spawnSync(process.execPath, [t.cli, 'retry'], { cwd: t.repo, env, encoding: 'utf8', timeout: 90_000 })
+  const trust = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(t.dir)]
+  check('completion pane folder inherits the repo trust, not its prompt history', trust?.hasTrustDialogAccepted === true && trust.allowedTools?.[0] === 'Bash(ls:*)' && !('history' in trust), JSON.stringify(trust))
+}
+
 console.log(`${failures ? 'FAIL' : 'ok'} completion fixture: ${failures} failures`)
 if (!failures) rmSync(root, { recursive: true, force: true })
 process.exitCode = failures ? 1 : 0

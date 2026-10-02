@@ -71,7 +71,8 @@ function fromSession(s: Session, number: number): DeskRow {
     backJob: s.backJob,
     backJobSince: s.backJobSince,
     finished: s.finished,
-    closingAt: s.closingAt
+    closingAt: s.closingAt,
+    doneClosingAt: s.doneClosingAt
   }
 }
 
@@ -96,7 +97,8 @@ function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }):
     backJob: pane.backJob,
     backJobSince: pane.backJobSince,
     finished: pane.finished,
-    closingAt: pane.closingAt
+    closingAt: pane.closingAt,
+    doneClosingAt: pane.doneClosingAt
   }
 }
 
