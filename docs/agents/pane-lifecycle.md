@@ -179,3 +179,5 @@ never re-queues. Push after `SETTLE_QUIET_MS` 60s quiet or `WAVE_DEADLINE_MS` 10
 notify, token env then `~/.claude/todos-ingest.token`, `dedupe_key`
 `pf-limit-reset:<provider>:<resetISO>:<host>`; failed = retried `PUSH_RETRY_MS`, never marked
 sent. In memory only. `limit-reset.log`; `PF_TASKDRIVER_NOTIFY_URL` for tests.
+
+A finished chat that needs the person is one push too: `shared/reviewPush.ts` from `spoolNotice` (both machines, installed app or a copy given `PF_TASKDRIVER_NOTIFY_URL`) - decision, blocked or a person-owned step only; never read/reviewed/opener-collected/`origin`; `paneforge-review:<host>:<id>`, 3 tries, `pushedAt` on the row, `phone-push.log` (`test:reviewpush`).

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -12,15 +13,17 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app } from "electron";
 import { profileName } from "./profile";
+import { postPush } from "./limitWaves";
 import { codexTranscriptPath, transcriptPath } from "./transcripts";
 import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
 import { renderReviewMarkdown, reviewMarkdownLinks } from "../shared/reviewMarkdown";
+import { deliverReviewPush, reviewPush, type PushedReview } from "../shared/reviewPush";
 import {
   FULL_ADVICE,
   contextLevel,
@@ -328,7 +331,7 @@ function page(r: ReviewRecord) {
     items.length ? `<h2>${title}</h2><ul>${items.join("")}</ul>` : "";
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report :is(h1,h2,h3,h4,h5,h6){font-size:1.15em;text-transform:none;letter-spacing:normal;color:#f0a868;margin:24px 0 10px}.report p{margin:0 0 14px}.report>:first-child{margin-top:0}.report>:last-child{margin-bottom:0}.report blockquote{margin:14px 0;padding-left:16px;border-left:3px solid #f0a868;color:#adb0ac}.report pre{white-space:pre;overflow-x:auto;padding:14px}.report pre code{padding:0;background:none}.report table{border-collapse:collapse;display:block;overflow-x:auto}.report :is(th,td){padding:6px 10px;border:1px solid #303437;text-align:left}body>pre{white-space:pre-wrap}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${renderReviewMarkdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
 }
-function immutable(r: ReviewRecord) {
+function immutable(r: PushedReview) {
   const {
     createdAt,
     closedAt,
@@ -338,6 +341,7 @@ function immutable(r: ReviewRecord) {
     reportPath,
     payloadHash,
     noticeSentAt,
+    pushedAt,
     // Read off the desk and the transcript at the moment of recording: a retry of the same
     // report is the same report even when the card has moved or the chat has said more.
     paneNumber,
@@ -372,7 +376,51 @@ function receipt(id: string) {
     return undefined;
   }
 }
-function spoolNotice(record: ReviewRecord): ReviewRecord {
+/**
+ * The installed app pushes from either machine; a copy only when given its own endpoint
+ * (`PF_TASKDRIVER_NOTIFY_URL`, the dev-copy proof), so a plain dev copy never does.
+ */
+function mayPush() {
+  return (app.isPackaged && !profileName()) || Boolean(process.env.PF_TASKDRIVER_NOTIFY_URL);
+}
+/** The person's phone hears about a row that needs them, once (`shared/reviewPush.ts`). */
+function pushNotice(record: PushedReview, looked: boolean, opener?: string) {
+  if (!mayPush()) return;
+  const payload = reviewPush(
+    { ...record, reviewedAt: receipt(record.id) ?? iso(record.reviewedAt) },
+    {
+      read: looked,
+      opener,
+      machine: process.platform === "win32" ? "PC" : "Mac",
+      host: () => process.env.PF_DEVICE || hostname().replace(/\.local$/, ""),
+    },
+  );
+  if (!payload) return;
+  void deliverReviewPush(record.id, payload, {
+    post: (p) => postPush(p),
+    wait: (ms) => new Promise((done) => setTimeout(done, ms)),
+    pushedAt: (id) => (read(id) as PushedReview | null)?.pushedAt,
+    // Re-read: the row may have gained `closedAt` while the post was in flight.
+    markPushed: (id, at) => {
+      const now = read(id) as PushedReview | null;
+      if (!now) return;
+      now.pushedAt = at;
+      atomic(jsonPath(id), JSON.stringify(now, null, 2));
+    },
+    log: (line) => {
+      try {
+        appendFileSync(join(app.getPath("userData"), "phone-push.log"), `${line}\n`);
+      } catch {
+        /* the push itself is what matters */
+      }
+    },
+    now: () => new Date(),
+  });
+}
+/** `looked`/`opener`: the done-close reading (`doneClose.ts`), for the phone push only. */
+function spoolNotice(record: ReviewRecord, looked = false, opener?: string): ReviewRecord {
+  // Before the Mac-only GuardDeck gate: the phone hears from both machines.
+  pushNotice(record, looked, opener);
   if (
     !record.notify ||
     iso(record.reviewedAt) ||
@@ -621,10 +669,13 @@ export function recordReview(
   changedReview(saved);
   return saved;
 }
-/** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
-export function sendReviewNotice(id: string): void {
+/**
+ * The GuardDeck card and phone push of a row recorded with `hold`, under the row's own
+ * `notify` and gate. `looked`: the pane was looked at; `opener`: a pane collects its summary.
+ */
+export function sendReviewNotice(id: string, looked = false, opener?: string): void {
   const r = validId(id) ? read(id) : null;
-  if (r) spoolNotice(r);
+  if (r) spoolNotice(r, looked, opener);
 }
 export function listReviews(history: HistoryEntry[] = []): ReviewRecord[] {
   const saved = existsSync(root())
