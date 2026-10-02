@@ -685,6 +685,8 @@ interface Live {
   draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean; key?: string }
   /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
   draftRecheckAt?: number
+  /** What still holds this pane's queued clear, as last logged (`sweepIdle`): logged once per change. */
+  clearHeldBy?: string
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -5481,7 +5483,8 @@ export class SessionManager extends EventEmitter {
     }
     if (!box || box.text.trim()) return
     if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
-        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) || !live.meta.drafting) return
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) ||
+        (!live.meta.drafting && !live.typed.trim())) return
     live.draft = newDraft()
     live.typed = ''
     live.meta.drafting = undefined
@@ -5599,7 +5602,10 @@ export class SessionManager extends EventEmitter {
       // has typed is its queue's. This is only the flag left once both are gone.
       // A pane owed an automatic clear waits on exactly this flag: read it sooner.
       const clearOwed = this.autoClearPending.has(meta.id)
-      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now, clearOwed) &&
+      // `typed` holds a clear as surely as the flag does (`dropFor`), and Ctrl-U / Ctrl-C
+      // empty the box without emptying it: read the screen for either.
+      const held = { ...meta, drafting: meta.drafting || Boolean(live.typed.trim()) }
+      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(held, live.draftRecheckAt ?? 0, now, clearOwed) &&
           now - live.paintedAt >= 1000) void this.recheckDraft(live)
       // A CLEAR QUEUED FOR A TURN END ON A PANE WITH NO TURN LEFT. `endRun` re-asks a queued
       // clear the moment a turn ends, and a draft flag still up then - the hold of the prompt
@@ -5612,6 +5618,17 @@ export class SessionManager extends EventEmitter {
           now - meta.lastKeyboard >= 1000 && !dropFor({ ...meta, typed: live.typed })) {
         acLog(`${meta.id} queued clear asked again - the pane is idle and its box is empty`)
         this.resumePendingAutoClear(meta.id)
+      } else if (this.autoClearPending.has(meta.id) && meta.status === 'idle' && now - meta.lastKeyboard >= 60_000) {
+        // 2026-10-03 PC: three panes logged "queued ... (drafting)" once and nothing for hours,
+        // and nothing said which of these held them. Named once per change, never per tick.
+        const why = [
+          live.draftConfirmation && 'an Enter not yet seen to land', meta.drafting && 'the draft flag',
+          live.typed.trim() && `a typed line (${live.typed.length} chars)`, meta.owedPrompt && 'an owed prompt',
+          this.promptInFlight(live) && 'a prompt in flight', meta.autoClearAt && 'a countdown',
+          this.autoClearArmTimers.has(meta.id) && 'an arm timer', meta.runSince && 'a running job'
+        ].filter(Boolean).join(', ') || 'nothing named'
+        if (why !== live.clearHeldBy) acLog(`${meta.id} queued clear still held by: ${why}`)
+        live.clearHeldBy = why
       }
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to

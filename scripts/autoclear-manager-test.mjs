@@ -252,7 +252,7 @@ try {
     const faked = global.setTimeout
     global.setTimeout = (fn, ms) => (ms ? faked(fn, ms) : realTimers(fn, ms))
     const flush = () => new Promise((r) => realTimers(r, 1500))
-    const staleCase = async (keyAgoMs, line) => {
+    const staleCase = async (keyAgoMs, line, typedOnly = false) => {
       global.__pfHandoff = valid()
       const manager = new SessionManager()
       const { id } = manager.start({ cwd: root, agent: 'claude' })
@@ -266,6 +266,13 @@ try {
       assert.match(manager.armAutoClear(id, { prompt: 'continue', steps: ['continue work'], seconds: 15 }).reason ?? '', /queued/, 'stale: the mid-turn ask is queued')
       live.meta.drafting = true
       live.draft = { text: '', certain: false, inPaste: false }
+      // The Ctrl-U / Ctrl-C shape: the draft knows the box was emptied, the slash-command
+      // record (`typed`, which never clears on those keys) still holds the words.
+      if (typedOnly) {
+        live.meta.drafting = undefined
+        live.draft = { text: '', certain: true, inPaste: false }
+        live.typed = 'a line somebody deleted'
+      }
       manager.endRun(live)
       live.draftConfirmation = undefined
       live.cols = 60
@@ -284,6 +291,13 @@ try {
     assert.equal(r.manager.autoClearPending.has(r.id), true, 'a key 5 s ago keeps it waiting')
     r = await staleCase(12_000, 'half a prompt')
     assert.equal(r.manager.autoClearPending.has(r.id), true, 'a line in the box on screen keeps it waiting')
+    // 2026-10-03 PC: s11, s14 and s22 each sat owed a clear for hours, logged "(drafting)"
+    // once and never again, with `drafting` unset - only `typed` was holding them.
+    r = await staleCase(12_000, '', true)
+    assert.equal(r.manager.autoClearPending.has(r.id), false, 'a deleted line only the typed record still holds is read off the screen and the clear asked again')
+    assert.equal(r.live.typed, '', 'and the typed record is emptied with it')
+    r = await staleCase(12_000, 'still there', true)
+    assert.equal(r.manager.autoClearPending.has(r.id), true, 'but a typed line still in the box on screen keeps it waiting')
     global.setTimeout = faked
   }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
