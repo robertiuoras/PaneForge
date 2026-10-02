@@ -96,6 +96,8 @@ const open = async (n) => {
   const cwd = process.cwd()
   await link.evaluate(
     `(async () => {
+      // The grid, whatever the profile was left at: "four panes" means four on screen at once.
+      await window.api.setConfig({ grid: true })
       const ids = []
       for (let i = 0; i < ${n}; i++) {
         const s = await window.api.startSession({ cwd: ${JSON.stringify(cwd)}, agent: 'shell' })
