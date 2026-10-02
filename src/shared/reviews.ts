@@ -48,6 +48,8 @@ export interface ReviewRecord extends ReviewInput {
   closeBlocked?: string;
   payloadHash?: string;
   noticeSentAt?: string;
+  /** When the phone push for this row was accepted by TaskDriver (`shared/reviewPush.ts`). */
+  pushSentAt?: string;
   /*
    * Finished-chat report contract v1 (2026-09-27, shared with GuardDeck and PaneForge
    * Next - field names fixed). All optional: a record written before them, or one whose

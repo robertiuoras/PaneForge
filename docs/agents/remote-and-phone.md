@@ -23,6 +23,8 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
 - Peer jobs (`shared/backJobs.ts`, `main/backJobs.ts`, `jobs`/`jobslist`, `PeerJobs`): `agent`,
   `dev`, `loop` (`LOOP_MIN_SECONDS`); own tree excluded; `Remote.jobsOn` rejects when
   disconnected (`test:backjobs`).
+- PC: plain `pf` on PATH (`~\.local\bin\pf.cmd`) is PaneForge Next's; PaneForge's own is
+  `%APPDATA%\claude-orchestrator\bin\pf.cmd` (panes get it via env). Over ssh use that one.
 - Handoff moves WORK not pty (`HandoffDialog.tsx`, `shared/handoff.ts`): repo as `auto-sync:`
   commit, conversation, screen, dev servers; mid-turn queued; sender closes on ack, becomes
   mirror; dirty/unpushed refused by name; paths grafted (`test:handoff`, `test:handofffit`).
@@ -87,6 +89,12 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   replicas never echo and their file paths never leave the owner. `origin` is display-only,
   so reopening remains an operation on the owning PC. `test:remote` includes multi-page
   catch-up.
+- Phone push (TaskDriver app): a row whose notice goes out (`reviews.ts` `spoolNotice`,
+  BEFORE its Mac-only gate, so the PC pushes its own rows) and that leaves a person step,
+  decision or blocker posts ONCE via `limitWaves.ts` `postPush` (`shared/reviewPush.ts`):
+  `dedupe_key` `paneforge-review-<mac|pc>-<id>`, `pushSentAt` only after a 2xx, retries
+  +30s/+120s, none when looked at / reviewed / a replica / packaged-off. `phone-push.log`,
+  `test:reviewpush`.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## The other machine's screen is one click away

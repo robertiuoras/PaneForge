@@ -17,6 +17,9 @@ import { extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app } from "electron";
 import { profileName } from "./profile";
+import { appendLog } from "./logWrite";
+import { postPush } from "./limitWaves";
+import { reviewPush } from "../shared/reviewPush";
 import { codexTranscriptPath, transcriptPath } from "./transcripts";
 import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
@@ -117,6 +120,8 @@ function publishReview(record: ReviewRecord): void {
     }
   }
 }
+/** How old a peer's close may be and still raise a GuardDeck card here (`storeRemoteReview`). */
+export const PEER_NOTICE_MAX_AGE_MS = 12 * 60 * 60_000;
 const kinds: ReviewKind[] = ["result", "decision", "blocked", "closed"],
   proofs: ReviewProof[] = ["measured", "claimed", "unverified"];
 const fileExt = new Set([
@@ -281,6 +286,12 @@ export function storeRemoteReview(
   atomic(jsonPath(localId), JSON.stringify(record, null, 2));
   atomic(htmlPath(localId), page(record));
   changedReview(record);
+  // The other desk's chat closed itself into Review. Only the Mac writes GuardDeck notices
+  // (`spoolNotice`), so a PC close had a Review row here and no card (2026-10-02). Once: on
+  // the replica that first carries the close. And only a recent close, or the first
+  // reconnect replaying a peer's whole history would raise a card per old chat.
+  if (v.notify === true && record.closedAt && !old?.closedAt && Date.now() - Date.parse(record.closedAt) < PEER_NOTICE_MAX_AGE_MS)
+    return spoolNotice({ ...record, notify: true });
   return record;
 }
 /** A bounded, portable review payload for the encrypted peer link. */
@@ -338,6 +349,7 @@ function immutable(r: ReviewRecord) {
     reportPath,
     payloadHash,
     noticeSentAt,
+    pushSentAt,
     // Read off the desk and the transcript at the moment of recording: a retry of the same
     // report is the same report even when the card has moved or the chat has said more.
     paneNumber,
@@ -372,7 +384,44 @@ function receipt(id: string) {
     return undefined;
   }
 }
-function spoolNotice(record: ReviewRecord): ReviewRecord {
+/** Rows whose push is on its way, so a re-spooled row does not post twice. */
+const pushing = new Set<string>();
+/** When each try after the first goes: a phone that is offline for a minute still gets it. */
+const PUSH_RETRY_MS = [30_000, 120_000];
+/**
+ * The phone push for a row that left something for the person, on EITHER machine - unlike
+ * the GuardDeck card below, which only the Mac reads. Packaged and unprofiled only, so a
+ * `npm run try` copy never buzzes the phone. `pushSentAt` is written only after TaskDriver
+ * accepted it; its `dedupe_key` makes a retry after a crash a no-op there.
+ */
+function pushOnce(record: ReviewRecord, looked: boolean): void {
+  if (!app.isPackaged || profileName() || pushing.has(record.id)) return;
+  const machine = process.platform === "win32" ? "pc" : "mac";
+  const payload = reviewPush({ ...record, reviewedAt: receipt(record.id) ?? record.reviewedAt }, machine, looked);
+  if (!payload) return;
+  pushing.add(record.id);
+  const log = (line: string) =>
+    appendLog(join(app.getPath("userData"), "phone-push.log"), `[${new Date().toISOString()}] ${record.id} ${line}\n`, { rotateAt: 64 * 1024 });
+  const attempt = (n: number): void => {
+    void postPush(payload).then((ok) => {
+      if (ok) {
+        const now = read(record.id);
+        if (now) atomic(jsonPath(record.id), JSON.stringify({ ...now, pushSentAt: new Date().toISOString() }, null, 2));
+        pushing.delete(record.id);
+        log(`pushed: ${payload.title}`);
+      } else if (n < PUSH_RETRY_MS.length) {
+        log(`push refused or no token, try ${n + 2} in ${PUSH_RETRY_MS[n] / 1000}s`);
+        setTimeout(() => attempt(n + 1), PUSH_RETRY_MS[n]).unref();
+      } else {
+        pushing.delete(record.id);
+        log("push NOT sent after 3 tries");
+      }
+    });
+  };
+  attempt(0);
+}
+function spoolNotice(record: ReviewRecord, looked = false): ReviewRecord {
+  pushOnce(record, looked);
   if (
     !record.notify ||
     iso(record.reviewedAt) ||
@@ -412,9 +461,9 @@ function spoolNotice(record: ReviewRecord): ReviewRecord {
             resumeId: record.provider === "shell" ? undefined : record.nativeSessionId,
             cwd: record.cwd,
             agent: record.provider,
-            // The gate above lets only the Mac app write notices; the field is here so a
-            // PC notice, when there is one, needs no new reader.
-            machine: "mac",
+            // The Mac app writes every notice; a PC chat's (`storeRemoteReview`) names the PC,
+            // where its conversation is continued.
+            machine: record.origin?.platform === "win32" ? "pc" : "mac",
             // Finished-chat report contract v1: optional, absent when unknown.
             paneNumber: record.paneNumber,
             app: record.app,
@@ -622,9 +671,10 @@ export function recordReview(
   return saved;
 }
 /** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
-export function sendReviewNotice(id: string): void {
+/** `looked`: the person was reading the chat when it finished, so the phone is not told. */
+export function sendReviewNotice(id: string, looked = false): void {
   const r = validId(id) ? read(id) : null;
-  if (r) spoolNotice(r);
+  if (r) spoolNotice(r, looked);
 }
 export function listReviews(history: HistoryEntry[] = []): ReviewRecord[] {
   const saved = existsSync(root())
