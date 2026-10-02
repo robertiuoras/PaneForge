@@ -8,7 +8,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { app } from 'electron'
 import { profileName } from './profile'
-import { doneReviewId, doneVerdict, folderLeftover, type DoneReading } from '../shared/doneClose'
+import { DONE_COUNTDOWN_MS, doneReviewId, doneVerdict, folderLeftover, waitsForYou, type DoneReading } from '../shared/doneClose'
 import { machineOf, openTurnOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
 import { summaryOf, type FinishedNote } from '../shared/finishedDigest'
 import type { ReviewInput, ReviewRecord } from '../shared/reviews'
@@ -146,6 +146,27 @@ export interface DoneCloseDeps {
   dry?: boolean
   /** Publish a separate finished-chat deadline; idle-close has its own clock. */
   setClosing?: (id: string, at: number | undefined) => void
+  /**
+   * Publish `Session.waitsForYou` (`shared/doneClose.ts` `waitsForYou`): the plain-words
+   * reason a finished chat expects its person, or undefined. Called only on a change.
+   */
+  setWaiting?: (id: string, reason: string | undefined) => void
+}
+
+/**
+ * Should this pane carry `waitsForYou`, and why? Asked for every agent pane on every tick,
+ * before any gate that skips a pane (looking at it, asleep, not quiet yet), because the idle
+ * clock and the asleep sweep read it whatever this sweep decides. A running turn or a turn
+ * still open in the transcript clears it. An asleep pane restored with no screen turn end
+ * takes its turn end from the transcript (`ReplyRead.turnEndedAt`).
+ */
+function waitingOf(r: DoneReading, now: number, reply: () => ReplyRead | undefined): string | undefined {
+  if (r.agent === 'shell' || r.runSince || (r.busyUntil ?? 0) > now || r.status === 'working') return undefined
+  if (!r.turnEndedAt && !r.asleep) return undefined
+  const read = reply()
+  if (!r.turnEndedAt && !read?.turnEndedAt) return undefined
+  if (openTurnOf(read, now)) return undefined
+  return waitsForYou({ ...r, reply: read?.text, runningAgents: read?.runningAgents }, now) ?? undefined
 }
 
 /** The last thing logged per pane, so a pane that stays for an hour is one line, not 240. */
@@ -156,6 +177,24 @@ const warnings = new Map<string, { turn: number; at: number }>()
 export function sweepDoneClose(d: DoneCloseDeps): string[] {
   const readings = d.readings()
   const enabled = d.enabled()
+  const now = d.now?.() ?? Date.now()
+  // One transcript read per pane per pass (`readReply` is stat-cached on top of that).
+  const replies = new Map<string, ReplyRead | undefined>()
+  const replyOf = (id: string, agent: string): ReplyRead | undefined => {
+    if (!replies.has(id)) {
+      const file = d.transcriptFor(id)
+      replies.set(id, file ? readReply(agent, file, now) : undefined)
+    }
+    return replies.get(id)
+  }
+  // Published even with the close switched off: the idle clock and the asleep sweep read it.
+  if (!d.dry && d.setWaiting)
+    for (const r of readings) {
+      const id = (r as DoneReading & { id: string }).id
+      if (!id) continue
+      const why = waitingOf(r, now, () => replyOf(id, r.agent))
+      if (why !== r.waitsForYou) d.setWaiting(id, why)
+    }
   if (!d.dry) for (const id of warnings.keys()) {
     if (!enabled || !readings.some((r) => (r as DoneReading & { id: string }).id === id)) {
       warnings.delete(id)
@@ -163,7 +202,6 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     }
   }
   if (!enabled) return []
-  const now = d.now?.() ?? Date.now()
   const quietMs = d.quietMs?.()
   const closed: string[] = []
   const say = (id: string, what: string): void => {
@@ -187,9 +225,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         say(id, 'stays - no finished turn: it never showed a turn ending here, and its conversation does not say one ended')
       continue
     }
-    const agent = r.agent
-    const file = d.transcriptFor(id)
-    const reply = file ? readReply(agent, file, now) : undefined
+    const reply = replyOf(id, r.agent)
     const openTurn = openTurnOf(reply, now) ?? undefined
     verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents, openTurn }, now, quietMs)
     if (!verdict.close) {
@@ -217,12 +253,12 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     }
     // The folder never holds the pane. Asked now so a read has started by the close below.
     let folder = d.folderOf?.(id, r.turnEndedAt)
-    // Quiet eligibility is not a visible warning. Start a fresh 30-second deadline
-    // only after every refusal passes, and recheck them on every sweep.
+    // Quiet eligibility is not a visible warning. Start a fresh DONE_COUNTDOWN_MS deadline
+    // (shown in GuardDeck only) after every refusal passes, and recheck them on every sweep.
     if (d.setClosing && quietMs !== 0) {
       let warning = warnings.get(id)
       if (!warning || warning.turn !== r.turnEndedAt) {
-        warning = { turn: r.turnEndedAt, at: now + 30_000 }
+        warning = { turn: r.turnEndedAt, at: now + DONE_COUNTDOWN_MS }
         warnings.set(id, warning)
         d.setClosing(id, warning.at)
       }

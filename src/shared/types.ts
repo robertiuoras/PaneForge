@@ -300,8 +300,15 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
-  /** Published warning deadline from the finished-chat sweep. */
+  /** Published warning deadline from the finished-chat sweep (drawn by GuardDeck only). */
   doneClosingAt?: number
+  /**
+   * Why this finished chat expects its person (`shared/doneClose.ts` `waitsForYou`): a
+   * question, unfinished work, agent steps, subagents out, a handoff with open steps, or
+   * panes it opened. Set = no automatic closer takes it (idle clock, `closeIntoReview`,
+   * asleep sweep); sleeping under memory pressure still may.
+   */
+  waitsForYou?: string
   /** The owning device's persistent Keep open preference for this pane. */
   keepOpen?: boolean
   /**
@@ -3025,6 +3032,8 @@ export interface Api {
   watchRemote(device: string, ids: string[], all?: boolean): Promise<RemoteState>
   /** Change Keep open on the device that owns a mirrored pane. */
   setRemoteKeepOpen(id: string, keep: boolean): Promise<boolean>
+  /** Keep open for a local or `@device/...` pane by id (`sessions:keepOpen`); GuardDeck's Stop. */
+  keepPaneOpen(id: string, keep: boolean): Promise<{ ok: boolean; reason?: string }>
   /** that device's own project folders, so a pane can be opened over there */
   remoteProjects(device: string): Promise<Project[]>
   /** the CLIs installed on that device - its list, not this one's */

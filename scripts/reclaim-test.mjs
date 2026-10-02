@@ -571,6 +571,14 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const busy = pane({ id: 'x', state: 'needsYou', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR, busy: true })
   eq('a run clock that is still going is a refusal of its own', idleClosePlan([busy, pad], CLOCKED, NOW).length, 0)
   eq('and under pressure too', reclaimPlan([busy, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
+  // Robert, 2026-10-03: a finished chat that expects him (`Session.waitsForYou`) stays until he
+  // acts. No close clock, so no countdown chip, and no pressure close; sleeping it may still.
+  const expects = { ...finished, waitsForYou: true }
+  eq('the idle clock never closes a chat that waits for you', idleClosePlan([expects, pad], CLOCKED, NOW).length, 0)
+  eq('...so its card draws no countdown', idleCloseAt(expects, CLOCKED, NOW, true, [expects, pad]), null)
+  check('...where the same pane without it does', idleCloseAt(finished, CLOCKED, NOW, true, [finished, pad]) !== null)
+  eq('pressure never closes it either', reclaimPlan([expects, pad], over, DEFAULT_RECLAIM, NOW).length, 0)
+  eq('but the sleep clock still may, under pressure', ids(idleSleepPlan([expects], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW, true, 'tight')), 'x')
 }
 
 
@@ -1446,9 +1454,11 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   eq(
     'a Keep from the phone or the other desk is told to the window, not only saved',
-    (index.match(/setKeepOpen: \(id, keepOpen\) => \{[\s\S]{0,400}?send\('config:changed', getConfig\(\)\)/g) ?? []).length,
+    (index.match(/setKeepOpen: keepPaneOpenHere,/g) ?? []).length,
     2
   )
+  // Both go through the one keep-open (also `sessions:keepOpen`, GuardDeck's Stop), which tells it.
+  check('...and that one keep-open sends the change', /function keepPaneOpenHere\([\s\S]{0,600}?send\('config:changed', getConfig\(\)\)/.test(index))
   // ...and a Keep that lands DURING a countdown stops it. On the PC 2026-09-29 `dev: dev`
   // was kept from the Mac, then armed by a pressure sweep at 9:09:18am and closed at
   // 9:09:33am: a Keep pressed elsewhere reached no countdown, and the deadline re-checked

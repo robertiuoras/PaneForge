@@ -167,6 +167,9 @@ function dead(overrides = {}) {
   // 2026-10-02: six crash-restored panes asleep with their "continue" owed were swept and
   // the prompts logged LOST. Owed work keeps the card, asleep or dead.
   check('a sleeping pane still owed a prompt stays', asleepSweep([nap({ owed: true })], T).length === 0)
+  // 2026-10-03: a finished chat that expects its person stays until they act, asleep or not.
+  check('a sleeping chat that waits for you stays', asleepSweep([nap({ waitsForYou: true })], T).length === 0)
+  check('...the dead-pane sweep is not changed by it', exitedSweep([dead({ waitsForYou: true })], NOW).length === exitedSweep([dead({})], NOW).length)
   check('a dead pane still owed a prompt stays', exitedSweep([dead({ owed: true })], NOW).length === 0)
   check('and Clear finished leaves it too', clearFinishedNow([dead({ owed: true })]).length === 0)
 }

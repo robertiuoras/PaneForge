@@ -437,7 +437,7 @@ is(
   const chip = app.slice(app.indexOf('function CloseClock('), app.indexOf('const api = window.api'))
   assert.match(chip, /sleep \? 'sleeps' : 'closes'/, 'the chip has a word for a sleep countdown')
   assert.match(chip, /going to sleep/, '...and its hover says what a sleep keeps')
-  const row = app.slice(app.indexOf('at={s.doneClosingAt ?? alarmAt(s.id)'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
+  const row = app.slice(app.indexOf('at={alarmAt(s.id) ?? (s.closingAt'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
   assert.match(row, /sleep=\{alarmSleeps\(s\.id\)\}/, 'the row tells the chip whether the armed countdown is a sleep')
   const at = app.indexOf('if (soon.sleep) {', app.indexOf('// One timer per card'))
   const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))

@@ -822,15 +822,7 @@ const phone = new PhoneServer({
   sessionBuffer: (id) => manager.buffer(id),
   semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
   sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
-  setKeepOpen: (id, keepOpen) => {
-    const current = getConfig().pinnedPanes ?? []
-    const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
-    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
-    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
-    send('config:changed', getConfig())
-    send('sessions:changed', allSessions())
-    return true
-  },
+  setKeepOpen: keepPaneOpenHere,
   isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
@@ -1276,15 +1268,7 @@ const remote = new Remote({
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock, reason) => manager.setBusyOnScreen(id, busy, tail, clock, reason),
   clearAttention: (id) => manager.clearAttention(id),
-  setKeepOpen: (id, keepOpen) => {
-    const current = getConfig().pinnedPanes ?? []
-    const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
-    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
-    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
-    send('config:changed', getConfig())
-    send('sessions:changed', allSessions())
-    return true
-  },
+  setKeepOpen: keepPaneOpenHere,
   isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
   // A person closing a pane this desk runs, from the paired machine's mirror of it.
@@ -1754,6 +1738,44 @@ function keptOpen(id: string): boolean {
   return (getConfig().pinnedPanes ?? []).includes(id)
 }
 manager.keptOpen = keptOpen
+/**
+ * Keep open (or not) for a pane THIS desk runs: the pin the card's "Keep this pane open"
+ * saves, for the phone, a paired machine and `sessions:keepOpen`. A kept pane's armed clear
+ * stands down, and so does a finished chat's countdown, at once rather than a sweep later.
+ */
+function keepPaneOpenHere(id: string, keep: boolean): boolean {
+  const current = getConfig().pinnedPanes ?? []
+  const next = keep ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
+  if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+  if (keep) {
+    manager.cancelAutoClear(id, 'cancelled')
+    manager.setDoneClosingAt(id, undefined)
+  }
+  send('config:changed', getConfig())
+  send('sessions:changed', allSessions())
+  return true
+}
+/**
+ * GuardDeck's Stop on a finished chat's countdown (and anything else that wants the card's
+ * Keep open without the window): Robert, 2026-10-03, "unless i click on guarddeck notch stop
+ * which would stop it". Reachable over the phone server's `/pf/call` (`surface.ts`
+ * `keepPaneOpen`, reviewed safe in `passkey-test.mjs` like `autoclear:cancel`: it only ever
+ * stands a close down or lifts a pin). A pane on another machine (`@device/...`) goes to
+ * that machine through `remote:keepOpen`'s path; its own desk drops the countdown.
+ */
+ipcMain.handle('sessions:keepOpen', async (_e, id: unknown, keep: unknown): Promise<{ ok: boolean; reason?: string }> => {
+  if (typeof id !== 'string' || !id || typeof keep !== 'boolean') return { ok: false, reason: 'expected [id: string, keep: boolean]' }
+  if (remote.owns(id) || id.startsWith('@')) {
+    try {
+      return (await remote.setKeepOpen(id, keep)) ? { ok: true } : { ok: false, reason: 'the other machine refused' }
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message }
+    }
+  }
+  if (!manager.list().some((s) => s.id === id)) return { ok: false, reason: 'no pane with that id here' }
+  keepPaneOpenHere(id, keep)
+  return { ok: true }
+})
 function doneReadings(): ReturnType<typeof manager.doneReadings> {
   return manager.doneReadings().map((r) => (keptOpen(r.id) ? { ...r, kept: true } : r))
 }
@@ -1781,13 +1803,14 @@ function doneCloseDeps(): DoneCloseDeps {
     openerOf: (id) => manager.openerOf(id),
     finished: (opener, note) => finishedDigest.add(opener, note),
     enabled: () => getConfig().autoCloseDone !== false,
-    // Quicker on a machine measured short of memory: 3 min, 1 min tight, 30 s over.
+    // Quicker on a machine measured short of memory: 1 min, 30 s tight, 15 s over.
     quietMs: () => {
       const v = capacityVerdict()
       return doneQuietMs(sleepPressureOf(v.level, v.why))
     },
     readings: doneReadings,
     setClosing: (id, at) => manager.setDoneClosingAt(id, at),
+    setWaiting: (id, why) => manager.setWaitsForYou(id, why),
     folderOf: (id, since) => {
       const cwd = manager.list().find((x) => x.id === id)?.cwd
       return cwd ? gitCached(cwd, since) : null
@@ -2621,7 +2644,9 @@ function exitedFacts(): ExitedFact[] {
     keepOpen: s.keepOpen || keptOpen(s.id),
     restored: s.asleepReason === 'restored',
     // A pane the app still owes a prompt is not finished, asleep or not (2026-10-02).
-    owed: Boolean(s.owedPrompt)
+    owed: Boolean(s.owedPrompt),
+    // A finished chat that expects its person stays until they act (2026-10-03).
+    waitsForYou: Boolean(s.waitsForYou)
   }))
 }
 /**
@@ -2684,8 +2709,16 @@ ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
   // 2026-10-02 18:44Z: six crash-restored panes, each still owed its "continue", were closed
   // by this countdown ("queued prompt LOST ... the pane closed before it was typed" x6).
   // A pane that owes a prompt is not quiet; the countdown has no say over it.
-  if (manager.list().find((s) => s.id === id)?.owedPrompt || owedCount(id) > 0) {
+  const pane = manager.list().find((s) => s.id === id)
+  if (pane?.owedPrompt || owedCount(id) > 0) {
     logReclaim({ action: 'close-refused', pane: id, reason: 'owed-prompt' })
+    return
+  }
+  // A finished chat that expects its person (a question, agent steps, unfinished work,
+  // subagents out, an open handoff, panes it opened) stays until they act. Robert,
+  // 2026-10-03. Sleeping it under pressure is another path and still allowed.
+  if (pane?.waitsForYou) {
+    logReclaim({ action: 'close-refused', pane: id, reason: 'waits-for-you' })
     return
   }
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale

@@ -67,6 +67,9 @@ const DESK_SIDE = {
   // on every submitted line and is still the answer to "have I asked this", so the lookup
   // stays reachable from outside the window.
   priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
+  // The window's own Keep open goes through config.pinnedPanes; this is the same pin by id
+  // for a caller outside the window (Robert, 2026-10-03).
+  keepPaneOpen: "GuardDeck's notch Stop on a finished chat's countdown, over /pf/call sessions:keepOpen",
   watchCompute: 'pf-ctl watch-job - a compute job binds its shell pane, no control in the window',
   paneComposer: 'pf-ctl call sessions:composer - reads what is typed into a pane and not sent, no control in the window (db22552a)',
   // What is typed into a pane and not sent. The window already SHOWS it - it is the

@@ -859,7 +859,6 @@ export class SessionManager extends EventEmitter {
         backJob: m.backJob,
         serving: m.serving,
         backWaitOnly: backJobWaitOnly(m.id),
-        focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
         // Only while a pane it opened is still open or their summary is still on its way.
@@ -873,7 +872,8 @@ export class SessionManager extends EventEmitter {
         handoffQueuedAt: m.handoffQueuedAt,
         handoffOpen: m.handoffOpen,
         handoverUntil: m.handoverUntil,
-        lookedAt: live.lookedAt || undefined
+        lookedAt: live.lookedAt || undefined,
+        waitsForYou: m.waitsForYou
       }
     })
   }
@@ -3181,6 +3181,14 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s || s.meta.doneClosingAt === at) return
     s.meta.doneClosingAt = at
+    this.emitSessions()
+  }
+
+  /** `Session.waitsForYou`, published by the done-close sweep; emits only on a change. */
+  setWaitsForYou(id: string, why: string | undefined): void {
+    const s = this.sessions.get(id)
+    if (!s || s.meta.waitsForYou === why) return
+    s.meta.waitsForYou = why
     this.emitSessions()
   }
 

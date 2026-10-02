@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { seedTurnEnd, doneVerdict, folderLeftover, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { seedTurnEnd, doneVerdict, folderLeftover, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, waitsForYou, AUTO_CLOSE_QUIET_MS, DONE_COUNTDOWN_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -177,7 +177,8 @@ ${method('closeAfterResult', 'killAll')}
   }
   assert.equal(refuse({ agent: 'shell' }), 'shell pane')
   assert.equal(refuse({ turnEndedAt: 0 }), 'no finished turn')
-  assert.equal(refuse({ focused: true }), 'somebody is looking at it')
+  // Robert, 2026-10-03: "if i go in paneforge in that chat it shouldn't stop the coutndown".
+  assert.equal(doneVerdict(finished({ focused: true, lookedAt: NOW - 1_000 }), NOW).close, true, 'looking at it never holds it')
   // Robert, 2026-09-29: a pane he kept open for a long job must stay to be read and continued.
   assert.equal(refuse({ kept: true }), 'kept open by hand')
   assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
@@ -195,7 +196,7 @@ ${method('closeAfterResult', 'killAll')}
   assert.equal(refuse({ asleep: NOW - 1000, status: 'exited' }), 'asleep')
   assert.equal(refuse({ printed: 0 }), 'not started')
   assert.equal(refuse({ job: 'vim' }), 'busy or running something')
-  // Quiet past the three-minute wait but printed in the last 8 s cannot happen through
+  // Quiet past the one-minute wait but printed in the last 8 s cannot happen through
   // doneVerdict (the same clock), so the 8 s refusal is asked of whyNotDone directly.
   assert.equal(whyNotDone(finished(), 3000, NOW), 'printed in the last 8 s')
   assert.equal(whyNotDone(finished(), 9000, NOW), null)
@@ -230,23 +231,25 @@ ${method('closeAfterResult', 'killAll')}
 // 2a. A machine short of memory waits less. Robert 2026-09-28: "id rather they close than
 // sleep" - the pressure sleep's own clocks (1 min tight, 30 s over) move to the close.
 {
+  // Robert, 2026-10-03: "3 minutes is too long i think make it 1 minute by default".
+  assert.equal(AUTO_CLOSE_QUIET_MS, 60_000)
   assert.equal(doneQuietMs('ok'), AUTO_CLOSE_QUIET_MS)
-  assert.equal(doneQuietMs('tight'), 60_000)
-  assert.equal(doneQuietMs('over'), 30_000)
-  const ninety = finished({ turnEndedAt: NOW - 90_000 })
-  assert.equal(doneVerdict(ninety, NOW).reason, 'not quiet long enough', 'the default wait is three minutes')
-  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('ok')).close, false, 'room to spare: still three minutes')
-  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('tight')).close, true, 'tight: ninety seconds is enough')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('tight')).close, false, 'tight: forty seconds is not')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('over')).close, true, 'over: forty seconds is')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, focused: true }), NOW, doneQuietMs('over')).close, false, 'pressure never closes the pane somebody is looking at')
+  assert.equal(doneQuietMs('tight'), 30_000)
+  assert.equal(doneQuietMs('over'), 15_000)
+  const ninety = finished({ turnEndedAt: NOW - 45_000 })
+  assert.equal(doneVerdict(ninety, NOW).reason, 'not quiet long enough', 'the default wait is one minute')
+  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('ok')).close, false, 'room to spare: still one minute')
+  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('tight')).close, true, 'tight: forty-five seconds is enough')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 20_000 }), NOW, doneQuietMs('tight')).close, false, 'tight: twenty seconds is not')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 20_000 }), NOW, doneQuietMs('over')).close, true, 'over: twenty seconds is')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 61_000 }), NOW).close, true, 'a minute and a second: closes')
   // The sweep passes its dep through to both verdicts; unset is the default wait.
   const transcript = join(work, 'quiet.jsonl')
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
   const shut = []
   const deps = (quietMs) => ({
     enabled: () => true,
-    readings: () => [{ id: 'q1', ...finished({ turnEndedAt: NOW - 90_000, reply: undefined, runningAgents: undefined }) }],
+    readings: () => [{ id: 'q1', ...finished({ turnEndedAt: NOW - 45_000, reply: undefined, runningAgents: undefined }) }],
     transcriptFor: () => transcript, resumeIdFor: () => 'native-q', history: () => [],
     titleOf: () => ({ title: 'quiet', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
@@ -254,7 +257,7 @@ ${method('closeAfterResult', 'killAll')}
     close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, ...(quietMs ? { quietMs } : {})
   })
-  assert.deepEqual(main.sweepDoneClose(deps()), [], 'no quietMs dep: three minutes')
+  assert.deepEqual(main.sweepDoneClose(deps()), [], 'no quietMs dep: one minute')
   assert.deepEqual(main.sweepDoneClose(deps(() => doneQuietMs('tight'))), ['q1'], 'the sweep uses the dep')
   console.log('done-close: a short machine waits less ok')
 }
@@ -289,7 +292,7 @@ ${method('closeAfterResult', 'killAll')}
   let answers = [{ dirty: 6, ahead: 2 }]
   const deps = {
     enabled: () => true,
-    readings: () => [{ id: 'f1', ...finished({ reply: undefined, runningAgents: undefined }) }, { id: 'f2', ...finished({ turnEndedAt: NOW - 10_000 }) }, { id: 'f3', ...finished({ focused: true }) }],
+    readings: () => [{ id: 'f1', ...finished({ reply: undefined, runningAgents: undefined }) }, { id: 'f2', ...finished({ turnEndedAt: NOW - 10_000 }) }, { id: 'f3', ...finished({ lastKeyboard: NOW - 5_000 }) }],
     folderOf: (id) => { asked.push(id); return answers.length > 1 ? answers.shift() : answers[0] },
     transcriptFor: () => transcript, resumeIdFor: () => 'native-f', history: () => [],
     titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/toolstash', agent: 'claude' }), otherwiseBusy: () => null,
@@ -299,7 +302,7 @@ ${method('closeAfterResult', 'killAll')}
     now: () => NOW, log: (l) => lines.push(l)
   }
   assert.deepEqual(main.sweepDoneClose(deps), ['f1'], 'changed files and unpushed commits no longer hold it')
-  assert.ok(asked.length >= 1 && asked.every((id) => id === 'f1'), 'a pane mid-quiet or looked at never costs a folder read')
+  assert.ok(asked.length >= 1 && asked.every((id) => id === 'f1'), 'a pane mid-quiet or just typed into never costs a folder read')
   assert.deepEqual(records[0].evidence, ['Left in toolstash: 6 changed files, 2 commits not pushed'], 'the Review row says what was left')
   assert.match(lines.find((l) => l.startsWith('f1')), /^f1 finished and closed itself into Review \(done_f1_\d+\) - Left in toolstash: 6 changed files, 2 commits not pushed$/, 'done-close.log says it too')
   // A clean folder, not a repo, and a read still in flight: closes, writes no line.
@@ -421,28 +424,22 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
 // reviewed the session ... should've closed that session automatically after like 30secs
 // after i read it".
 {
-  // (c) A read pane closes READ_QUIET_MS after the look ended; an unread one waits as before.
-  assert.equal(READ_QUIET_MS, 30_000)
-  const ended = NOW - 60_000
-  const lookEnded = NOW - 40_000
-  const read = (at) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000, lookedAt: lookEnded }), lookEnded + at)
-  assert.equal(read(29_000).close, false, 'read: 29 s after looking away it stays')
-  assert.equal(read(29_000).reason, 'not quiet long enough')
-  assert.equal(read(31_000).close, true, 'read: 31 s after looking away it closes')
-  assert.equal(read(31_000).read, true, 'and the verdict says it was read')
-  const unread = (at) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000 }), lookEnded + at)
-  assert.equal(unread(31_000).close, false, 'unread: 31 s is nothing, the normal wait holds')
-  assert.equal(unread(AUTO_CLOSE_QUIET_MS - 20_000).close, true, 'unread: closes once three minutes since the turn ended')
-  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: ended - 1 }), lookEnded + 31_000).close, false, 'a look from before this turn ended is an earlier turn\'s')
+  // (c) Looking never holds, delays or cancels a close (Robert, 2026-10-03: "if i go in
+  // paneforge in that chat it shouldn't stop the coutndown"). It only marks the verdict
+  // read, which spares the phone a push. Typing still restarts the quiet.
+  assert.equal(READ_QUIET_MS, undefined, 'the 30 s after-a-look wait is gone')
+  const ended = NOW - AUTO_CLOSE_QUIET_MS - 1_000
+  const v = (over, now = NOW) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000, ...over }), now)
+  assert.equal(v({ lookedAt: NOW - 1_000 }).close, true, 'a look a second ago does not hold it')
+  assert.equal(v({ lookedAt: NOW - 1_000 }).read, true, 'and the verdict says it was read')
+  assert.equal(v({}).read, false, 'nobody looked: unread')
+  assert.equal(v({ lookedAt: ended - 1 }).read, false, 'a look from before this turn ended is an earlier turn\'s')
   assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended - 1 }), false)
   assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended }), true, 'watching it finish is reading it')
-  const typed = doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, lastKeyboard: lookEnded + 10_000 }), lookEnded + 31_000)
-  assert.equal(typed.close, false, 'typing after the look restarts the 30 s')
-  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, focused: true }), lookEnded + 31_000).reason, 'somebody is looking at it')
-  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, reply: 'Which port?' }), lookEnded + 31_000).reason, 'the reply ends in a question', 'read never excuses a question')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'read quiet interval has elapsed under tight pressure')
-  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW).close, false, 'old turn cannot override a recent look')
-  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW, doneQuietMs('over')).close, false, 'pressure cannot override a recent look')
+  assert.equal(v({ lookedAt: NOW - 20_000, lastKeyboard: NOW - 10_000 }).reason, 'not quiet long enough', 'typing restarts the quiet')
+  assert.equal(v({ focused: true, lookedAt: NOW }).close, true, 'selected, window up, person here: still closes')
+  assert.equal(v({ lookedAt: NOW - 1_000, reply: 'Which port?' }).reason, 'the reply ends in a question', 'read never excuses a question')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 59_000 }), NOW).reason, 'not quiet long enough', '59 s is not a minute')
   for (const reply of ['- **Unfinished:** tracking verification.', 'Seven tasks remain open.', 'The client job itself is not finished.', 'The check is queued.']) {
     assert.equal(doneVerdict(finished({ reply }), NOW).close, false, reply)
   }
@@ -498,28 +495,38 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')
   assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), looked at`))
 
-  // Automatic closure publishes a full warning, with cancellation and a fresh deadline.
+  // Automatic closure publishes a DONE_COUNTDOWN_MS warning (GuardDeck draws it). Looking at
+  // the pane neither cancels nor restarts it; Keep open (`kept`, `sessions:keepOpen`) does.
+  assert.equal(DONE_COUNTDOWN_MS, 15_000, 'Robert, 2026-10-03: "like 15secs"')
   let clock = at
   let focused = false
+  let kept = false
   const deadlines = []
-  const warned = { ...deps, readings: () => [{ ...readings[0], id: 'warning', focused }],
+  const warned = { ...deps, readings: () => [{ ...readings[0], id: 'warning', focused, lookedAt: focused ? clock : undefined }],
     transcriptFor: () => files.none, now: () => clock,
     setClosing: (id, deadline) => deadlines.push([id, deadline]) }
   assert.deepEqual(main.sweepDoneClose(warned), [])
-  assert.equal(deadlines.at(-1)[1], at + 30_000)
-  clock += 29_000
-  assert.deepEqual(main.sweepDoneClose(warned), [])
+  assert.deepEqual(deadlines.at(-1), ['warning', at + 15_000])
+  clock += 14_000
   focused = true
-  assert.deepEqual(main.sweepDoneClose(warned), [])
-  assert.equal(deadlines.at(-1)[1], undefined, 'returning to pane cancels warning')
-  focused = false
-  main.sweepDoneClose(warned)
-  assert.equal(deadlines.at(-1)[1], clock + 30_000, 'fresh warning after cancellation')
-  clock += 30_000
-  assert.deepEqual(main.sweepDoneClose(warned), ['warning'])
-  assert.equal(deadlines.at(-1)[1], undefined)
-  main.sweepDoneClose(warned)
-  main.sweepDoneClose({ ...warned, enabled: () => false })
+  const published = deadlines.length
+  assert.deepEqual(main.sweepDoneClose(warned), [], 'going into the pane with 1 s left')
+  assert.equal(deadlines.length, published, 'looking neither cancels nor restarts the countdown')
+  clock += 1_000
+  assert.deepEqual(main.sweepDoneClose(warned), ['warning'], 'it closes on time while somebody is looking')
+  assert.deepEqual(deadlines.at(-1), ['warning', undefined])
+  const stop = { ...warned, readings: () => [{ ...readings[0], id: 'stop', kept }] }
+  assert.deepEqual(main.sweepDoneClose(stop), [])
+  assert.deepEqual(deadlines.at(-1), ['stop', clock + 15_000])
+  kept = true
+  assert.deepEqual(main.sweepDoneClose(stop), [], 'GuardDeck Stop = Keep open')
+  assert.deepEqual(deadlines.at(-1), ['stop', undefined], 'Keep open drops the countdown')
+  clock += 15_000
+  assert.deepEqual(main.sweepDoneClose(stop), [], 'and it never closes')
+  kept = false
+  main.sweepDoneClose(stop)
+  assert.deepEqual(deadlines.at(-1), ['stop', clock + 15_000], 'unkept: a fresh countdown')
+  main.sweepDoneClose({ ...stop, enabled: () => false })
   assert.equal(deadlines.at(-1)[1], undefined, 'disabling cancels published clock')
 
   // (d) What held s93-muk43els at 17:52:44Z on 27 Sep (done-close.log 258): `handoffOpen` -
@@ -555,7 +562,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
 // 4c. Why a pane stayed lands in a log, once per change of reason.
 {
   const lines = []
-  const readings = [{ id: 'sel', ...finished({ focused: true }) }, { id: 'mid', ...finished({ turnEndedAt: 0, status: 'working', runSince: NOW - 60_000 }) }]
+  const readings = [{ id: 'sel', ...finished({ drafting: true }) }, { id: 'mid', ...finished({ turnEndedAt: 0, status: 'working', runSince: NOW - 60_000 }) }]
   const deps = {
     enabled: () => true, readings: () => readings, transcriptFor: () => null, resumeIdFor: () => undefined,
     history: () => [], titleOf: () => undefined, otherwiseBusy: () => null, record: () => { throw new Error('no') },
@@ -564,11 +571,134 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   }
   main.sweepDoneClose(deps)
   main.sweepDoneClose(deps)
-  assert.deepEqual(lines, ['sel stays - somebody is looking at it'], 'one line per reason; a pane mid-turn says nothing')
-  readings[0] = { id: 'sel', ...finished({ focused: false }) }
+  assert.deepEqual(lines, ['sel stays - an unsent draft in its prompt box'], 'one line per reason; a pane mid-turn says nothing')
+  readings[0] = { id: 'sel', ...finished() }
   main.sweepDoneClose(deps)
   assert.equal(lines.at(-1), 'sel stays - reply not read', 'a new reason is a new line')
   console.log('done-close: stay reasons are logged ok')
+}
+
+// 4d. "Waits for you" (Robert, 2026-10-03): a finished chat that asks him something, reports
+// unfinished work, lists agent steps, has subagents out, a handoff with open steps, or opened
+// other panes STAYS OPEN until he acts - and not only from this sweep: it is published as
+// `Session.waitsForYou` for the idle clock, `closeIntoReview` and the asleep sweep.
+{
+  const plain = 'Built it.\n\n## Next steps\n- None'
+  assert.equal(waitsForYou({ reply: plain }), null, 'plain done: nothing')
+  assert.equal(waitsForYou({ reply: 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build' }), null, 'person-only steps never count')
+  assert.equal(waitsForYou({ reply: 'Which port should it use?' }), 'the reply ends in a question')
+  assert.equal(waitsForYou({ reply: 'Done.\n\n## Next steps\n- Wire the PC watcher' }), '1 step an agent could take')
+  assert.equal(waitsForYou({ reply: 'Seven tasks remain open.' }), 'the reply reports unfinished work')
+  assert.equal(waitsForYou({ reply: plain, runningAgents: 2 }), '2 subagents still running')
+  assert.equal(waitsForYou({ reply: plain, openedOthers: true }), 'it opened other panes and collects their summary')
+  assert.equal(waitsForYou({ reply: plain, handoffOpen: 3 }), 'a handoff with open steps')
+  assert.equal(waitsForYou({ reply: undefined }), null, 'reply not read: say nothing')
+  assert.equal(waitsForYou({ reply: plain, drafting: true }), null, 'a draft holds the close itself, it is not "waits for you"')
+
+  // The sweep publishes it on every tick, before the gates that skip a pane, and clears it.
+  const file = (name, rows) => {
+    const f = join(work, `wait-${name}.jsonl`)
+    writeFileSync(f, rows.map((r) => JSON.stringify(r)).join('\n'))
+    return f
+  }
+  const say = (text) => ({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } })
+  const files = {
+    ask: file('ask', [say('Which port should it use?')]),
+    look: file('look', [say('Done.\n\n## Next steps\n- Wire the PC watcher')]),
+    plain: file('plain', [say(plain)]),
+    person: file('person', [say('Built it.\n\n## Next steps\n- Robert: approve the Vercel build')]),
+    // Restored asleep: no screen turn end, the transcript's own turn-end row says it ended.
+    slept: file('slept', [say('Which branch?'), { type: 'system', subtype: 'turn_duration', isSidechain: false, timestamp: new Date(NOW - 600_000).toISOString() }]),
+    open: file('open', [say('Which port?'), { type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] } }])
+  }
+  const asked = 'the reply ends in a question'
+  const readings = [
+    { id: 'ask', ...finished({ turnEndedAt: NOW - 5_000, reply: undefined }) },
+    { id: 'look', ...finished({ focused: true, lookedAt: NOW, reply: undefined }) },
+    { id: 'plain', ...finished({ reply: undefined }) },
+    { id: 'person', ...finished({ reply: undefined }) },
+    { id: 'opener', ...finished({ openedOthers: true, reply: undefined }) },
+    { id: 'slept', ...finished({ turnEndedAt: 0, status: 'exited', asleep: NOW - 60_000, reply: undefined }) },
+    { id: 'busy', ...finished({ runSince: NOW - 1_000, waitsForYou: asked, reply: undefined }) },
+    { id: 'same', ...finished({ waitsForYou: asked, reply: undefined }) },
+    { id: 'open', ...finished({ waitsForYou: asked, reply: undefined }) },
+    { id: 'sh', ...finished({ agent: 'shell', reply: undefined }) }
+  ]
+  const published = []
+  const deps = {
+    enabled: () => false, readings: () => readings,
+    transcriptFor: (id) => files[id] ?? (id === 'same' || id === 'busy' ? files.ask : files.plain),
+    resumeIdFor: () => undefined, history: () => [], titleOf: () => undefined, otherwiseBusy: () => null,
+    record: () => { throw new Error('no row') }, close: () => ({ closed: false }), noteClose: () => {},
+    writeNotice: () => {}, activity: () => {}, notify: () => {}, now: () => NOW,
+    setWaiting: (id, why) => published.push([id, why])
+  }
+  main.sweepDoneClose({ ...deps, dry: true })
+  assert.deepEqual(published, [], 'dry touches nothing')
+  main.sweepDoneClose(deps)
+  assert.deepEqual(published, [
+    ['ask', asked],
+    ['look', '1 step an agent could take'],
+    ['opener', 'it opened other panes and collects their summary'],
+    ['slept', 'the reply ends in a question'],
+    ['busy', undefined],
+    ['open', undefined]
+  ], 'published with the close off, not yet quiet, looked at, asleep; cleared by a running or open turn; only on a change')
+  console.log('done-close: waits-for-you is read and published ok')
+}
+
+// 4e. GuardDeck's Stop: `sessions:keepOpen` [id, keep] -> { ok, reason? }, run as written.
+{
+  const { transformSync } = await import('esbuild')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const from = index.indexOf('function keepPaneOpenHere(')
+  const handle = index.indexOf("ipcMain.handle('sessions:keepOpen'", from)
+  assert.ok(from > 0 && handle > from, 'keepPaneOpenHere and the channel exist')
+  const tail = index.slice(handle).match(/\r?\n\}\)\r?\n/)
+  const code = transformSync(index.slice(from, handle + tail.index + tail[0].length), { loader: 'ts' }).code
+  let config = { pinnedPanes: ['other'] }
+  const calls = []
+  const handlers = {}
+  const env = {
+    getConfig: () => config,
+    setConfig: (p) => { config = { ...config, ...p } },
+    manager: {
+      list: () => [{ id: 's1' }],
+      cancelAutoClear: (id) => calls.push(['cancelAutoClear', id]),
+      setDoneClosingAt: (id, at) => calls.push(['setDoneClosingAt', id, at])
+    },
+    send: (ch) => calls.push(['send', ch]),
+    allSessions: () => [],
+    remote: { owns: (id) => id.startsWith('@pc/'), setKeepOpen: async (id, keep) => { calls.push(['remote', id, keep]); return true } },
+    ipcMain: { handle: (ch, fn) => { handlers[ch] = fn } }
+  }
+  new Function(...Object.keys(env), code)(...Object.values(env))
+  const keepOpen = handlers['sessions:keepOpen']
+  assert.deepEqual(await keepOpen({}, 's1', true), { ok: true })
+  assert.deepEqual(config.pinnedPanes, ['other', 's1'], 'pinned exactly as the card pins it')
+  assert.ok(calls.some((c) => c[0] === 'setDoneClosingAt' && c[1] === 's1' && c[2] === undefined), 'the countdown drops at once')
+  assert.ok(calls.some((c) => c[0] === 'cancelAutoClear' && c[1] === 's1'), 'an armed clear stands down too')
+  assert.ok(calls.some((c) => c[0] === 'send' && c[1] === 'config:changed'), 'the window hears the pin')
+  calls.length = 0
+  assert.deepEqual(await keepOpen({}, '@pc/s9', true), { ok: true }, 'a pane on another machine goes there')
+  assert.deepEqual(calls, [['remote', '@pc/s9', true]])
+  assert.deepEqual(config.pinnedPanes, ['other', 's1'], "and never into this machine's pins")
+  assert.deepEqual(await keepOpen({}, 's1', false), { ok: true })
+  assert.deepEqual(config.pinnedPanes, ['other'], 'keep: false lifts the pin')
+  assert.equal((await keepOpen({}, 'nope', true)).ok, false, 'an unknown pane is refused')
+  assert.equal((await keepOpen({}, 's1', 'yes')).ok, false, 'args are [id: string, keep: boolean]')
+  // Reachable over the phone server's /pf/call: it is an invoke on the surface.
+  const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
+  assert.ok(surface.includes("keepPaneOpen: ['invoke', 'sessions:keepOpen']"), 'on the surface, so /pf/call reaches it')
+  assert.ok(index.includes('setKeepOpen: keepPaneOpenHere'), 'the phone and the paired machine keep open the same way')
+  // The other closers honour waitsForYou; the countdown is GuardDeck's alone.
+  assert.match(index, /if \(pane\?\.waitsForYou\) \{\r?\n\s+logReclaim\(\{ action: 'close-refused', pane: id, reason: 'waits-for-you' \}\)/, 'closeIntoReview refuses it')
+  assert.ok(index.includes('waitsForYou: Boolean(s.waitsForYou)'), 'the asleep sweep is told')
+  assert.ok(index.includes('setWaiting: (id, why) => manager.setWaitsForYou(id, why)'), 'the sweep publishes through the manager')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.ok(!/s\.doneClosingAt/.test(app), 'PaneForge draws no finished-chat countdown (GuardDeck does)')
+  assert.ok(app.includes('waitsForYou: !!s.waitsForYou'), 'the idle clock is told')
+  console.log('done-close: GuardDeck Stop reaches the pane, closers honour waits-for-you ok')
 }
 
 // 5. A reply longer than the read window still reads its tail.
@@ -588,7 +718,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.ok(index.includes("ipcMain.on('sessions:active'"), 'index.ts hears the active pane')
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.ok(sessions.includes('doneReadings()'), 'the manager supplies readings')
-  assert.ok(sessions.includes('focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched())'), 'focused means a person is looking')
+  assert.ok(!/doneReadings\(\)[^]*?focused: personLooking[^]*?turnRead\(/.test(sessions), 'looking is no longer a done-close reading (2026-10-03)')
+  assert.ok(sessions.includes('waitsForYou: m.waitsForYou'), 'the reading carries what was last published')
   assert.ok(index.includes('manager.windowFocused = (): boolean => focused'), 'index.ts says when the window has the keyboard')
   assert.ok(index.includes("'done-close.log'"), 'stay reasons are written to disk')
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')

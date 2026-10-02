@@ -372,6 +372,8 @@ function reclaimPaneOf(
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
     pinned,
+    // A finished chat that expects its person: never on a close clock. See `ReclaimPane.waitsForYou`.
+    waitsForYou: !!s.waitsForYou,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
     asleep: s.asleep,
@@ -2997,6 +2999,7 @@ export default function App(): JSX.Element {
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
         pinned: pinnedRef.current[s.id],
+        waitsForYou: !!s.waitsForYou,
         asleep: s.asleep
       })),
       capacity,
@@ -5506,14 +5509,16 @@ export default function App(): JSX.Element {
                           anybody: how long is left, and the press that stops it. Never
                           beside a question or a move - a pane holding either is refused by
                           `idleCloseAt` outright, so the three can never be true at once. */}
-                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.doneClosingAt ?? alarmAt(s.id) ?? s.closingAt) ? (
+                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (alarmAt(s.id) ?? s.closingAt) ? (
                         // While the 15s countdown card is up, the CHIP shows that card's
                         // deadline and not the idle clock's. They are two readings of one
                         // decision and they disagreed on screen - the card counted down
                         // while the chip sat at `closes 0:01` (reported 2026-08-28). The
                         // armed countdown is the one that is about to act, so it wins.
+                        // A finished chat's countdown (`doneClosingAt`) is GuardDeck's
+                        // alone (Robert, 2026-10-03: "only show countdown in guardeck").
                         <CloseClock
-                          at={s.doneClosingAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
+                          at={alarmAt(s.id) ?? (s.closingAt as number)}
                           // A countdown card naming this pane may be a plan to SLEEP it,
                           // and the chip says which.
                           sleep={alarmSleeps(s.id)}
@@ -7611,13 +7616,8 @@ export default function App(): JSX.Element {
           hand already is. Order is urgency - a countdown that is about to take something
           away sits nearest the corner, a tip sits furthest from it. */}
       <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
-      {sessions.filter(s => s.doneClosingAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
-        <div className="autoclear-card" role="status" key={`review-${s.id}`}>
-          <span>{s.title} will move to Review. Reopen it there to continue.</span>
-          <CloseClock at={s.doneClosingAt!} onKeep={() => keepOpen([s.id])} />
-          <button className="autoclear-keep" onClick={() => keepOpen([s.id])}>Keep open</button>
-        </div>
-      ))}
+      {/* A finished chat's countdown is drawn in GuardDeck only, whose Stop is
+          `sessions:keepOpen` (Robert, 2026-10-03). */}
       <AutoClearToast
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
