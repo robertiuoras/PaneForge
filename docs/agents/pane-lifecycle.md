@@ -86,8 +86,9 @@ quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, O
 `READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
 children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
 `test:replyread`), no running subagent, reply not ending `?`, `actionableNextSteps` empty,
-folder clean + pushed (`gitCached`: no upstream counts `rev-list HEAD --not --remotes`; a
-failed read or one started before the turn ended is `'unread'` and refuses); a background job only WAITING
+the folder NEVER holds it (Robert 2026-10-02): `gitCached` changed files / unpushed commits (a failed or pre-turn read
+is `'unread'`, asked again at the close, else silent) go into the Review row's `evidence` as `Left in <folder>: ...`
+(`folderLeftover`) and the done-close.log close line; a background job only WAITING
 (`isWaitScript`: sleep loops, `gh run watch`, `tail -f`, `bg-wait.mjs` minus its
 label/done/fail words) holds nothing. Writes `result`/`unverified` review
 `done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each

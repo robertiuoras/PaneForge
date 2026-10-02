@@ -57,10 +57,12 @@ export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | '
   /**
    * Its folder's git state, from the badge's cached read (`main/git.ts` `gitCached`):
    * changed files and commits not pushed. `null` = not a repo; `'unread'` = no fresh read
-   * yet (one has been started); unset = not asked, which checks nothing.
+   * yet (one has been started); unset = not asked.
    *
-   * Robert's brief, 2026-09-28: finished is "no open ask, clean tree/pushed, no live
-   * background job". Work left uncommitted or unpushed is work a closed card would hide.
+   * It no longer holds a pane. Robert, 2026-10-02: "we dont need that guard anymore since we
+   * have reports". Read only so the Review record can say what was left (`folderLeftover`);
+   * 748 of ~950 holds on 1-2 Oct were this guard, chats in shared folders held by other
+   * chats' changes. Nothing on disk is touched.
    */
   folder?: { dirty: number; ahead: number } | null | 'unread'
   /**
@@ -176,6 +178,19 @@ export type DoneVerdict =
   | { close: true; personSteps: string[]; read: boolean }
   | { close: false; reason: string }
 
+/**
+ * What a finished pane's folder still holds, for its Review record: `Left in toolstash: 6
+ * changed files, 2 commits not pushed`. Undefined when there is nothing to say - a clean and
+ * pushed folder, not a repo, not asked, or a read still in flight (say nothing, never guess).
+ */
+export function folderLeftover(folder: DoneReading['folder'], name: string): string | undefined {
+  if (!folder || folder === 'unread') return undefined
+  const parts: string[] = []
+  if (folder.dirty > 0) parts.push(`${folder.dirty} changed file${folder.dirty === 1 ? '' : 's'}`)
+  if (folder.ahead > 0) parts.push(`${folder.ahead} commit${folder.ahead === 1 ? '' : 's'} not pushed`)
+  return parts.length ? `Left in ${name}: ${parts.join(', ')}` : undefined
+}
+
 /** May this pane close itself into Review now? `quietMs` is the wait, `doneQuietMs`. */
 export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AUTO_CLOSE_QUIET_MS): DoneVerdict {
   const p = reading.backWaitOnly ? { ...reading, backJob: undefined } : reading
@@ -200,8 +215,6 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }
-  if (p.folder === 'unread') return { close: false, reason: 'its folder has not been read yet' }
-  if (p.folder && (p.folder.dirty > 0 || p.folder.ahead > 0)) return { close: false, reason: 'its folder has uncommitted or unpushed work' }
   return { close: true, personSteps: replyPersonSteps(p.reply), read }
 }
 

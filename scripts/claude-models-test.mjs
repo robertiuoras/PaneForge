@@ -15,7 +15,7 @@ const load = async (file) => {
   }).outputText
   return import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'))
 }
-const { claudeIdsIn, mergeClaudeModels, parseClaudeId } = await load('../src/shared/claudeCatalogue.ts')
+const { claudeIdsIn, mergeClaudeModels, newestOf, parseClaudeId } = await load('../src/shared/claudeCatalogue.ts')
 
 // Bytes shaped like the real binary: dated snapshots, a prefix of a longer id, noise.
 const bytes = 'x"claude-opus-5-5"\0claude-opus-4-1-20250805 claude-haiku-3-55 claude-fable-5 claude-fable-5-1,claude-sonnet-6 claude-opus-4-0'
@@ -39,6 +39,15 @@ assert.ok(!merged.some((m) => m.value === 'claude-opus-4-0' || m.value === 'clau
 assert.equal(mergeClaudeModels(curated, ['claude-opus-5']), curated)
 // A curated id is never duplicated.
 assert.equal(mergeClaudeModels([...curated, { value: 'claude-opus-5-5', label: 'Opus 5.5' }], ids).filter((m) => m.value === 'claude-opus-5-5').length, 1)
+
+// The "try a lighter model" card names the newest of a family from the SAME merged list
+// the picker shows. 2026-10-01: the CLI knew Sonnet 5.5, the picker showed it, and the
+// card still said "Sonnet 5" because it read the hand list alone.
+const withSonnet55 = mergeClaudeModels(curated, ['claude-sonnet-5-5', 'claude-sonnet-5'])
+assert.equal(newestOf('sonnet', withSonnet55), 'claude-sonnet-5-5')
+assert.equal(newestOf('opus', curated), 'claude-opus-5')
+assert.equal(newestOf('haiku', curated), 'haiku', 'a family nothing catalogues stays the bare alias')
+assert.equal(newestOf('opus', [{ value: 'opus', label: 'opus (alias)' }]), 'opus', 'an alias row is never the answer')
 
 // The real CLI on this machine, when there is one: its bytes must name the ids it launches.
 const bin = join(homedir(), '.local', 'bin', 'claude')

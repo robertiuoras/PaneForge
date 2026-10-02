@@ -5262,6 +5262,18 @@ already removes, and the refusal now names each flag. Rows are written first and
 card, the to-dos and the read mark go only after the pane really closed. `pf tidy` asks the
 same sweep without the wait: somebody asking to tidy is the wait.
 
+### ...and its folder never holds it (2026-10-02)
+
+Robert: "we dont need that guard anymore since we have reports". The 2026-09-28 folder check
+(clean + pushed) was dropped: a finished chat closes into Review even with changed files or
+unpushed commits, and the Review row's `evidence` plus the done-close.log close line say
+`Left in toolstash: 6 changed files, 2 commits not pushed` (`folderLeftover`). Nothing on disk
+is touched. Evidence: done-close.log 1 Oct 19:12Z-22:40Z, 748 of ~950 "stays" lines were the
+folder (`not read yet` / `uncommitted or unpushed work`); chats in shared folders
+(claude-memory, which every chat and the timed autosync write to; toolstash main) sat 2.5 h
+until closed by hand, held by other chats' changes. A read still in flight is asked again at
+the close; still unread = no line, never a hold.
+
 ### ...and the chat that opened them hears once
 
 Robert, 2026-09-23: "once all sessions consolidate if theres multiple running and they close
