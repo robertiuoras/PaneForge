@@ -24,7 +24,7 @@ const main = read('src/main/index.ts')
 const start = main.indexOf('function sayFirstCopy(')
 const end = main.indexOf('\n}\n', start) + 3
 ok('sayFirstCopy exists in main', start > 0, start)
-ok('laneFor calls it when a pane is moved into a copy', /sayFirstCopy\(lane\)\n\s+return \{\n\s+\.\.\.req,\n\s+cwd: lane\.cwd/.test(main))
+ok('laneFor calls it when a pane is moved into a copy', /sayFirstCopy\(lane\)\r?\n\s+return \{\r?\n\s+\.\.\.req,\r?\n\s+cwd: lane\.cwd/.test(main))
 
 const { copyNumber, projectOf } = await import(
   'data:text/javascript;base64,' +
