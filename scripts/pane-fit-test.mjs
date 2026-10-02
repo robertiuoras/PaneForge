@@ -70,11 +70,38 @@ const MEASURE = `(() => {
   return out
 })()`
 
+// A shell sitting at its prompt is not drawn (`idleShell`, shared/fleet.ts, since 2026-09-23):
+// four of them were ONE pane on screen and three with no size at all, so this suite failed on
+// master for a reason that had nothing to do with what it measures. Each pane runs a process
+// that only waits on its input - a running pane, drawn like any other, and its line still
+// echoes what is typed at it. Nothing is ever submitted to it.
+const BUSY = 'node -e "process.stdin.resume()"\r'
+// In the page, with `ids` in scope: a shell still starting drops what is written to it (one
+// took over 8s on the PC), so each is written to once it is up, and the wait is over when every
+// pane is running its process AND drawn - the precondition every check below depends on.
+const RUN_BUSY = `{
+  const mine = async () => (await window.api.listSessions()).filter((s) => ids.includes(s.id))
+  let last = 0
+  for (const end = Date.now() + 90000; Date.now() < end; await new Promise((r) => setTimeout(r, 250))) {
+    const ss = await mine()
+    const drawn = document.querySelectorAll('.pane[data-id]:not(.hidden)').length
+    if (ss.every((s) => s.runSince || s.job) && drawn >= ids.length) break
+    if (Date.now() - last > 8000) {
+      last = Date.now()
+      for (const s of ss) if (s.status !== 'starting' && !s.runSince && !s.job) window.api.write(s.id, ${JSON.stringify(BUSY)})
+    }
+  }
+}`
 const open = async (n) => {
   const cwd = process.cwd()
   await link.evaluate(
     `(async () => {
-      for (let i = 0; i < ${n}; i++) await window.api.startSession({ cwd: ${JSON.stringify(cwd)}, agent: 'shell' })
+      const ids = []
+      for (let i = 0; i < ${n}; i++) {
+        const s = await window.api.startSession({ cwd: ${JSON.stringify(cwd)}, agent: 'shell' })
+        ids.push(typeof s === 'string' ? s : s.id)
+      }
+      ${RUN_BUSY}
     })()`
   )
   await sleep(4000)
