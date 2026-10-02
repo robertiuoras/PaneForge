@@ -4227,6 +4227,15 @@ function resolveConflict(session, wanted) {
   const holder = state.lanes[id]
   const mine = holder?.session === session
   if (!mine && !adoptable(state, id) && state.conflicts[id].resolver !== session) {
+    // No holder here means another chat ADOPTED it and is still inside the merge (2026-10-03:
+    // lane a, its own chat gone, an adopter 1m in - this line threw "reading 'seen'").
+    if (!holder) {
+      const idle = Math.round((now() - (state.conflicts[id].resolverAt ?? 0)) / 60000)
+      throw new Error(
+        `lane ${id} was taken over by another chat (${state.conflicts[id].resolver}) that was active ${idle}m ago - it is fixing it. ` +
+          `Ask that chat to hand it over, or it is adoptable after ${Math.round(ADOPT_MS / 60000)}m of silence.`
+      )
+    }
     const idle = Math.round((now() - (holder.seen ?? holder.claimed ?? 0)) / 60000)
     throw new Error(
       `lane ${id} is held by another chat that was active ${idle}m ago - it fixes its own conflict. ` +

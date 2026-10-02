@@ -127,6 +127,12 @@ mkdirSync(root, { recursive: true })
   ok('a live chat can open the half-merge', opened.ok && /merge open/.test(opened.out), opened.out || opened.err)
   ok('and the merge really is open in the lane', git(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD') !== '')
 
+  // A second chat asking while the adopter is mid-merge: no holder, a fresh resolver.
+  // It used to crash on `holder.seen` (2026-10-03) instead of saying who has it.
+  const second = f.lane('resolve', '--session', 'second', '--lane', 'a')
+  ok('a second chat is refused while the adopter works', !second.ok, second.out)
+  ok('with who has it, not a crash', /taken over by another chat \(adopter\)/.test(second.err) && !/reading 'seen'/.test(second.err), second.err)
+
   // Resolve it the way a human would.
   writeFileSync(join(dir, 'app.js'), 'console.log("lane+master")\n')
   git(dir, 'add', '-A')
