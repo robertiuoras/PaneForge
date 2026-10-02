@@ -83,11 +83,25 @@ function textOf(content: unknown): string {
   return content.map((x) => (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string' ? (x as { text: string }).text : '')).join('\n')
 }
 
+/**
+ * Is this transcript line a `<task-notification>` DELIVERY? Real ones are `queue-operation`
+ * rows, `user` rows with string content and `queued_command` attachments. A row that merely
+ * MENTIONS the tag - an Agent launch whose brief quotes one, a Bash call that greps for it,
+ * a tool result holding that output, the model's own prose - is not one. Taken for one, the
+ * launch itself was skipped and a running agent read as 0 (measured 2026-10-02 in
+ * claude-config/handoff-state.mjs; this scan had the same `continue` on any line containing
+ * the text). Tool and assistant rows carry these literal `"type"` values, and a quotation
+ * inside a string is escaped (`\"type\"`), so it cannot match.
+ */
+export function isNotificationLine(line: string): boolean {
+  return line.includes('<task-notification>') && !/"type":"(?:assistant|tool_use|tool_result)"/.test(line)
+}
+
 /** Feed complete JSONL lines (any number, newline separated) into the scan. */
 export function scanAgentLines(scan: AgentScan, text: string): void {
   for (const line of text.split('\n')) {
     if (!line) continue
-    if (line.includes('<task-notification>')) {
+    if (isNotificationLine(line)) {
       // Was this line the conversation ACTING on the notification, or only the queue
       // holding it? Claude Code writes `queue-operation` enqueue/dequeue rows when the
       // notification is queued, and a user row / `queued_command` attachment / a

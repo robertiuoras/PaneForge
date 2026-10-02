@@ -14,7 +14,7 @@
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { logHandoff } from './activationLog'
-import { AGENT_MAX_AGE_MS, agentWords, hasPendingBackground, newAgentScan, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
+import { AGENT_MAX_AGE_MS, agentWords, hasPendingBackground, newAgentScan, pendingBackground, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
 import type { CodexWorkerReading } from '../shared/types'
 
 const CHECK_MS = 3_000
@@ -136,6 +136,21 @@ export function pendingBackgroundFor(paneId: string, since: number | undefined, 
   const r = readings.get(paneId)
   if (!r?.available) return false
   return hasPendingBackground(r.scan, { since, now })
+}
+
+/**
+ * How many background tasks this pane's conversation started and has not been told the end
+ * of: running agents plus `run_in_background` Bash commands, whatever their command is. The
+ * done-close sweep holds a pane on this (`DoneReading.backgroundTasks`): a finished turn
+ * waiting on its own task is waiting for the notification that would wake it, and a close
+ * ends the task with the CLI. From the CACHED reading only (no I/O); 0 when nothing was
+ * read or it was unreadable - a reading nobody could take never holds a pane.
+ */
+export function backgroundTasksFor(paneId: string, since: number | undefined, now = Date.now()): number {
+  const r = readings.get(paneId)
+  if (!r?.available) return 0
+  const p = pendingBackground(r.scan, { since, now })
+  return p.agents.length + p.shells.length
 }
 
 function wordsOf(r: Reading, since: number | undefined, now: number): string | undefined {

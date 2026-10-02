@@ -55,6 +55,17 @@ export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | '
    */
   backWaitOnly?: boolean
   /**
+   * Background tasks this CHAT started (a `run_in_background` Bash command, a background
+   * agent) whose completion notification has not reached its transcript. Its completion is
+   * the only thing that will wake the chat, so closing the pane strands the work whatever
+   * the command is - a bg-wait waiter included, which `backWaitOnly` ignores. s87-muqligjy,
+   * 2 Oct 5:11pm Gold Coast: closed into Review waiting on its own bg-wait waiter. Read from
+   * the sweep's cached transcript scan (`main/runningAgents.ts` `backgroundTasksFor`).
+   * A waiter that is NOT one of these (its notification arrived, or nothing in the
+   * transcript started it) is still ignored, as Robert asked on 2026-09-24.
+   */
+  backgroundTasks?: number
+  /**
    * Its folder's git state, from the badge's cached read (`main/git.ts` `gitCached`):
    * changed files and commits not pushed. `null` = not a repo; `'unread'` = no fresh read
    * yet (one has been started); unset = not asked.
@@ -212,6 +223,9 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   // 2026-10-01, twelve in eight minutes, held by a handoff with open steps).
   const held = closeHeldBy(p, now)
   if (held.length) return { close: false, reason: `session has ${held.join(', ')}` }
+  // Its own outstanding task: stated before the reply is read, since nothing in the reply
+  // could make closing it safe.
+  if (p.backgroundTasks) return { close: false, reason: `${p.backgroundTasks} background task${p.backgroundTasks === 1 ? '' : 's'} still running` }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }

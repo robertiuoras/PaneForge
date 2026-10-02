@@ -170,6 +170,21 @@ const withAgent = (done) => {
   return out
 }
 say('parser: a launched background agent with no report is running, a foreground one never', JSON.stringify(hook.runningAgents(withAgent(false))) === '["a1b2c3"]' && hook.runningAgents(withAgent(true)).length === 0)
+// A launch whose brief QUOTES a notification is not itself a notification (measured 2026-10-02
+// in claude-config/handoff-state.mjs: the launch line was skipped and a running agent read as 0).
+const withQuotingBrief = () => {
+  const f = transcript(250_000)
+  const quote = '<task-notification><task-id>t0</task-id><tool-use-id>toolu_OTHER</tool-use-id></task-notification>'
+  const rows = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_bg2', name: 'Agent', input: { prompt: `Fix X. A notification looks like ${quote}` } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg2', content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: q9r8s7 (use SendMessage)' }] }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_g', name: 'Bash', input: { command: `echo '<task-notification><tool-use-id>toolu_bg2</tool-use-id></task-notification>'` } }] } }
+  ]
+  const out = f.replace(/\.jsonl$/, '-quoting.jsonl')
+  writeFileSync(out, rows.map((r) => JSON.stringify(r)).join('\n') + '\n' + readFileSync(f, 'utf8'))
+  return out
+}
+say('parser: an agent whose launch brief quotes a task notification is still running', JSON.stringify(hook.runningAgents(withQuotingBrief())) === '["q9r8s7"]', JSON.stringify(hook.runningAgents(withQuotingBrief())))
 const withWorkflow = () => {
   const f = transcript(250_000)
   const rows = [

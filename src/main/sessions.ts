@@ -99,7 +99,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
-import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
+import { backgroundAgentsFor, backgroundTasksFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
 import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -855,6 +855,8 @@ export class SessionManager extends EventEmitter {
         backJob: m.backJob,
         serving: m.serving,
         backWaitOnly: backJobWaitOnly(m.id),
+        // ...unless the chat itself started that waiter and has not heard it end.
+        backgroundTasks: this.backgroundTasks(live),
         focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
@@ -945,6 +947,16 @@ export class SessionManager extends EventEmitter {
   private hasPendingBackground(s: Live): boolean {
     if (s.meta.agent !== 'claude' || s.meta.asleep || s.meta.status === 'exited' || !s.proc) return false
     return pendingBackgroundFor(s.meta.id, procBorn.get(s.proc))
+  }
+
+  /**
+   * How many background tasks this live Claude pane's conversation started and has not been
+   * told the end of (`backgroundTasksFor`): what the done-close sweep must not close it on.
+   * Same cached reading and guards as `hasPendingBackground`.
+   */
+  private backgroundTasks(s: Live): number {
+    if (s.meta.agent !== 'claude' || s.meta.asleep || s.meta.status === 'exited' || !s.proc) return 0
+    return backgroundTasksFor(s.meta.id, procBorn.get(s.proc))
   }
 
   /**

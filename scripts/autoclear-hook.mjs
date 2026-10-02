@@ -206,7 +206,10 @@ export function runningAgents(transcriptPath) {
   const notified = new Set()
   for (const line of text.split('\n')) {
     if (!line) continue
-    if (line.includes('<task-notification>')) {
+    // A row that merely QUOTES the tag (an Agent launch whose brief contains one, a Bash call, a
+    // tool result, the model's prose) is not a notification: skipping it skipped the launch and
+    // a running agent read as 0 (2026-10-02; `isNotificationLine` in src/shared/runningAgents.ts).
+    if (line.includes('<task-notification>') && !/"type":"(?:assistant|tool_use|tool_result)"/.test(line)) {
       for (const m of line.matchAll(/<tool-use-id>([^<]+)<\/tool-use-id>/g)) notified.add(m[1])
       continue
     }
