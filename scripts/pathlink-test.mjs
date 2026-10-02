@@ -1,13 +1,15 @@
 // A path an agent printed becomes a link, spaces, `~` and a wrapped tail included.
 import { strict as assert } from 'node:assert'
 import { buildSync } from 'esbuild'
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(realpathSync(tmpdir()), 'paneforge-pathlink-test')
+// The last run's files would make this one's "newest copy" the wrong one.
+rmSync(root, { recursive: true, force: true })
 mkdirSync(root, { recursive: true })
 const load = async (entry, name) => {
   const out = join(root, `${name}.mjs`)
