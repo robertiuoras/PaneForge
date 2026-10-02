@@ -133,6 +133,11 @@ foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
 `Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
 `shared/autoclear.ts` refusals; `main/sessions.ts` re-checks (`dropFor`) each tick. `## Next steps:
 None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
+A fresh handoff the parser cannot read (`handoffShapeProblem`: no `Next steps` heading, or
+prose under it with no list line and no None) is blocked with the fix, once per file version,
+twice a session max - it used to idle exactly like None. `test:autoclearcycle` = 20 finish ->
+clear -> resume cycles through the hook, 20/20 or red. One chat word, shared with PaneForge
+Next (wr-03): `chatPhase` (`shared/fleet.ts`) working / waiting / done / closing.
 
 The quiet floor (`ARM_QUIET_MS`, at arm, expiry and the arm lead) reads `Live.contentAt`, not
 `meta.lastOutput`: every pty byte EXCEPT a digits-only footer counter tick on a pane not mid-turn

@@ -89,6 +89,22 @@ export function openNextSteps(md) {
   return steps
 }
 
+export function handoffShapeProblem(md) {
+  const text = String(md || '')
+  const start = text.search(/^#{1,4}\s*Next steps\b/im)
+  if (start < 0) return 'no-next-steps'
+  let prose = false
+  for (const raw of text.slice(start).split('\n').slice(1)) {
+    if (/^#{1,4}\s/.test(raw)) break
+    const line = raw.trim()
+    if (!line) continue
+    if (/^(?:[-*]|\d+[.)])\s+\S/.test(line)) return null
+    if (/^(none|nothing|n\/a)\b/i.test(line.replace(/\*\*/g, ''))) return null
+    prose = true
+  }
+  return prose ? 'steps-not-a-list' : null
+}
+
 const BLOCKED_OPENER =
   /^(only\b|once\b|after\b|when\b|whenever\b|if\b|wait\b|waiting\b|blocked\b|pending\b|watch\b|monitor\b|leave\b|keep an eye\b)/i
 const PERSON_OWNED =
@@ -226,6 +242,19 @@ export function blockMessage(tokens, threshold, path) {
   )
 }
 
+/** A fresh handoff the parser cannot read would idle exactly like `None`: say how to fix it. */
+export function shapeMessage(problem, path) {
+  const what =
+    problem === 'no-next-steps'
+      ? 'has no `## Next steps` heading'
+      : 'has a `## Next steps` heading but no list under it (the steps are written as prose)'
+  return (
+    `AUTO-CLEAR: the handoff at ${path} ${what}, so PaneForge cannot tell what is still open and the clear never fires. ` +
+    `Put a \`## Next steps\` heading in it with one numbered line per open step (\`1. ...\`), or the single word None ` +
+    `if nothing is open. Then end your turn.`
+  )
+}
+
 // ---------------------------------------------------------------- I/O
 
 function arg(argv, name) {
@@ -352,6 +381,21 @@ export function run(argv, input, env = process.env, now = Date.now()) {
     saveState(sfile, { ...state, blocked: now })
     put(2, blockMessage(tokens, threshold, handoffPath) + '\n')
     log(`stop ${tag} block ${tokens}/${threshold} -> ${handoffPath}`)
+    return 2
+  }
+  const shape = handoffShapeProblem(h.text)
+  if (shape) {
+    // Asked even on the continuation of our own missing-handoff block (that is when a bad
+    // handoff gets written), but once per version of the file and at most twice a session,
+    // so a session that cannot get it right is left alone rather than looped.
+    const asks = Number(state.shapeAsks) || 0
+    if (state.shapeAsked === h.mtimeMs || asks >= 2) {
+      log(`stop ${tag} bad-shape-already-asked ${shape} ${h.path}`)
+      return 0
+    }
+    saveState(sfile, { ...state, shapeAsked: h.mtimeMs, shapeAsks: asks + 1 })
+    put(2, shapeMessage(shape, h.path) + '\n')
+    log(`stop ${tag} block bad-shape ${shape} ${h.path}`)
     return 2
   }
   const steps = actionableNextSteps(h.text)

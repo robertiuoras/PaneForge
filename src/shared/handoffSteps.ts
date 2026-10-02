@@ -40,6 +40,31 @@ export function openNextSteps(md: string): string[] {
 }
 
 /**
+ * What is wrong with a handoff's shape, or null when `openNextSteps` can read it.
+ *
+ * A handoff the parser cannot read looks exactly like one that says None: no open steps,
+ * no clear, the pane sits there and the next step is lost (wr-03, 2026-10-02). Two shapes
+ * did that: no `## Next steps` heading at all (a bold `**Next steps:**` line, a `Todo`
+ * heading), and the heading with the steps written as prose under it. A heading with a
+ * list, `None`, or nothing under it is a shape the parser answers truthfully.
+ */
+export function handoffShapeProblem(md: string): 'no-next-steps' | 'steps-not-a-list' | null {
+  const text = String(md || '')
+  const start = text.search(/^#{1,4}\s*Next steps\b/im)
+  if (start < 0) return 'no-next-steps'
+  let prose = false
+  for (const raw of text.slice(start).split('\n').slice(1)) {
+    if (/^#{1,4}\s/.test(raw)) break
+    const line = raw.trim()
+    if (!line) continue
+    if (/^(?:[-*]|\d+[.)])\s+\S/.test(line)) return null
+    if (/^(none|nothing|n\/a)\b/i.test(line.replace(/\*\*/g, ''))) return null
+    prose = true
+  }
+  return prose ? 'steps-not-a-list' : null
+}
+
+/**
  * Openers that describe a TRIGGER rather than a task. A step behind one of these cannot be
  * started by anybody right now.
  */

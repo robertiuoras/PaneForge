@@ -30,6 +30,7 @@ buildSync({
   outfile: out
 })
 const {
+  chatPhase,
   density,
   finishedTurn,
   fleetOrder,
@@ -417,6 +418,15 @@ is(
   is(fleetOrder([done, asked]).map((x) => x.id), [asked.id, done.id], 'the pane that asked ranks first')
   ok(!finishedTurn({ ...done, asking: true }), 'a question on screen beats a stale finished reading')
   ok(!finishedTurn({ ...done, status: 'working' }), 'a new turn is not finished')
+  // One chat state, the same four words as PaneForge Next (wr-03, 2026-10-02).
+  is(chatPhase(done), 'done', 'finished, no countdown = done')
+  is(chatPhase({ ...done, doneClosingAt: 999 }), 'closing', 'finished with a close countdown = closing')
+  is(fleetRow({ ...done, doneClosingAt: 999 }).label, 'closing', 'the row says closing while the countdown runs')
+  is(chatPhase(asked), 'waiting', 'a reply that left something = waiting')
+  is(chatPhase({ ...asked, status: 'working' }), 'working', 'a running turn = working')
+  is(chatPhase({ ...done, backJob: 'npm test' }), 'working', 'a background job still running = working')
+  is(chatPhase({ ...done, asking: true, doneClosingAt: 999 }), 'waiting', 'a question on screen beats a countdown')
+  checks += 7
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok(/s\.finished \? 'done' : 'waiting'/.test(app), 'the card word reads finished')
   ok(/!finishedTurn\(row\)/.test(app), 'the attention list leaves finished panes out')

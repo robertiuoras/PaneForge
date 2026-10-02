@@ -75,6 +75,7 @@ const TESTS = [
   ['deletesettle', 'delete-settle-test.mjs'],
   ['autoclearask', 'autoclear-ask-test.mjs'],
   ['autoclearhook', 'autoclear-hook-test.mjs'],
+  ['autoclearcycle', 'autoclear-cycle-test.mjs'],
   ['cwdgone', 'cwd-gone-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
   ['trimloss', 'trim-loss-test.mjs'],
