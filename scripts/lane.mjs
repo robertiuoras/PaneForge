@@ -3678,6 +3678,27 @@ function typecheckFailure(state) {
 const SUITE_TIMEOUT_MS = Number(process.env.PF_SUITE_TIMEOUT_MS) || 20 * 60 * 1000
 
 /**
+ * One test suite at a time per repository on this computer, whatever tree it is on.
+ * `suiteRunning` below stops a second run of the SAME commit; this stops the rest: on
+ * 2 Oct 2026 the PC had 10 of PaneForge's suites running at once (~1 GB and 20-30
+ * processes each), each slower for the others, timing out at 20 minutes and being started
+ * again. A second caller waits for the first one's answer. Stale after two full runs.
+ */
+const SUITE_LOCK = join(commonDir, 'paneforge-suite.lock')
+const SUITE_LOCK_STALE_MS = 2 * SUITE_TIMEOUT_MS + 5 * 60 * 1000
+
+/** How long the suite holding SUITE_LOCK has run, as words. */
+function suiteBusy() {
+  let at = 0
+  try {
+    at = Number(readFileSync(SUITE_LOCK, 'utf8').trim().split(/\s+/)[1])
+  } catch {
+    /* finished meanwhile */
+  }
+  return at ? `${Math.max(1, Math.round((now() - at) / 60000))} min so far` : 'just finishing'
+}
+
+/**
  * `npm test` in `dir`, and when it is killed for time, everything it started is killed too.
  *
  * spawnSync's timeout kills the one process it started. On Windows that is cmd.exe, and
@@ -3843,46 +3864,54 @@ function suiteFailure(state) {
     cacheSuite({ commit, ok: true, at: now() })
     return true
   }
-  return withSuiteRun(state, MAIN, commit, () => {
-    let r = runSuite()
-    if (pass(r)) return null
-    /**
-     * A red answer is CONFIRMED before it is written down, because the verdict is cached on
-     * the commit and the retry timer never asks again - so one flaky run pins a green tree
-     * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
-     * ever guess to do.
-     *
-     * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
-     * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
-     * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
-     * repositories and is timing-sensitive on a loaded machine.
-     *
-     * Only the second run's answer counts, so a genuinely red suite costs one extra pass
-     * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
-     * for the same reason: missing tooling does not repair itself between two runs, but a
-     * spawn that lost a race does.
-     */
-    const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (!cannotRun(first)) {
-      r = runSuite()
+  const unlock = takeLock(SUITE_LOCK, SUITE_LOCK_STALE_MS)
+  if (!unlock) {
+    return `${MB}'s test suite is already running for another chat on this computer (${suiteBusy()}), so this one waits for that answer instead of starting a second copy.`
+  }
+  try {
+    return withSuiteRun(state, MAIN, commit, () => {
+      let r = runSuite()
       if (pass(r)) return null
-    }
-    const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (cannotRun(all)) {
-      return (
-        `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
-        `Required tooling or remote transport is unavailable; this is not a code verdict.`
-      )
-    }
-    // A suite with some other shape than test-all.mjs falls back to its first real line.
-    const failed = failLines(all)
-    const reason =
-      r.signal || (r.status == null && !all.trim())
-        ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
-        : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
-    cacheSuite({ commit, ok: false, at: now(), reason })
-    return reason
-  })
+      /**
+       * A red answer is CONFIRMED before it is written down, because the verdict is cached on
+       * the commit and the retry timer never asks again - so one flaky run pins a green tree
+       * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
+       * ever guess to do.
+       *
+       * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
+       * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
+       * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
+       * repositories and is timing-sensitive on a loaded machine.
+       *
+       * Only the second run's answer counts, so a genuinely red suite costs one extra pass
+       * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
+       * for the same reason: missing tooling does not repair itself between two runs, but a
+       * spawn that lost a race does.
+       */
+      const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+      if (!cannotRun(first)) {
+        r = runSuite()
+        if (pass(r)) return null
+      }
+      const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+      if (cannotRun(all)) {
+        return (
+          `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
+          `Required tooling or remote transport is unavailable; this is not a code verdict.`
+        )
+      }
+      // A suite with some other shape than test-all.mjs falls back to its first real line.
+      const failed = failLines(all)
+      const reason =
+        r.signal || (r.status == null && !all.trim())
+          ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
+          : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
+      cacheSuite({ commit, ok: false, at: now(), reason })
+      return reason
+    })
+  } finally {
+    unlock()
+  }
 }
 
 /** What `suiteFailureInLane` says while another process is testing that same tree. */
@@ -3914,21 +3943,29 @@ function suiteFailureInLane(state, dir) {
   const cached = read().laneSuite?.[dir]
   if (commit && cached?.commit === commit) return cached.ok ? null : cached.reason
   if (suiteRunning(dir, commit)) return LANE_SUITE_RUNNING
-  const reason = withSuiteRun(state, dir, commit, () => {
-    let r = runNpmTest(dir)
-    if (r.status === 0) return null
-    const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (!cannotRun(first)) {
-      r = runNpmTest(dir)
+  // Another tree's suite holds the computer: ask again next try, never cached as red.
+  const unlock = takeLock(SUITE_LOCK, SUITE_LOCK_STALE_MS)
+  if (!unlock) return LANE_SUITE_RUNNING
+  let reason
+  try {
+    reason = withSuiteRun(state, dir, commit, () => {
+      let r = runNpmTest(dir)
       if (r.status === 0) return null
-    }
-    const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (cannotRun(all)) return `could not run - ${firstLine(all)}`
-    const failed = failLines(all)
-    return r.signal || (r.status == null && !all.trim())
-      ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
-      : failed || firstLine(all)
-  })
+      const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+      if (!cannotRun(first)) {
+        r = runNpmTest(dir)
+        if (r.status === 0) return null
+      }
+      const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+      if (cannotRun(all)) return `could not run - ${firstLine(all)}`
+      const failed = failLines(all)
+      return r.signal || (r.status == null && !all.trim())
+        ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
+        : failed || firstLine(all)
+    })
+  } finally {
+    unlock()
+  }
   // Tooling that could not start is fixed outside this file; the next try should find out.
   if (commit && !reason?.startsWith('could not run')) {
     remember(state, ['laneSuite', dir], { commit, ok: !reason, reason, at: now() })
@@ -6118,14 +6155,14 @@ function processAlive(pid) {
   }
 }
 
-/** Take the sweep lock, or null when a live sweep holds it. Returns the release. */
-function sweepLock() {
+/** Take the lock `file`, or null when a live process holds it (stale after `staleMs`). Returns the release. */
+function takeLock(file, staleMs) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      writeFileSync(SWEEP_LOCK, `${process.pid} ${now()}\n`, { flag: 'wx' })
+      writeFileSync(file, `${process.pid} ${now()}\n`, { flag: 'wx' })
       return () => {
         try {
-          unlinkSync(SWEEP_LOCK)
+          unlinkSync(file)
         } catch {
           /* already gone */
         }
@@ -6134,19 +6171,24 @@ function sweepLock() {
       let pid = 0
       let at = 0
       try {
-        ;[pid, at] = readFileSync(SWEEP_LOCK, 'utf8').trim().split(/\s+/).map(Number)
+        ;[pid, at] = readFileSync(file, 'utf8').trim().split(/\s+/).map(Number)
       } catch {
         /* vanished between the two calls: try again */
       }
-      if (pid && now() - at < SWEEP_LOCK_STALE_MS && processAlive(pid)) return null
+      if (pid && now() - at < staleMs && processAlive(pid)) return null
       try {
-        unlinkSync(SWEEP_LOCK)
+        unlinkSync(file)
       } catch {
         /* someone else cleared it */
       }
     }
   }
   return null
+}
+
+/** Take the sweep lock, or null when a live sweep holds it. Returns the release. */
+function sweepLock() {
+  return takeLock(SWEEP_LOCK, SWEEP_LOCK_STALE_MS)
 }
 
 /**
