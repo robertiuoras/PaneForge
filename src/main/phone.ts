@@ -45,7 +45,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
 import { markFor } from '../shared/deviceWatch'
-import { NativeAuth, type NativeGrant, type NativePromptReceipt } from './nativeAuth'
+import { NativeAuth, nativeDeviceValid, type NativeGrant, type NativePromptReceipt } from './nativeAuth'
+import { judgeTailnet, tailnetSource, trustLine, type TailnetNode, type TailnetVerdict } from '../shared/tailnetIdentity'
 import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState, Session } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
@@ -402,6 +403,13 @@ export interface PhoneDeps {
   setKeepOpen?(id: string, keepOpen: boolean): boolean
   isKeepOpen?(id: string): boolean
   sendNativePrompt?(id: string, text: string): boolean
+  /**
+   * "Is this Robert's phone on Tailscale": who owns a tailnet address and which user this
+   * desk is (`main/tailnetIdentity.ts`). Absent = no request is ever trusted that way.
+   */
+  tailnet?: { whois(ip: string): Promise<TailnetNode | null>; selfUser(): Promise<string> }
+  /** one line per trust decision (`phone-trust.log`); names and addresses, never a token */
+  trustLog?(line: string): void
   /** the last watching browser has gone: give back anything a phone was holding */
   onIdle?(): void
 }
@@ -441,6 +449,11 @@ export class PhoneServer {
   private freshPasskeys = new Map<string, number>()
   private nativeStarts = new Map<string, { since: number; n: number }>()
   private nativeTokens = new Map<string, { since: number; n: number }>()
+  private nativeTailnets = new Map<string, { since: number; n: number }>()
+  /** `/pf/ask` requests a trusted phone made: already answered, waiting for their poll */
+  private trustedAsks = new Map<string, { token: string; at: number }>()
+  /** last time each (address, verdict) was written to the trust log by a per-request check */
+  private trustLogged = new Map<string, number>()
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
@@ -701,9 +714,19 @@ export class PhoneServer {
   }
 
   private async ask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const now = Date.now()
+    // Robert's own phone on Tailscale is let in with no card and no code - before the
+    // asking switch, because nobody is being asked. Same device row as its app's grants.
+    const trust = await this.tailnetVerdict(req, 'browser sign-in', true)
+    if (trust.trusted && trust.node) {
+      const row = this.tailnetDevice(trust.node, trust.ip, String(req.headers['user-agent'] ?? ''))
+      for (const [id, a] of this.trustedAsks) if (now - a.at > ASK_MS) this.trustedAsks.delete(id)
+      const id = `t${now.toString(36)}${this.nextAsk++}`
+      this.trustedAsks.set(id, { token: row.token, at: now })
+      return this.json(res, 200, { id, sas: '', address: trust.ip, kind: row.kind, origin: row.origin, at: now, trusted: true })
+    }
     if (!(this.deps.canAsk?.() ?? true)) return this.plain(res, 403, 'asking is off')
     const who = addressOf(req)
-    const now = Date.now()
     const seen = this.askTries.get(who)
     const win = seen && now - seen.since < ASK_WINDOW_MS ? seen : { n: 0, since: now }
     // An expired request is not a live one: it must not hold the single slot for ever.
@@ -741,6 +764,14 @@ export class PhoneServer {
    * way to reach that browser: the request it is waiting on is the only door back.
    */
   private askState(req: IncomingMessage, res: ServerResponse, id: string): void {
+    const trusted = this.trustedAsks.get(id)
+    if (trusted) {
+      this.trustedAsks.delete(id)
+      if (Date.now() - trusted.at > ASK_MS) return this.json(res, 200, { state: 'gone' })
+      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': cookieFor(req, trusted.token) })
+      res.end('{"state":"yes"}')
+      return
+    }
     const ask = this.asking
     if (!ask || ask.id !== id) return this.json(res, 200, { state: 'gone' })
     if (Date.now() - ask.at > ASK_MS && !ask.answered) {
@@ -806,6 +837,7 @@ export class PhoneServer {
     if (path === '/pf-entry.webmanifest') return this.entryManifest(res)
     if (path === '/pf/native/v1/auth/start' && req.method === 'POST') return await this.nativeStart(req, res)
     if (path === '/pf/native/v1/auth/token' && req.method === 'POST') return await this.nativeToken(req, res)
+    if (path === '/pf/native/v1/auth/tailnet' && req.method === 'POST') return await this.nativeTailnet(req, res)
     if (path === '/pf/native/v1/auth/revoke' && req.method === 'POST') return this.nativeRevoke(req, res)
     if (path === '/pf/native/v1/sessions' && req.method === 'GET') return this.nativeSessions(req, res)
     if (path.startsWith('/pf/native/v1/prompts/') && req.method === 'GET') return this.nativePromptStatus(req, res, path)
@@ -826,7 +858,7 @@ export class PhoneServer {
     if (path === '/pf/events') return this.events(req, res)
     // The passkey gate. All three are behind `authed` on purpose: enrolling a key is a
     // thing a signed-in phone does, not a way to become one.
-    if (path === '/pf/key/state') return this.keyState(req, res)
+    if (path === '/pf/key/state') return await this.keyState(req, res)
     if (path === '/pf/key/enrol' && req.method === 'POST') return await this.keyEnrol(req, res)
     if (path === '/pf/key/unlock' && req.method === 'POST') return await this.keyUnlock(req, res)
     if (path === '/pf/call' && req.method === 'POST') return await this.call(req, res)
@@ -957,6 +989,86 @@ b.onclick=async()=>{
     catch { this.plain(res, 400, 'native exchange refused') }
   }
 
+  /**
+   * Zero-tap sign-in for Robert's phone on Tailscale: no browser, no desk card, no passkey.
+   * Trusted only when `shared/tailnetIdentity.ts` says so; anything else is 403 and writes
+   * nothing. The answer is the same shape `/auth/token` returns.
+   */
+  private async nativeTailnet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isTls(req)) return this.plain(res, 400, 'https required')
+    if (!this.nativeRate(req, this.nativeTailnets, 10)) return this.plain(res, 429, 'try later')
+    const body = await this.readNativeWire<Record<string, string>>(req, res)
+    if (!body) return
+    const deviceId = String(body.deviceId ?? '')
+    const deviceName = String(body.deviceName ?? '')
+    if (!nativeDeviceValid(deviceId, deviceName)) return this.plain(res, 400, 'native authorization refused')
+    const trust = await this.tailnetVerdict(req, 'app sign-in', true)
+    if (!trust.trusted || !trust.node) return this.plain(res, 403, 'not your phone on Tailscale')
+    try {
+      const row = this.tailnetDevice(trust.node, trust.ip, '')
+      const host = String(req.headers.host ?? '').split(':')[0].toLowerCase()
+      this.json(res, 200, this.native.grantDirect({ deviceId, deviceName }, row.id, /^[a-z0-9.-]{1,253}$/.test(host) ? host : 'localhost'))
+    } catch { this.plain(res, 400, 'native authorization refused') }
+  }
+
+  /**
+   * The rule in `shared/tailnetIdentity.ts`, asked about this request. `always` logs the
+   * decision; a per-request check (unlocking a control) logs each address and outcome at
+   * most once every ten minutes, so a phone typing does not write a line per keystroke.
+   */
+  private async tailnetVerdict(req: IncomingMessage, what: string, always = false): Promise<TailnetVerdict> {
+    const source = tailnetSource({ socket: normalise(req.socket.remoteAddress ?? ''), headers: req.headers })
+    let verdict: TailnetVerdict
+    if ('refused' in source) verdict = judgeTailnet(source, null, '')
+    else if (!this.deps.tailnet) verdict = { trusted: false, reason: 'Tailscale identity is not wired in', ip: source.ip }
+    else {
+      const [node, self] = await Promise.all([this.deps.tailnet.whois(source.ip), this.deps.tailnet.selfUser()])
+      verdict = judgeTailnet(source, node, self)
+    }
+    const shown = verdict.ip ? verdict : { ...verdict, ip: addressOf(req) }
+    const key = `${shown.ip}|${verdict.trusted}|${verdict.reason}`
+    const now = Date.now()
+    if (always || now - (this.trustLogged.get(key) ?? 0) > 10 * 60_000) {
+      if (this.trustLogged.size > 512) this.trustLogged.clear()
+      this.trustLogged.set(key, now)
+      try {
+        this.deps.trustLog?.(trustLine(shown, what))
+      } catch {
+        /* a log line never refuses a request */
+      }
+    }
+    return verdict
+  }
+
+  /**
+   * The Devices row for a trusted phone: one per Tailscale node, so its browser and its app
+   * share it and `Sign out` on it ends both. Reused, never re-minted - its token is the
+   * browser's cookie. A browser arriving refreshes the user-agent the row is judged by.
+   */
+  private tailnetDevice(node: TailnetNode, ip: string, browserUa: string): PhoneDevice {
+    const list = this.deps.devices?.() ?? []
+    const id = `ts-${node.stableId.replace(/[^A-Za-z0-9]/g, '').slice(0, 40)}`
+    const prior = list.find((d) => d.id === id)
+    const now = Date.now()
+    const fromUa = browserUa ? deviceKind(browserUa) : 'Browser'
+    const kind = fromUa !== 'Browser' ? fromUa : node.os.toLowerCase() === 'android' ? 'Android phone' : 'iPhone'
+    const row: PhoneDevice = {
+      id,
+      kind: prior && !browserUa ? prior.kind : kind,
+      address: ip,
+      origin: originOf(ip),
+      at: prior?.at ?? now,
+      seen: now,
+      // Never empty: `tidyDevices` folds a row with no user-agent into its neighbours.
+      ua: browserUa || prior?.ua || `Tailscale ${node.os} (${node.name})`,
+      mark: prior?.mark ?? null,
+      token: prior?.token ?? randomBytes(32).toString('hex')
+    }
+    this.deps.saveDevices?.([...list.filter((d) => d.id !== id), row])
+    this.deps.onChange?.()
+    return row
+  }
+
   private nativeSessions(req: IncomingMessage, res: ServerResponse): void {
     if (!isTls(req) || !this.native.bearer(this.nativeBearer(req), 'read')) return this.plain(res, 401, 'unauthorized')
     const sessions = (this.deps.sessions?.() ?? []).filter((s) => s.status !== 'exited' || s.asleep).map((s) => ({ id: s.id, title: s.title, provider: s.agent === 'codex' ? 'codex' : s.agent === 'claude' ? 'claude' : 'terminal', state: s.asleep ? 'sleeping' : s.status === 'working' ? 'working' : s.ask ? 'needs-input' : 'idle', hostName: 'PaneForge', keepOpen: this.deps.isKeepOpen?.(s.id) ?? false, updatedAt: new Date(s.lastOutput || s.createdAt).toISOString() }))
@@ -992,7 +1104,12 @@ b.onclick=async()=>{
   private async nativeSessionAction(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const grant = isTls(req) ? this.native.bearer(this.nativeBearer(req), 'control') : null
     if (!grant) return this.plain(res, 401, 'unauthorized')
-    if (grant.unlockedUntil <= Date.now()) return this.plain(res, 423, 'locked')
+    if (grant.unlockedUntil <= Date.now()) {
+      // Over Funnel the passkey rule stands as it was; Robert's phone on Tailscale is
+      // already the proof a passkey would be.
+      if (!(await this.tailnetVerdict(req, 'app control')).trusted) return this.plain(res, 423, 'locked')
+      this.native.unlock(grant)
+    }
     const parts = path.split('/'); const id = decodeURIComponent(parts[5] ?? ''); const action = parts[6] ?? ''
     if (!(this.deps.sessions?.() ?? []).some((s) => s.id === id)) return this.plain(res, 404, 'not found')
     if (action === 'sleep' || action === 'keep-open') {
@@ -1149,7 +1266,7 @@ b.onclick=async()=>{
     }
     // Answered inside the envelope rather than as a 423, because `call` has a reply the
     // client is already waiting on and an HTTP status would lose the id it belongs to.
-    if (GATED_INVOKE.has(channel) && !this.unlocked(req)) {
+    if (GATED_INVOKE.has(channel) && !(await this.open(req))) {
       return this.json(res, 200, { id, error: 'locked', locked: true })
     }
     try {
@@ -1168,7 +1285,7 @@ b.onclick=async()=>{
     // are keystrokes in order: dropping the gated ones and running the rest would deliver a
     // word with letters missing, and dropping them silently is worse still. 423 is the one
     // status the client retries after unlocking, so the batch it holds is re-sent intact.
-    if (calls.some((c) => GATED_SEND.has(c.channel)) && !this.unlocked(req)) {
+    if (calls.some((c) => GATED_SEND.has(c.channel)) && !(await this.open(req))) {
       return this.plain(res, 423, 'locked')
     }
     // A batch, because typing is one of these per keystroke and they must stay in order.
@@ -1237,6 +1354,11 @@ b.onclick=async()=>{
     return !this.armed(req) || this.hasPasskeyUnlock(req)
   }
 
+  /** `unlocked`, or Robert's phone on Tailscale, which needs no passkey touch. */
+  private async open(req: IncomingMessage): Promise<boolean> {
+    return this.unlocked(req) || (await this.tailnetVerdict(req, 'browser control')).trusted
+  }
+
   /** Proof returned to the asserting client, even when the optional browser typing gate is off. */
   private hasPasskeyUnlock(req: IncomingMessage): boolean {
     const cookie = /(?:^|;\s*)pfu=([^;]+)/.exec(req.headers.cookie ?? '')
@@ -1278,12 +1400,13 @@ b.onclick=async()=>{
    * `rpId` is the host without its port - a relying party id is a domain, and including the
    * port makes every assertion fail with an error that says nothing useful.
    */
-  private keyState(req: IncomingMessage, res: ServerResponse): void {
+  private async keyState(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const host = String(req.headers.host ?? '').split(':')[0]
     const keys = this.deps.keys?.() ?? []
+    const unlocked = await this.open(req)
     this.json(res, 200, {
       armed: this.armed(req),
-      unlocked: this.unlocked(req),
+      unlocked,
       rpId: host,
       origin: `https://${String(req.headers.host ?? '')}`,
       // Only ids, never the keys themselves: this is what `allowCredentials` needs and
