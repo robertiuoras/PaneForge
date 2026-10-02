@@ -199,6 +199,46 @@ try {
     assert.match(verdict(), /settle/, 'a reply printed a moment ago still holds the clear, ticks or not')
     assert.equal(live.meta.autoClearAt, undefined, 'and no countdown is drawn over it')
   }
+  // A clear queued for a turn end on a pane that has no turn left. s19-muqs9nqa, 2026-10-02:
+  // the Stop hook's ask queued at 10:47:31Z (working), the turn ended 11s later and `endRun`
+  // re-asked while the hold of the prompt that started that turn was still up - 'drafting',
+  // queued again. The hold was confirmed a moment later over an empty box, and nothing ever
+  // asked again: idle, owed a clear, no countdown for 15+ minutes. The sweep asks again once
+  // nothing holds the pane - and never over a line in the box, a hold, a turn or an owed prompt.
+  {
+    global.__pfHandoff = valid()
+    const manager = new SessionManager()
+    const { id } = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(id)
+    live.turnPending = false
+    live.meta.status = 'idle'
+    live.meta.lastKeyboard = Date.now() - 5_000
+    printedAgo(live, 30_000)
+    const ask15 = { prompt: 'continue', steps: ['continue work'], seconds: 15 }
+    live.meta.runSince = Date.now() - 60_000
+    assert.match(manager.armAutoClear(id, ask15).reason ?? '', /queued/, 'the mid-turn ask is queued')
+    live.draftConfirmation = { prompt: 'the prompt that started this turn', since: Date.now() - 60_000, afterPaint: 0 }
+    live.meta.drafting = true
+    manager.endRun(live)
+    assert.equal(manager.autoClearPending.has(id), true, 'the turn ends under the hold: queued again (drafting)')
+    const swept = () => { manager.sweepIdle(); return manager.autoClearPending.has(id) }
+    assert.equal(swept(), true, 'while the hold is up the queued clear waits')
+    live.draftConfirmation = undefined
+    live.draft = { text: 'somebody is typing', certain: true, inPaste: false }
+    assert.equal(swept(), true, 'a line in the box keeps it waiting')
+    live.draft = { text: '', certain: true, inPaste: false }
+    live.meta.drafting = undefined
+    live.meta.owedPrompt = true
+    assert.equal(swept(), true, 'a prompt the app still owes goes first')
+    live.meta.owedPrompt = undefined
+    live.meta.runSince = Date.now()
+    printedAgo(live, 200)
+    assert.equal(swept(), true, 'a running turn keeps it for that turn to end')
+    live.meta.runSince = undefined
+    printedAgo(live, 30_000)
+    assert.equal(swept(), false, 'idle with an empty box: the queued clear is asked again')
+    assert.ok(live.meta.autoClearAt, 'and its countdown is on screen')
+  }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {
   global.setTimeout = realTimers

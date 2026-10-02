@@ -140,6 +140,10 @@ for the lifetime of the app, until a manual fresh session changes its ID.
 foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
 `main/autoclearRequests.ts` -> `autoClearAsk` = `autoclear:ask` (`test:autoclearhook`).
 `Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
+A queued ask re-arms at `endRun`, and `sweepIdle` re-asks it on an idle pane with an empty box
+and no hold (a stale hold at `endRun` stranded it, s19 2026-10-02). A retained prompt's late
+receipt drops its own return's hold (`draftConfirmation.key`). Only a TYPED owed prompt
+(`promptInFlight`) blocks the stale-draft recheck; one still waiting is waiting on it.
 `shared/autoclear.ts` refusals; `main/sessions.ts` re-checks (`dropFor`) each tick. `## Next steps:
 None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
 A fresh handoff the parser cannot read (`handoffShapeProblem`: no `Next steps` heading, or
