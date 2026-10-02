@@ -284,6 +284,7 @@
     "test:phone": "node scripts/phone-test.mjs",
     "test:passkey": "node scripts/passkey-test.mjs",
     "test:panesize": "node scripts/pane-size-test.mjs",
+    "test:mirrorview": "node scripts/mirror-view-test.mjs",
     "test:borrowask": "node scripts/borrowask-test.mjs",
     "test:linkstate": "node scripts/link-state-test.mjs",
     "test:whatsnew": "node scripts/whatsnew-test.mjs",

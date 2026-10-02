@@ -515,6 +515,54 @@ regression here gets waved through.
 
 ## Two machines, one desk
 
+### 2026-10-02: a mirror's font is chosen off the cell the renderer really draws, and re-chosen when that cell changes
+
+Robert, 2026-10-02, with a screenshot of a Mac pane on the PC (text pushed right behind an
+empty band, lines cut off at the right edge): "you got to fix remoteviewing as well display
+broken on both mac and pc and need this full fixed 100% so it fits same size and works
+properly without breaking".
+
+Measured in a dev copy against a fake owner desk (`scripts/mirror-view-test.mjs`), card 909px,
+usable box 861x632 (the fit addon's: less `.xterm`'s 32px right padding and the 17px scrollbar):
+
+- **Renderer swap.** xterm's WebGL renderer rounds the cell to whole device pixels, the DOM
+  renderer does not: on a 1.25 screen 13px is 7.2px (WebGL) or 7.61px (DOM), and 12px and 11px
+  are BOTH 6.4px on WebGL. A pane hidden and shown, or one whose GPU context is lost, swaps
+  renderer under an unchanged font, and only the HOST was observed - so nothing re-ran the fit.
+  The owner holding 121x37: 31.6px / 5 columns off the right edge, 19px empty on the left.
+  Fix: the ResizeObserver also watches `.xterm-screen`. Local panes had the same hole: fitted
+  119 columns on WebGL, 12.6px under the scrollbar on the DOM renderer, pty never told; now
+  they refit to 113 and the pty follows.
+- **Font by ratio.** The walk and the borrow ask both converted measurements by font RATIO,
+  which non-proportional cells make wrong: 121x37 settled at 12 on one run and at 13 cut off
+  on another; the lend asked 119x41 then 123x39 (the ratio of a 12px measurement), which does
+  not fit at 13 - two owner pty resizes and a lent grid drawn at 11px. Fix: `bestFont`, the
+  largest font whose room (the fit addon's arithmetic over that font's measured cell, cached
+  per renderer + pixel ratio + face) holds the grid; the ask is that room at the user's font.
+  `borrowAsk`'s deadband is one-sided: a host grid one cell BIGGER than the room is an ask.
+- **Centring** used the host's whole width, so the scrollbar's slack sat on the left too.
+  `placeGrid` centres in the usable box, and not at all under two cells of slack.
+- **The window's ask had no viewer**, so main filed it as a phone's and a real phone's
+  `pty:return` dropped it. `askBorrow` names its screen.
+
+Before -> after (mirror grid = owner grid in every row, before and after):
+
+| dpr | step | before | after |
+|---|---|---|---|
+| 1.25 | owner lends | 123x39 @13 WebGL, 2 owner resizes | 119x41 @13, 1 resize, gapRight 4px |
+| 1.25 | owner holds 160x45 | @9, left 71px / right 22px | @9, 46 / 47px (centred) |
+| 1.25 | owner resizes to 121x37 | @13, 29px past the usable box | @12, 43 / 44px |
+| 1.25 | renderer swap | @13 DOM, 31.6px / 5 cols clipped | @12 DOM, 0 clipped, flush (left 0) |
+| 1.25 | owner holds 100x30 | left 74 / right 25px | 49 / 50px |
+| 1.25 | owner lends again | 123x39 @11 | 112x41 @13 |
+| 2 | owner lends | 114x40 @12, left 56px | 114x40 @13, flush, gapRight 6px |
+| 2 | owner holds 160x45 | left 55 / right 6px | 30 / 31px |
+| 2 | renderer swap | left 31 / 21px past the box | flush, gapRight 10px |
+| 2 | owner holds 100x30 | left 74 / right 25px | 49 / 50px |
+
+`test:mirrorview` (window suite, PF_PORT) pins all of it at dpr 1.25 and 2; `test:mirrorfit`
+pins `bestFont`/`placeGrid` with the measured cells; `test:borrowask` the one-sided deadband.
+
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers -
 each can host and each can connect out - so there is no setting deciding which machine
 you have to be sitting at.
