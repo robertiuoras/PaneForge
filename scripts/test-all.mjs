@@ -254,6 +254,8 @@ const TESTS = [
   ['clititle', 'cli-title-test.mjs'],
   ['pfrename', 'pf-rename-test.mjs'],
   ['pfclose', 'pf-close-test.mjs'],
+  ['pflabel', 'pf-label-test.mjs'],
+  ['panenumbers', 'pane-numbers-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],

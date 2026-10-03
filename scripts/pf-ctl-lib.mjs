@@ -30,12 +30,14 @@ export const COMMANDS = [
   },
   {
     name: 'list',
-    summary: 'List every pane: number, id, state, name, folder. Sign-in cards waiting on a person follow.',
+    summary: 'List every pane: label, id, state, name, folder. Sign-in cards waiting on a person follow.',
     usage: 'pf list',
     example: 'pf list',
     detail: [
-      'Columns (tab separated): number, id, state, name, folder.',
-      'The number is the one drawn on the pane\'s card. It shifts when a pane above it closes; the id never changes.',
+      'Columns (tab separated): label, id, state, name, folder.',
+      'The label is the one on the pane\'s card: its number, with the computer\'s name in front ("PC 3", "Mac 1") when another',
+      '  computer\'s panes are on this desk. A pane keeps its number while it is open; a closed pane\'s number is not given',
+      '  to a new pane for 15 minutes. Rows of another computer\'s panes that are not open here follow.',
       'States: starting (just opened), working (busy), idle (waiting for a person or a prompt), exited (finished or asleep).',
       'An id starting with @ is a pane on another paired computer.'
     ]
@@ -85,7 +87,7 @@ export const COMMANDS = [
     summary: 'Hand a pane one line of text, delivered between its turns (never typed into the middle of one).',
     usage: 'pf tell <pane> <text...>',
     example: 'pf tell 3 "When this step is done, commit and stop"',
-    detail: ['<pane> is a number from `pf list`, an exact pane name, or an id. Panes on another computer cannot be told.']
+    detail: ['<pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), an exact pane name, or an id. Panes on another computer cannot be told.']
   },
   {
     name: 'continue',
@@ -119,9 +121,9 @@ export const COMMANDS = [
     example: 'pf close 3',
     detail: [
       'It does not ask first: closed by id, a working pane is stopped mid-turn. Look at its state in `pf list` before closing.',
-      'Numbers shift when a pane opens, arrives or closes; close several panes by id, or from the highest number down.',
-      'By number it refuses a pane that is working or came onto the desk in the last 2 minutes, since the number',
-      '  may have moved onto it since you read it. It prints the pane\'s id; close it by that id if it is the one.'
+      '<pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), an exact pane name, or an id.',
+      'By label or number it refuses a pane that is working or came onto the desk in the last 2 minutes, since a closed',
+      '  pane\'s number can go to a new pane after 15 minutes. It prints the pane\'s id; close it by that id if it is the one.'
     ]
   },
   {
@@ -253,7 +255,7 @@ export function helpText() {
   }
   out.push(
     '',
-    'A <pane> is its number from `pf list` (the number on its card), its exact name, or its id.',
+    'A <pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), its exact name, or its id.',
     'Agents: `pf agents` lists the ids installed here (claude, codex, grok, antigravity, shell, ...).',
     'More on one command: pf help <command>',
     'Exit codes: 0 ok, 1 refused / not found / call failed, 2 PaneForge not running or its phone server is off.'
@@ -357,6 +359,65 @@ export function cardNumber(list, id) {
   return Number.isInteger(n) && n > 0 ? n : at + 1
 }
 
+/** Short machine names as drawn on a card. */
+export const MACHINE_NAME = { mac: 'Mac', pc: 'PC' }
+
+/** Which machine this CLI runs on, same rule as `thisMachine()` in `src/main/doneClose.ts`. */
+export const localMachine = () => (process.platform === 'win32' ? 'pc' : 'mac')
+
+/** "PC 3" / "Mac 3"; null when the machine is unknown or `n` is not a positive integer. */
+export function labelFor(machine, n) {
+  const name = MACHINE_NAME[machine]
+  return name && Number.isInteger(n) && n > 0 ? `${name} ${n}` : null
+}
+
+/** "PC 3", "pc3", "PC-3", " mac  12 ", "3" -> { machine: 'mac'|'pc'|null, number }; null for anything else. */
+export function parseLabel(ref) {
+  const m = /^\s*(?:(mac|pc)[\s-]*)?(\d+)\s*$/i.exec(String(ref ?? ''))
+  if (!m) return null
+  const number = Number(m[2])
+  return number > 0 ? { machine: m[1] ? m[1].toLowerCase() : null, number } : null
+}
+
+/** What `pf list` prints in column 1: the card's own label, else (an older app) its number. */
+export function rowLabel(list, row) {
+  return row.label ?? String(cardNumber(list, row.id))
+}
+
+/**
+ * The pane `ref` names, or null. An id wins. "PC 3" / "Mac 3" match the row whose OWNER
+ * machine and number agree (own rows: `machine`, else this CLI's machine; mirrored rows:
+ * `remote.machine`). A bare number is only ever this computer's own pane. A row of a paired
+ * computer's pane that is not open here carries `listed: true`; the caller refuses it.
+ */
+export function paneByRef(rows, ref, machine) {
+  const byId = rows.find((s) => s.id === ref)
+  if (byId) return byId
+  const want = parseLabel(ref)
+  if (!want) return null
+  const own = (s) => !s.remote && !s.listed && !String(s.id).startsWith('@')
+  const ownerOf = (s) => s.remote?.machine ?? s.machine ?? (own(s) ? machine : null)
+  const numberOf = (s) => (own(s) ? cardNumber(rows, s.id) : s.number)
+  return rows.find((s) => (want.machine ? ownerOf(s) === want.machine : own(s)) && numberOf(s) === want.number) ?? null
+}
+
+/**
+ * The rows `pf list` prints, as [label, row] pairs. Other scripts parse column 1 and accept
+ * only `3`, `PC 3` or `Mac 3`, so a row whose label is anything else (a bare "Mac" from an
+ * older PaneForge that sent no number, "?") is left out rather than printed.
+ */
+export function listRows(list, listed = []) {
+  const out = []
+  for (const row of [...list, ...listed]) {
+    // A mirrored or listed row with no label has no number of its own; a position would lie.
+    const foreign = row.remote || row.listed
+    const label = foreign ? row.label : rowLabel(list, row)
+    const ok = foreign ? /^(PC|Mac) [1-9]\d*$/ : /^([1-9]\d*|(PC|Mac) [1-9]\d*)$/
+    if (typeof label === 'string' && ok.test(label)) out.push([label, row])
+  }
+  return out
+}
+
 /** The pane whose card shows `n`, or undefined. See `cardNumber`. */
 export function paneAt(list, n) {
   return list.find((p) => cardNumber(list, p.id) === n)
@@ -372,14 +433,14 @@ export function paneAt(list, n) {
  * the pane you read". An id never moves, so `pf close <id>` still closes anything.
  */
 export function numberCloseRefusal(ref, s, now) {
-  if (!/^\d+$/.test(ref) || ref === s.id) return null
+  if (!parseLabel(ref) || ref === s.id) return null
   const age = now - s.createdAt
   const what =
     s.status === 'working' ? 'is working right now'
     : age < 120_000 ? `came onto the desk ${Math.floor(age / 1000)} s ago`
     : null
   if (!what) return null
-  return `card ${ref} is "${s.title}" (${s.id}), which ${what} - card numbers move when a chat opens, arrives or closes, so it may not be the pane you read as ${ref}. If it is the one, close it by id: pf close ${s.id}`
+  return `card ${ref} is "${s.title}" (${s.id}), which ${what} - it may not be the pane you read as ${ref}. If it is the one, close it by id: pf close ${s.id}`
 }
 
 /**

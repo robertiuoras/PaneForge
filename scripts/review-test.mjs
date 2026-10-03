@@ -518,7 +518,9 @@ const saved = JSON.parse(readFileSync(join(temp, 'reviews', 'ctx_1.json'), 'utf8
 assert.deepEqual([saved.paneNumber, saved.app, saved.context, saved.sessionTokens], [2, 'paneforge', { used: 162334, window: 1_000_000 }, 24496])
 // The page: number and title first, the context line, and the WHOLE reply, escaped.
 const html = readFileSync(ctx.reportPath, 'utf8')
-assert.match(html, /<h1><span class="num">2<\/span> Remember Use Colors<\/h1>/)
+assert.match(html, /<h1><span class="num">(PC|Mac) 2<\/span> Remember Use Colors<\/h1>/)
+// The card's label, with the machine's name - the chat reads "PC 2" on every desk.
+assert.equal(saved.paneLabel, `${process.platform === 'win32' ? 'PC' : 'Mac'} 2`)
 assert.match(html, /162k of 1M context used \(16%\) · 24k tokens this session/)
 assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;') && !html.includes('<script>'), 'the reply is escaped')
 assert.ok(html.includes('<h2>Batch 2 <strong>done</strong></h2>'), 'headings and bold keep their meaning')

@@ -2890,9 +2890,22 @@ Four things, one brief (`docs/superpowers/specs/2026-09-23-remote-rows-brief.md`
   and 1.0-1.5 KB/s for a Claude pane printing tool output (0.2 KB/s averaged over 49 min).
   Eight PC panes are ~55 MB on the Mac. Pre-warming on hover was the fallback and was not
   needed.
-- **A number on every row.** A row still listed (attach in flight, or a peer somebody turned
-  down by hand in Devices) is numbered after this desk's own panes off the FULL list
-  (`deskRows`), and `listedByNumber` gives Ctrl+N the same answer, so the key opens it.
+- **A number on every row** (superseded 2026-10-03, see below). A listed row used to be
+  numbered after this desk's own panes off the full list, with `listedByNumber` giving Ctrl+N
+  the same answer.
+- **One label on every desk: `PC 3` / `Mac 3` (2026-10-03).** Robert, 6:45am Sat 3 Oct: "do
+  you tink need better numbering system they diferent card 3 vs 7 on mac?". A number was the
+  card's PLACE in this desk's list, and each desk counted the other machine's panes into the
+  same sequence, so one chat was 3 on the PC and 7 on the Mac, and closing or dragging a pane
+  renumbered the rest - agents name chats by number, so a mention from the other machine or a
+  minute ago named the wrong pane. Copied from PaneForge Next (e094627,
+  `server/pane-numbers.mjs`): the number belongs to the machine the pane runs on
+  (`main/paneNumbers.ts`, taken in `start()`, released where the session is removed, saved in
+  the desk so a restart gives it back), lowest free, a freed number rests 15 minutes before
+  another pane may take it. Mirrored and listed rows always wear the owner's label; this desk's
+  own say `PC 1` only while another computer's panes are here. Ctrl+1..9 reach only this
+  desk's own panes - a `Mac 3` and a `PC 3` cannot share Ctrl+3. `desk-test.mjs`,
+  `pane-numbers-test.mjs`.
 - **Close works.** The listed row has the local card's `x`; it goes through `sessions:kill`
   -> `Remote.closeOn`, and `state()` drops a closing id from `panes` as well as `sessions`,
   so the row leaves both halves of the list at once.

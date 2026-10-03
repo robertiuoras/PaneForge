@@ -15,7 +15,7 @@ worst pixel minus 5%, pet hidden, animation killed, 3:1 vs `--muted`, LOGOTYPE e
 
 `src/shared/place.ts` (`test:place`): project name never omitted; trunk -> `PaneForge`;
 generated branch (`pf/w2`, `lane-a`, `worktree-<slug>`) dropped; `copy 2` = second checkout,
-`pane 3` = third card (Ctrl+3); `-a` stripped only when lane known; no `git status`.
+`pane PC 3` = the card's label; `-a` stripped only when lane known; no `git status`.
 
 ## A pane says which client it is working for
 
@@ -58,8 +58,11 @@ from the clock's OWN start; not in `Elapsed.tsx`; `formatElapsed` carries days. 
 
 Your move / Running / Ready / Ended (`shared/fleet.ts`), Ctrl+Shift+F dragged order;
 `shared/desk.ts`; `test:desk`; `openListed`. A peer's panes are ALL mirrored by default
-(`mirrorsAll()`); a still-LISTED row is numbered (`listedByNumber`, Ctrl+N) and closable
-(`closeOn`); chip = `chipCloseAt`, nothing while `away`. Every row is numbered (`.num.far`);
+(`mirrorsAll()`); a still-LISTED row is closable (`closeOn`); chip = `chipCloseAt`, nothing
+while `away`. Card label = number on the machine that RUNS the pane, stable while it lives
+(`shared/paneLabel.ts`, `main/paneNumbers.ts`, 15-min rest, `pane-numbers-test.mjs`):
+mirrored/listed always `Mac 3`; own `PC 1` only when another computer's panes are on the
+desk, else `1`. Ctrl+1..9 = own pane with that number only; mirrored/listed `.num.far`, no key.
 grid fits 440x240 tiles (`gridRoom`/`gridPick`: needs-you first, asleep last, active always),
 counts the rest. Mirror listed once; device not online = nothing; badge counts both. `Running` = `runSince`
 (submit, busy footer, shell command) until `endRun`, or `FleetPane.backJob`; never `status ===

@@ -32,11 +32,12 @@ import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { profileName } from '../profile'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
-import { RemoteClient, joinId, splitId } from './client'
+import { RemoteClient, joinId, splitId, type PeerStatus } from './client'
 import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 import type { ReviewRecord } from '../../shared/reviews'
+import { machineOf } from '../../shared/paneLabel'
 
 export { joinId, splitId }
 
@@ -192,6 +193,17 @@ export class Remote extends EventEmitter {
       out.push({ id: c.peer.id, name: c.identity()?.name || c.peer.name, report: c.peerDesk, panes: c.panes() })
     }
     return [...out, ...this.host.deskReports()]
+  }
+
+  /** Each device's status and which of its panes are mirrored - what `othersOnDesk` reads, without building `state()`. */
+  deskPeers(): { status: PeerStatus; panes: { watched: boolean }[] }[] {
+    return [...this.clients.entries()].map(([id, c]) => {
+      const watched = new Set(c.watched())
+      return {
+        status: c.status,
+        panes: c.panes().filter((s) => !this.closing.has(`@${id}/${s.id}`)).map((s) => ({ watched: watched.has(s.id) }))
+      }
+    })
   }
 
   /** Every mirrored pane, from every connected device. */
@@ -478,11 +490,14 @@ export class Remote extends EventEmitter {
         error: this.host.error || undefined,
         addresses: localAddresses(),
         pairByAsking: pairAskingOn(c),
-        version: this.me().version
+        version: this.me().version,
+        machine: machineOf(process.platform)
       },
       peers: c.peers.map((p) => {
         const client = this.clients.get(p.id)
         const watched = new Set(client?.watched() ?? p.watch ?? [])
+        const platform = client?.identity()?.platform
+        const machine = platform && platform !== 'unknown' ? machineOf(platform) : undefined
         return {
           ...p,
           status: client?.status ?? 'off',
@@ -526,7 +541,10 @@ export class Remote extends EventEmitter {
             finished: s.finished,
             closingAt: s.closingAt,
             doneClosingAt: s.doneClosingAt,
-            keepOpen: s.keepOpen
+            keepOpen: s.keepOpen,
+            // The owner's card number and machine, so a listed row reads "Mac 3" here too.
+            number: s.number,
+            machine
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,

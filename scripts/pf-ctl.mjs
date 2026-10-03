@@ -65,6 +65,11 @@ import {
   commandHelp,
   cardNumber,
   continueTarget,
+  labelFor,
+  listRows,
+  localMachine,
+  MACHINE_NAME,
+  parseLabel,
   findDuplicates,
   findTranscript,
   folderRefusal,
@@ -77,7 +82,8 @@ import {
   movePrompt,
   moveRefusal,
   numberCloseRefusal,
-  paneAt,
+  paneByRef,
+  rowLabel,
   readTail,
   samePath,
   stripAnsi
@@ -182,26 +188,58 @@ async function sessions() {
 /**
  * A title names at most one pane for automation; ids always win.
  *
- * A bare NUMBER is the pane's place on the desk - the number drawn on its card, the one
- * Ctrl+<n> reaches, and the only name Robert ever uses for a pane ("check PaneForge
- * session 12"). It was the one name this CLI could not answer to: `pf list` printed
- * `s45-mu5kq7f9` and no number at all, so another session asked about pane 12 looked at
- * that list, found no 12, and told him it did not exist (2026-09-17). Which pane shows
- * which number is `cardNumber`: a row's own `number` when it has one, else its place in
- * the `sessions:list` answer, which is the sidebar's own order.
+ * A label ("PC 3", "Mac 3") names the pane on that computer; a bare NUMBER is this
+ * computer's own pane with that number, the one drawn on its card (`paneByRef`). 2026-09-17:
+ * `pf list` printed no number, so another session asked about pane 12 found no 12 and said
+ * it did not exist.
  */
-function resolve(list, ref) {
+async function resolve(list, ref) {
   const byId = list.find((s) => s.id === ref)
   if (byId) return byId
-  if (/^\d+$/.test(ref)) {
-    const at = paneAt(list, Number(ref))
-    if (!at) fail(1, `there is no pane ${ref} - the cards on the desk are ${list.map((s) => cardNumber(list, s.id)).join(', ') || 'none'}`)
+  if (parseLabel(ref)) {
+    const rows = [...list, ...(await listedRows(list))]
+    const at = paneByRef(rows, ref, localMachine())
+    if (at?.listed) {
+      const where = at.machine ? MACHINE_NAME[at.machine] : 'another computer'
+      fail(1, `${at.label ?? where} runs on the ${where} and is not open on this desk - open it here first, or use pf on the ${where}`)
+    }
+    if (!at) fail(1, `there is no pane ${ref} - the cards on the desk are ${listRows(list).map(([l]) => l).join(', ') || 'none'}`)
     return at
   }
   const byTitle = list.filter((s) => s.title === ref)
   if (byTitle.length > 1)
     fail(1, `"${ref}" names ${byTitle.length} panes - use an id: ${byTitle.map((s) => s.id).join(', ')}`)
   return byTitle[0]
+}
+
+/**
+ * Rows for the panes of each ONLINE paired computer that are not mirrored on this desk (the
+ * mirrored ones are already in `sessions:list`), shaped like its rows and marked `listed`.
+ * An app that cannot answer `remote:state` (an older build) adds none.
+ */
+async function listedRows(list) {
+  const out = await tryCall('remote:state', [])
+  if (out.error) return []
+  const have = new Set(list.map((s) => s.id))
+  const rows = []
+  for (const peer of out.value?.peers ?? []) {
+    if (peer.status !== 'online') continue
+    for (const pane of peer.panes ?? []) {
+      const id = `@${peer.id}/${pane.id}`
+      if (pane.watched || have.has(id)) continue
+      rows.push({
+        id,
+        title: pane.title,
+        status: pane.status,
+        cwd: pane.cwd,
+        number: pane.number,
+        machine: pane.machine,
+        listed: true,
+        label: labelFor(pane.machine, pane.number)
+      })
+    }
+  }
+  return rows
 }
 
 function flag(argv, name) {
@@ -478,8 +516,10 @@ function placeTranscript(cwd, id) {
 
 if (cmd === 'list') {
   const list = await sessions()
-  // The number leads, because it is the name on the card. See `resolve`.
-  for (const s of list) console.log([cardNumber(list, s.id), s.id, s.asleep ? 'asleep' : s.status, s.title, s.cwd].join('\t'))
+  // The label leads, because it is the name on the card. See `resolve`.
+  // Column 1 is parsed by other scripts: only `3`, `PC 3`, `Mac 3`; see `listRows`.
+  for (const [label, s] of listRows(list, await listedRows(list)))
+    console.log([label, s.id, s.asleep ? 'asleep' : s.status, s.title, s.cwd].join('\t'))
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.
@@ -500,7 +540,10 @@ if (cmd === 'list') {
   const { dupes, dry } = tidyArgs
   const self = process.env.PF_PANE
   const before = await sessions()
-  const at = (list, p) => `${p.id} (pane ${cardNumber(list, p.id)} "${p.title}")`
+  const at = (list, p) => {
+    const label = listRows(list).find(([, row]) => row.id === p.id)?.[0]
+    return label ? `${p.id} (pane ${label} "${p.title}")` : `${p.id} ("${p.title}")`
+  }
   let closed = 0
   // A dry run numbers panes as they are now; a real one as they are once the finished
   // ones are gone - either way the number printed is the one on the card at that moment.
@@ -585,7 +628,7 @@ if (cmd === 'list') {
   if (model && models.length && !models.includes(model))
     fail(1, `${to} has no model "${model}" - it lists: ${models.join(', ')}`)
   const list = await sessions()
-  const pane = resolve(list, ref)
+  const pane = await resolve(list, ref)
   if (!pane) fail(1, `no pane named "${ref}"`)
   const number = cardNumber(list, pane.id)
   const refused = moveRefusal(pane, { now: Date.now(), self: process.env.PF_PANE })
@@ -648,7 +691,8 @@ if (cmd === 'list') {
   }
   if (!why) {
     const opened = await tryCall('sessions:start', [
-      { cwd: pane.cwd, title: pane.title, prompt: movePrompt(brief), agent: to, model, reportTo, where: 'local' }
+      // The old pane is closed above, so its card number is free: the moved chat keeps it.
+      { cwd: pane.cwd, title: pane.title, prompt: movePrompt(brief), agent: to, model, reportTo, where: 'local', number: pane.number }
     ])
     fresh = opened.value?.id ? opened.value : null
     why = opened.error ?? (fresh ? '' : 'the app opened nothing')
@@ -850,7 +894,7 @@ if (cmd === 'list') {
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
-  const s = resolve(await sessions(), ref)
+  const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   const why = numberCloseRefusal(ref, s, Date.now())
   if (why) fail(1, why)
@@ -879,7 +923,7 @@ if (cmd === 'list') {
   const named = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined
   const ref = named ?? process.env.PF_PANE
   if (!ref) fail(1, 'close-when-done needs a pane: pf-ctl close-when-done [title-or-id]')
-  const s = resolve(await sessions(), ref)
+  const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   const armed = await call('sessions:closeWhenDone', [s.id, flag(rest, '--report-to')])
   if (!armed) fail(1, `the app would not arm ${s.id}`)
@@ -892,7 +936,7 @@ if (cmd === 'list') {
   const ref = rest.shift()
   const name = rest.join(' ').trim()
   if (!ref || !name) fail(1, 'rename needs a pane and a name: pf-ctl rename <title-or-id> <name...>')
-  const s = resolve(await sessions(), ref)
+  const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   const was = s.title
   const sent = await call('sessions:rename', [s.id, name])
@@ -916,7 +960,7 @@ if (cmd === 'list') {
   // is what this prints. Reads only: nothing is typed, submitted or cleared.
   const ref = rest.shift()
   if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <number-title-or-id>')
-  const pane = resolve(await sessions(), ref)
+  const pane = await resolve(await sessions(), ref)
   if (!pane) fail(1, `no pane called "${ref}"`)
   const draft = await call('sessions:draft', [pane.id])
   if (!draft) fail(1, `pane ${pane.id} is not running, so it has no composer`)
@@ -948,7 +992,7 @@ if (cmd === 'list') {
   // Resolved HERE, not by the app: `tellPane` matches an id or a title and nothing else,
   // and a send channel has no reply - so `pf tell 3 ...` printed `told 3` and delivered
   // nothing, to the one name for a pane everybody uses (2026-09-24).
-  const s = resolve(await sessions(), ref)
+  const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   await send('pane:tell', [s.id, text])
   console.log(`told ${s.id} (${s.title})`)
@@ -1006,7 +1050,7 @@ if (cmd === 'list') {
   const ref = rest.shift()
   const text = rest.join(' ')
   if (!ref || !text) fail(1, 'type needs a pane and text: pf-ctl type <title-or-id> <text...>')
-  const s = resolve(await sessions(), ref)
+  const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   // The submit RETURN has to arrive as its OWN pty read. Claude Code treats a chunk
   // that lands in one read as a PASTE, and a CR inside a paste is a newline, not a

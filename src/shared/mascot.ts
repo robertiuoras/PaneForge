@@ -199,8 +199,13 @@ export function bubbleSpot(o: {
 /** One pane, reduced to what the mascot is allowed to reason about. */
 export interface MascotPane {
   id: string
-  /** 1-based position in the sidebar - the number a person says out loud, and the Ctrl key. */
+  /**
+   * This desk's card number - the number a person says out loud, and the Ctrl key. 0 for
+   * another machine's pane: its owner's number can be the same as one of ours.
+   */
   pane: number
+  /** the label on its card ("PC 3", "Mac 3", "3") - what a sentence shows */
+  label?: string
   /** The pane's own name, or the project it is in. What `place.ts` already worked out. */
   name: string
   /**
@@ -316,9 +321,11 @@ function byName(text: string, panes: MascotPane[]): MascotPane[] {
  * that is actionable. `where` is the lane, added only when the project name does not
  * already imply the checkout.
  */
-export function paneWord(p: { name?: string; pane: number; where?: string }): string {
+export function paneWord(p: { name?: string; pane: number; label?: string; where?: string }): string {
   const place = [p.name, (p.where ?? '').trim()].filter(Boolean).join(' ')
-  return place ? `(${p.pane}) ${place}` : `pane ${p.pane}`
+  const tag = p.label || (p.pane > 0 ? String(p.pane) : '')
+  if (!place) return tag ? `pane ${tag}` : 'a pane'
+  return tag ? `(${tag}) ${place}` : place
 }
 
 /** The most of a pane's ask that goes in a sentence. Longer than this is a paragraph. */
@@ -338,7 +345,7 @@ export function paneSubject(doing?: string): string {
  * wrong sentence about which conversation just closed is worse than no sentence, which is
  * the same rule History's own row is written under.
  */
-export function paneDoing(p: { name?: string; pane: number; doing?: string }, tense: 'is' | 'was' = 'was'): string {
+export function paneDoing(p: { name?: string; pane: number; label?: string; doing?: string }, tense: 'is' | 'was' = 'was'): string {
   const word = paneWord(p as MascotPane)
   const s = paneSubject(p.doing)
   return s ? `${word} - ${tense} working on "${s}"` : word

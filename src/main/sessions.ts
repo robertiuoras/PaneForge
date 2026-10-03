@@ -19,6 +19,7 @@ import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
 import { ensureTrusted } from './claudeTrust'
 import { ensureLaneFolder } from './lanes'
+import { paneNumbers } from './paneNumbers'
 import { which } from './which'
 import { specFor } from './agents'
 import { pfEnv, pfPrimerArgs } from './pfAccess'
@@ -1058,6 +1059,8 @@ export class SessionManager extends EventEmitter {
         // not one line of the terminal, which is why a pane comes back blank after an
         // update even though it picks the conversation up mid-sentence.
         scrollbackId: s.meta.id,
+        // ...and the number on its card, asked for back so a restart renumbers nothing.
+        number: s.meta.number,
         // Put to sleep on purpose, so it comes back that way.
         asleep: Boolean(s.meta.asleep),
         // The port the pane's dev server was told to use, kept across the restart
@@ -1262,6 +1265,8 @@ export class SessionManager extends EventEmitter {
       if (back.cols > 0) noteCols(id, back.cols, back.rows)
     }
     this.sessions.set(id, live)
+    // Only once the pane exists: a spawn that throws above must not hold a number.
+    meta.number = paneNumbers.take(id, req.number)
     if (born) {
       // Nothing to attach to, nothing to type at, and no run to record - `wake()` does
       // all three the moment somebody presses the chip. The gist is still read, because
@@ -3938,6 +3943,7 @@ export class SessionManager extends EventEmitter {
     forgetBackgroundAgents(id)
     forgetCodexWorkers(id)
     this.sessions.delete(id)
+    paneNumbers.release(id)
     forgetHandoff(id)
     this.emitSessions()
     return true

@@ -85,55 +85,93 @@ const peer = (over = {}) => ({
 })
 
 // ---------------------------------------------------------------------------
+// The label on a card: its number on the machine that runs it
+
+{
+  // Robert, 6:45am Sat 3 Oct: "do you tink need better numbering system they diferent card
+  // 3 vs 7 on mac?" A number was the pane's PLACE in this desk's list, which counted the
+  // other machine's panes too - so one chat wore a different number on each desk.
+  const a = sess({ number: 1 })
+  const b = sess({ number: 2 })
+  const mirrored = sess({ id: '@mac-id/s9', number: 3, remote: { device: 'mac-id', name: 'MacBook', machine: 'mac' } })
+  const p = peer({ id: 'mac-id', name: 'MacBook', panes: [pane({ number: 5, machine: 'mac' })] })
+  const rows = deskRows([a, b, mirrored], [a, b, mirrored], [p], 'all', 'pc')
+  is(
+    rows.map((r) => r.label),
+    ['PC 1', 'PC 2', 'Mac 3', 'Mac 5'],
+    "a mirrored pane shows its owner's number and machine name"
+  )
+  is(
+    deskRows([mirrored, b, a], [mirrored, b, a], [p], 'all', 'pc').map((r) => `${r.key}=${r.label}`).sort(),
+    rows.map((r) => `${r.key}=${r.label}`).sort(),
+    'a dragged order changes no label'
+  )
+  is(
+    deskRows([a, b, mirrored], [a, b], [p], 'local', 'pc').map((r) => r.label),
+    ['PC 1', 'PC 2'],
+    'the device filter is visual only - it never takes the machine name off a card'
+  )
+  is(deskRows([a, b], [a, b], [], 'all', 'pc').map((r) => r.label), ['1', '2'], 'nothing from another computer: the bare number')
+  is(
+    deskRows([a, b], [a, b], [peer({ status: 'off', panes: [pane({ number: 1, machine: 'mac' })] })], 'all', 'pc').map((r) => r.label),
+    ['1', '2'],
+    'an offline device puts nobody else on the desk'
+  )
+  const older = sess({ id: '@mac-id/s1', remote: { device: 'mac-id', name: 'MacBook', machine: 'mac' } })
+  is(deskRows([a, older], [a, older], [], 'all', 'pc').map((r) => r.label), ['PC 1', 'Mac'], 'an owner that sent no number: the machine name alone')
+}
+
+// ---------------------------------------------------------------------------
 // This machine's panes
 
 {
-  const a = sess()
-  const b = sess()
-  const rows = deskRows([a, b], [a, b], [], 'all')
+  const a = sess({ number: 1 })
+  const b = sess({ number: 2 })
+  const rows = deskRows([a, b], [a, b], [], 'all', 'mac')
   is(rows.length, 2, 'both local panes are rows')
   is(
     rows.map((r) => r.number),
     [1, 2],
-    'and each keeps the number Ctrl+N addresses'
+    'and each wears the number it was given, which Ctrl+N addresses'
   )
   ok(rows.every((r) => r.session && !r.listed), 'a local row carries its session')
 }
 
 {
-  // The device filter is visual only, so the NUMBER still comes off the full list - a row
-  // numbered by its position on screen would move the Ctrl key under somebody's finger.
-  const a = sess()
-  const b = sess()
-  const c = sess()
-  const rows = deskRows([a, b, c], [c], [], 'local')
-  is(rows.map((r) => r.number), [3], 'a filtered list still numbers by the full one')
+  // The device filter is visual only: a row's number is the pane's own, never its place on
+  // screen, which would move the Ctrl key under somebody's finger.
+  const a = sess({ number: 1 })
+  const b = sess({ number: 2 })
+  const c = sess({ number: 3 })
+  const rows = deskRows([a, b, c], [c], [], 'local', 'mac')
+  is(rows.map((r) => [r.number, r.label]), [[3, '3']], 'a filtered list keeps each pane its own number')
 }
 
 // ---------------------------------------------------------------------------
 // The other machine's panes, listed rather than mirrored
 
 {
-  const local = sess()
-  const p = peer({ panes: [pane(), pane()] })
-  const rows = deskRows([local], [local], [p], 'all')
+  const local = sess({ number: 1 })
+  const p = peer({ panes: [pane({ number: 1, machine: 'pc' }), pane({ number: 4, machine: 'pc' })] })
+  const rows = deskRows([local], [local], [p], 'all', 'mac')
   is(rows.length, 3, "a connected device's panes are listed beside this desk's")
   const listed = rows.filter((r) => r.listed)
   is(listed.length, 2, 'both of them')
-  // Numbered after this desk's own panes, so Ctrl+N reaches them too - a row with no
-  // number was a row you could not get to from the keyboard. Robert, 2026-09-23: "they
-  // dont even have a number on them which is bad".
-  is(listed.map((r) => r.number), [2, 3], 'and each carries the next pane number after the panes on this desk')
+  // A row with no number was a row nobody could name. Robert, 2026-09-23: "they dont even
+  // have a number on them which is bad". It wears the number its OWN machine gave it, not
+  // a continuation of this desk's count - so a pane reads the same on both desks.
+  is(listed.map((r) => r.label), ['PC 1', 'PC 4'], "and each wears its owner's number and machine name")
+  is(rows[0].label, 'Mac 1', "so this desk's own pane says which machine it is on too")
   is(
-    deskRows([local], [local], [p], 'pc')
+    deskRows([local], [local], [p], 'pc', 'mac')
       .filter((r) => r.listed)
-      .map((r) => r.number),
-    [2, 3],
-    'a device filter changes what is drawn, never which number a row wears'
+      .map((r) => r.label),
+    ['PC 1', 'PC 4'],
+    'a device filter changes what is drawn, never which label a row wears'
   )
   is(
-    deskRows([local], [], [p], 'all').map((r) => r.number),
-    [2, 3],
+    deskRows([local], [], [p], 'all', 'mac').map((r) => r.label),
+    ['PC 1', 'PC 4'],
     'and hiding the panes on this desk does not renumber the other machine'
   )
   is(listed[0].listed.device.name, 'Gamer-PC', 'the row knows which machine it is on')
