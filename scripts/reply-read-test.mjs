@@ -87,6 +87,11 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
     user([{ tool_use_id: 'toolu_05', type: 'tool_result', content: 'grep output: <task-notification>\n<tool-use-id>toolu_04</tool-use-id>' }])
   ]
   assert.equal(readClaudeReply(lines.join('\n')).runningAgents, 1)
+  // Nor is a tool CALL or the model's own prose that quotes one (a brief, an echo): 2026-10-02,
+  // `handoff-state.mjs` read such a line as the notification itself.
+  const quoted = '<task-notification>\n<tool-use-id>toolu_04</tool-use-id>\n</task-notification>'
+  const called = [...lines, assistant([{ type: 'tool_use', id: 'toolu_07', name: 'Bash', input: { command: `echo '${quoted}'` } }]), assistant([{ type: 'text', text: `It looks like ${quoted}` }])]
+  assert.equal(readClaudeReply(called.join('\n')).runningAgents, 1, 'a tool call or prose quoting a notification does not end the agent')
   console.log('reply-read: quoted notification does not count ok')
 }
 

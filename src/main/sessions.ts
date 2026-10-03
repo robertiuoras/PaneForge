@@ -100,7 +100,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
-import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
+import { backgroundAgentsFor, backgroundTasksFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
 import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -122,6 +122,7 @@ import { catalogueIdFor, currentClaudeEffort } from './modelAdvice'
 import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
+import { reviveVerdict, REVIVE_PROMPT, REVIVE_WINDOW_MS } from '../shared/cliRevive'
 
 /**
  * Extra patience for the "continue" a restore sends. `queuePrompt` waits for an idle
@@ -460,6 +461,12 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
 
 interface Live {
   meta: Session
+  /**
+   * When this pane's process died mid-turn on its own and the app reopened it
+   * (`shared/cliRevive.ts`), newest last. On the pane rather than the process: the crash
+   * loop it guards against is a SERIES of processes.
+   */
+  revives?: number[]
   /** When the newest prompt its transcript holds was written - see the handoff read in the sweep. */
   promptAt?: number
   /** The native conversation id the sweep last saw, and when it last changed (a `/clear`). */
@@ -867,6 +874,8 @@ export class SessionManager extends EventEmitter {
         backJob: m.backJob,
         serving: m.serving,
         backWaitOnly: backJobWaitOnly(m.id),
+        // ...unless the chat itself started that waiter and has not heard it end.
+        backgroundTasks: this.backgroundTasks(live),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
         // Only while a pane it opened is still WORKING or their summary is still on its way.
@@ -981,6 +990,30 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Whether this pane is in the middle of a turn: what the desk file records for a restart
+   * (`wasWorking`) and what `onExit` asks when a process dies on its own
+   * (`shared/cliRevive.ts`). A footer can report idle while Codex is still calling tools,
+   * so native turn evidence outranks it; every other agent falls back to the run clock or a
+   * background task still owed. Read it BEFORE the pane is marked `exited` or `endRun`
+   * clears the clock - `hasPendingBackground` is blind to an exited pane.
+   */
+  private midTurn(s: Live): boolean {
+    return (s.meta.agent === 'codex' && !s.meta.asleep
+      ? rolloutTurn(codexTranscriptPath(s.meta.cwd, resumeIdFor(s.meta.id) ?? '')).inProgress
+      : undefined) ?? (Boolean(s.meta.runSince) || this.hasPendingBackground(s))
+  }
+
+  /**
+   * How many background tasks this live Claude pane's conversation started and has not been
+   * told the end of (`backgroundTasksFor`): what the done-close sweep must not close it on.
+   * Same cached reading and guards as `hasPendingBackground`.
+   */
+  private backgroundTasks(s: Live): number {
+    if (s.meta.agent !== 'claude' || s.meta.asleep || s.meta.status === 'exited' || !s.proc) return 0
+    return backgroundTasksFor(s.meta.id, procBorn.get(s.proc))
+  }
+
+  /**
    * What it would take to open these panes again - used to carry the workspace
    * across an update restart. The original launch prompt is dropped on purpose:
    * replaying it would re-run work the agent already did before the restart.
@@ -1037,11 +1070,7 @@ export class SessionManager extends EventEmitter {
         openedAt: s.meta.openedAt ?? s.meta.createdAt,
         lastRunMs: s.meta.lastRunMs,
         engaged: s.meta.engaged,
-        // A footer can report idle while Codex is still calling tools. Use native
-        // turn evidence when available, retaining the clock for other agents.
-        wasWorking: (s.meta.agent === 'codex' && !s.meta.asleep
-          ? rolloutTurn(codexTranscriptPath(s.meta.cwd, resumeIdFor(s.meta.id) ?? '')).inProgress
-          : undefined) ?? (Boolean(s.meta.runSince) || this.hasPendingBackground(s)),
+        wasWorking: this.midTurn(s),
         // ...and whether this pane was picking its own reasoning effort. Only the choice
         // survives, never the level: the pane comes back as a new conversation's worth of
         // launch flag, and what it is really running is confirmed from the rollout again.
@@ -4216,6 +4245,9 @@ export class SessionManager extends EventEmitter {
         sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status,
         closedFirst: closedFirst || undefined })
       if (live.proc !== proc) return
+      // Read here, before the status flip below and `endRun` further down take the reading
+      // away: was this chat in the middle of a turn when its process died?
+      const midTurn = this.midTurn(live)
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
       // below. Writing the kill's exit code onto it would put `exited 143` on a card
@@ -4237,6 +4269,40 @@ export class SessionManager extends EventEmitter {
       // now: a row that never arrives because the pane closed first is the same as no
       // reading at all.
       endHookDeny(id)
+      // A chat whose process died UNDER it, mid-turn, with the app still running, is not a
+      // chat that ended: reopen it on its conversation and tell it to carry on, the way an
+      // app restart does (`shared/cliRevive.ts`). The card closing instead is what let a
+      // killed chat disappear with its work half done. `restart()` is the path for reviving
+      // an exited run. Refusals are the exit being someone's doing, and the crash-loop limit.
+      const revivedAt = Date.now()
+      const resumeId = resumeIdFor(id)
+      const verdict = reviveVerdict({
+        closedFirst,
+        quitting: this.down,
+        asleep: !!meta.asleep,
+        handingOff: !!meta.handingOff,
+        starting: wasStarting,
+        agent: meta.agent,
+        resumeId: resumeId && resumableTranscript(live.req.resumeCwd ?? meta.cwd, resumeId, meta.agent) ? resumeId : undefined,
+        midTurn,
+        lastRevives: live.revives ?? [],
+        now: revivedAt
+      })
+      const reviveSwitch = (getConfig().recover ?? DEFAULT_RECOVER).enabled
+      if (verdict.revive && reviveSwitch) {
+        live.revives = [...(live.revives ?? []).filter((t) => revivedAt - t < REVIVE_WINDOW_MS), revivedAt]
+        live.req = { ...live.req, resume: true, resumeId, prompt: undefined }
+        meta.resumeId = resumeId
+        logReclaim({ action: 'revive', pane: id, agent: meta.agent, resumeId, exitCode, why: verdict.why })
+        console.info(`exit: ${id} died mid-turn (exit ${exitCode}) - reopening it on its conversation`)
+        this.restart(id)
+        this.queuePrompt(id, REVIVE_PROMPT, RESTORE_CONTINUE_MS)
+        return
+      }
+      if (verdict.loop || (verdict.revive && !reviveSwitch)) {
+        logReclaim({ action: 'revive-refused', pane: id, agent: meta.agent, resumeId, exitCode,
+          why: verdict.revive ? 'the setting that continues a cut-off turn is off' : verdict.why })
+      }
       // ...AND THE CARD GOES. A pane whose program has ended is a card wearing `exited`
       // and a number nobody can explain; the History row for it is already written, with
       // the conversation id, so `Open again` brings the same chat back. `shared/exitClose`
