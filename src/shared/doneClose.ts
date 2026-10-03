@@ -130,21 +130,21 @@ export function closeHeldBy(m: CloseHolds, now = Date.now()): string[] {
 }
 
 /**
- * How long a finished reply must sit unread before its pane goes. One minute (Robert,
- * 2026-10-03: "should autoclose/clear quicker if possible"); the pane a person is IN
- * never counts, and a card in Review is one press from being a pane again.
+ * How long a finished reply must sit unread before its pane goes. Long enough to walk
+ * back from the kettle; the pane a person is IN never counts, and a card in Review is
+ * one press from being a pane again.
  */
-export const AUTO_CLOSE_QUIET_MS = 60_000
+export const AUTO_CLOSE_QUIET_MS = 3 * 60_000
 
 /**
- * The same wait on a machine MEASURED over memory (`sleepPressureOf` over the capacity
- * verdict): thirty seconds - the clock the pressure sleep used, which this close replaced
- * (Robert, 2026-09-28: "id rather they close than sleep"). 'tight' is the one-minute default
- * now. A finished pane's ~190 MB is exactly what a short machine lacks, and it is one press
- * from Review either way.
+ * The same wait on a machine MEASURED short of memory (`sleepPressureOf` over the capacity
+ * verdict): one minute when tight, thirty seconds when over - the clocks the pressure
+ * sleep used, which this close replaced (Robert, 2026-09-28: "id rather they close than
+ * sleep"). A finished pane's ~190 MB is exactly what a short machine lacks, and it is one
+ * press from Review either way.
  */
 export function doneQuietMs(pressure: 'ok' | 'tight' | 'over'): number {
-  return pressure === 'over' ? 30_000 : AUTO_CLOSE_QUIET_MS
+  return pressure === 'over' ? 30_000 : pressure === 'tight' ? 60_000 : AUTO_CLOSE_QUIET_MS
 }
 
 /**

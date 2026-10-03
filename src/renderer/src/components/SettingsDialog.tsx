@@ -793,7 +793,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.autoCloseDone !== false}
                   onChange={(v) => onChange({ autoCloseDone: v })}
                   label="Close a pane once its work is finished"
-                  hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after a minute of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
+                  hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after three minutes of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
                 />
                 <Switch
                   checked={config.modelAdvice !== false}

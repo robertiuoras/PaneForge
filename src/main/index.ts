@@ -1781,7 +1781,7 @@ function doneCloseDeps(): DoneCloseDeps {
     openerOf: (id) => manager.openerOf(id),
     finished: (opener, note) => finishedDigest.add(opener, note),
     enabled: () => getConfig().autoCloseDone !== false,
-    // Quicker on a machine measured short of memory: 1 min, 30 s over.
+    // Quicker on a machine measured short of memory: 3 min, 1 min tight, 30 s over.
     quietMs: () => {
       const v = capacityVerdict()
       return doneQuietMs(sleepPressureOf(v.level, v.why))
