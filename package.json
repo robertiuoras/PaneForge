@@ -313,6 +313,7 @@
     "test:qr": "node scripts/qr-test.mjs",
     "test:pairask": "node scripts/pair-ask-test.mjs",
     "test:tailnettrust": "node scripts/tailnet-trust-test.mjs",
+    "test:deskticket": "node scripts/desk-ticket-test.mjs",
     "test:phoneview": "node scripts/phone-view-test.mjs",
     "test:funnel": "node scripts/funnel-test.mjs",
     "test:gist": "node scripts/gist-test.mjs",

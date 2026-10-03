@@ -9,7 +9,7 @@
  */
 
 import { findTailscale, runTailscale } from './funnel'
-import { parseSelfUser, parseWhois, type TailnetNode } from '../shared/tailnetIdentity'
+import { parseSelfLogin, parseSelfUser, parseWhois, type TailnetNode } from '../shared/tailnetIdentity'
 
 /** A node's owner and OS do not change under a running request; a re-pair re-asks. */
 const NODE_MS = 3 * 60_000
@@ -33,7 +33,7 @@ interface Entry<T> {
 
 export class TailnetIdentity {
   private nodes = new Map<string, Entry<TailnetNode | null>>()
-  private self: Entry<string> | null = null
+  private self: Entry<{ id: string; login: string }> | null = null
   private inflight = new Map<string, Promise<unknown>>()
 
   constructor(private deps: TailnetIdentityDeps = {}) {}
@@ -77,12 +77,22 @@ export class TailnetIdentity {
 
   /** This desk's own Tailscale user id; '' when tailscale is absent, stopped or silent. */
   async selfUser(): Promise<string> {
+    return (await this.status()).id
+  }
+
+  /** This desk's own Tailscale login (email); '' when tailscale is absent, stopped or silent. */
+  async selfLogin(): Promise<string> {
+    return (await this.status()).login
+  }
+
+  /** One `status --json` answers both, cached together. */
+  private async status(): Promise<{ id: string; login: string }> {
     if (this.self && this.self.until > this.now()) return this.self.value
     return this.once('self', async () => {
       const { out, code } = await this.call(['status', '--json'])
-      const id = code === 0 ? parseSelfUser(out) : ''
-      this.self = { value: id, until: this.now() + (id ? SELF_MS : MISS_MS) }
-      return id
+      const value = code === 0 ? { id: parseSelfUser(out), login: parseSelfLogin(out) } : { id: '', login: '' }
+      this.self = { value, until: this.now() + (value.id ? SELF_MS : MISS_MS) }
+      return value
     })
   }
 }

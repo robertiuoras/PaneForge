@@ -103,6 +103,12 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   `X-Forwarded-For` + `tailscale whois`, same Tailscale user as the desk, iOS/android, never Funnel or
   cloudflared, never with phone access off), `POST /pf/native/v1/auth/tailnet`, trusted `/pf/ask` and
   control unlock; grants slide 30 days while in use; `phone-trust.log`; `test:tailnettrust`.
+- Robert's iPhone WITHOUT Tailscale signs in with no code by a Taskdriver desk ticket:
+  taskdriver.ai signs `v1.<payload>.<sig>` (HMAC keyed from the ingest token, `limitWaves.ts`
+  `ingestToken()`) for its owner only; `POST /pf/native/v1/auth/taskdriver` (`shared/deskTicket.ts`)
+  checks sig, exp, life <=300 s, aud = Host, deviceId, jti once, email = the desk's own Tailscale
+  login (`selfLogin()`); never with phone access off. Row `td-<sha256(deviceId)>`, same read+control
+  grant as tailnet; a lapsed control window is 423 and the app signs in again; `test:deskticket`.
 - The phone server never starts on a port something already answers on at 127.0.0.1
   (`answersOnLoopback` in `PhoneServer.start`, `test:pfaccess`): a copy would otherwise shadow
   the installed app's loopback for `pf`, the tunnel and `tailscale serve`.

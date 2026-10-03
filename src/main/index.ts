@@ -59,7 +59,7 @@ import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
 import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
-import { postPush, startLimitWaves } from './limitWaves'
+import { ingestToken, postPush, startLimitWaves } from './limitWaves'
 import { cardNumber } from '../../scripts/pf-ctl-lib.mjs'
 import { cardLabel, othersOnDesk, parseLabel } from '../shared/paneLabel'
 import { paneNumbers } from './paneNumbers'
@@ -829,6 +829,7 @@ const phone = new PhoneServer({
   wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   tailnet: new TailnetIdentity(),
+  ingestToken: () => ingestToken(),
   trustLog: (line) => appendLog(join(app.getPath('userData'), 'phone-trust.log'), `${line}\n`, { rotateAt: 200_000 }),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())

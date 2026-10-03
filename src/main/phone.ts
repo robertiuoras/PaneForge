@@ -48,6 +48,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { markFor } from '../shared/deviceWatch'
 import { NativeAuth, nativeDeviceValid, type NativeGrant, type NativePromptReceipt } from './nativeAuth'
 import { judgeTailnet, tailnetSource, trustLine, type TailnetNode, type TailnetVerdict } from '../shared/tailnetIdentity'
+import { deskHost, verifyDeskTicket } from '../shared/deskTicket'
 import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState, Session } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
@@ -408,7 +409,12 @@ export interface PhoneDeps {
    * "Is this Robert's phone on Tailscale": who owns a tailnet address and which user this
    * desk is (`main/tailnetIdentity.ts`). Absent = no request is ever trusted that way.
    */
-  tailnet?: { whois(ip: string): Promise<TailnetNode | null>; selfUser(): Promise<string> }
+  tailnet?: { whois(ip: string): Promise<TailnetNode | null>; selfUser(): Promise<string>; selfLogin(): Promise<string> }
+  /**
+   * The TaskDriver ingest token this desk holds (`main/limitWaves.ts` `ingestToken()`): the
+   * root of the key a Taskdriver desk ticket is signed with. Absent/null = no ticket is trusted.
+   */
+  ingestToken?(): string | null
   /** one line per trust decision (`phone-trust.log`); names and addresses, never a token */
   trustLog?(line: string): void
   /** the last watching browser has gone: give back anything a phone was holding */
@@ -469,6 +475,9 @@ export class PhoneServer {
   private nativeStarts = new Map<string, { since: number; n: number }>()
   private nativeTokens = new Map<string, { since: number; n: number }>()
   private nativeTailnets = new Map<string, { since: number; n: number }>()
+  private nativeTickets = new Map<string, { since: number; n: number }>()
+  /** Taskdriver desk tickets already used: jti -> exp (ms), pruned and capped by `verifyDeskTicket` */
+  private ticketsSeen = new Map<string, number>()
   /** `/pf/ask` requests a trusted phone made: already answered, waiting for their poll */
   private trustedAsks = new Map<string, { token: string; at: number }>()
   /** last time each (address, verdict) was written to the trust log by a per-request check */
@@ -866,6 +875,7 @@ export class PhoneServer {
     if (path === '/pf/native/v1/auth/start' && req.method === 'POST') return await this.nativeStart(req, res)
     if (path === '/pf/native/v1/auth/token' && req.method === 'POST') return await this.nativeToken(req, res)
     if (path === '/pf/native/v1/auth/tailnet' && req.method === 'POST') return await this.nativeTailnet(req, res)
+    if (path === '/pf/native/v1/auth/taskdriver' && req.method === 'POST') return await this.nativeTaskdriver(req, res)
     if (path === '/pf/native/v1/auth/revoke' && req.method === 'POST') return this.nativeRevoke(req, res)
     if (path === '/pf/native/v1/sessions' && req.method === 'GET') return this.nativeSessions(req, res)
     if (path.startsWith('/pf/native/v1/prompts/') && req.method === 'GET') return this.nativePromptStatus(req, res, path)
@@ -1040,6 +1050,55 @@ b.onclick=async()=>{
   }
 
   /**
+   * Sign-in for Robert's phone with no Tailscale on it and no code: taskdriver.ai, where the
+   * app is signed in with Google, signs a two-minute ticket naming this desk, the app's device
+   * id and the owner's email, keyed from the ingest token this desk already holds. Trusted only
+   * when `shared/deskTicket.ts` says so and the email is this desk's own Tailscale login (the
+   * person `shared/tailnetIdentity.ts` trusts); anything else is 403 and writes nothing. The
+   * answer is the same shape `/auth/token` and `/auth/tailnet` return.
+   */
+  private async nativeTaskdriver(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isTls(req)) return this.plain(res, 400, 'https required')
+    if (!this.nativeRate(req, this.nativeTickets, 10)) return this.plain(res, 429, 'try later')
+    const body = await this.readNativeWire<Record<string, unknown>>(req, res)
+    if (!body) return
+    const ticket = typeof body.ticket === 'string' ? body.ticket : ''
+    const deviceId = String(body.deviceId ?? '')
+    const deviceName = String(body.deviceName ?? '')
+    if (!ticket || !nativeDeviceValid(deviceId, deviceName)) return this.plain(res, 400, 'native authorization refused')
+    const ip = addressOf(req)
+    // deviceName passed nativeDeviceValid: letters, digits and a few marks, never a newline.
+    const log = (allowed: boolean, reason: string): void => {
+      try {
+        this.deps.trustLog?.(`${new Date().toISOString()} ${allowed ? 'ALLOWED' : 'REFUSED'} taskdriver sign-in ip=${ip} device=${deviceName.trim()} - ${reason}`)
+      } catch {
+        /* a log line never refuses a request */
+      }
+    }
+    const refuse = (reason: string): void => {
+      log(false, reason)
+      this.plain(res, 403, 'not the desk owner\'s Taskdriver ticket')
+    }
+    if (this.localOnly) return refuse('phone access is switched off')
+    const token = this.deps.ingestToken?.() ?? ''
+    if (!token) return refuse('this desk holds no Taskdriver token')
+    const owner = this.deps.tailnet ? await this.deps.tailnet.selfLogin().catch(() => '') : ''
+    if (!owner) return refuse('this desk\'s owner is unknown (no Tailscale login)')
+    const host = deskHost(req.headers.host)
+    const verdict = verifyDeskTicket({ ticket, deviceId, host, now: Date.now(), ingestToken: token, owner, seen: this.ticketsSeen })
+    if (!verdict.ok) return refuse(verdict.reason)
+    try {
+      const row = this.saveDevice(`td-${createHash('sha256').update(deviceId).digest('hex').slice(0, 24)}`, ip, () => ({ kind: 'iPhone', ua: `Taskdriver app (${deviceName.trim()})` }))
+      const grant = this.native.grantDirect({ deviceId, deviceName }, row.id, /^[a-z0-9.-]{1,253}$/.test(host) ? host : 'localhost')
+      log(true, 'a Taskdriver ticket for this desk\'s owner')
+      this.json(res, 200, grant)
+    } catch {
+      log(false, 'the grant could not be written')
+      this.plain(res, 400, 'native authorization refused')
+    }
+  }
+
+  /**
    * The rule in `shared/tailnetIdentity.ts`, asked about this request. `always` logs the
    * decision; a per-request check (unlocking a control) logs each address and outcome at
    * most once every ten minutes, so a phone typing does not write a line per keystroke.
@@ -1077,21 +1136,31 @@ b.onclick=async()=>{
    * browser's cookie. A browser arriving refreshes the user-agent the row is judged by.
    */
   private tailnetDevice(node: TailnetNode, ip: string, browserUa: string): PhoneDevice {
-    const list = this.deps.devices?.() ?? []
     const id = `ts-${node.stableId.replace(/[^A-Za-z0-9]/g, '').slice(0, 40)}`
-    const prior = list.find((d) => d.id === id)
-    const now = Date.now()
     const fromUa = browserUa ? deviceKind(browserUa) : 'Browser'
     const kind = fromUa !== 'Browser' ? fromUa : node.os.toLowerCase() === 'android' ? 'Android phone' : 'iPhone'
+    return this.saveDevice(id, ip, (prior) => ({
+      kind: prior && !browserUa ? prior.kind : kind,
+      // Never empty: `tidyDevices` folds a row with no user-agent into its neighbours.
+      ua: browserUa || prior?.ua || `Tailscale ${node.os} (${node.name})`
+    }))
+  }
+
+  /**
+   * Write (or refresh) the Devices row `id` for a phone trusted without a code. Reused, never
+   * re-minted: first-seen time, mark and token survive; `look` picks its kind and user-agent.
+   */
+  private saveDevice(id: string, ip: string, look: (prior: PhoneDevice | undefined) => { kind: string; ua: string }): PhoneDevice {
+    const list = this.deps.devices?.() ?? []
+    const prior = list.find((d) => d.id === id)
+    const now = Date.now()
     const row: PhoneDevice = {
       id,
-      kind: prior && !browserUa ? prior.kind : kind,
+      ...look(prior),
       address: ip,
       origin: originOf(ip),
       at: prior?.at ?? now,
       seen: now,
-      // Never empty: `tidyDevices` folds a row with no user-agent into its neighbours.
-      ua: browserUa || prior?.ua || `Tailscale ${node.os} (${node.name})`,
       mark: prior?.mark ?? null,
       token: prior?.token ?? randomBytes(32).toString('hex')
     }

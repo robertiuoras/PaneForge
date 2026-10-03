@@ -128,6 +128,22 @@ export function parseSelfUser(text: string): string {
   }
 }
 
+/**
+ * This desk's own Tailscale login (an email) out of `tailscale status --json`: the profile
+ * `User[Self.UserID].LoginName`; '' when unreadable or not running. The account a Taskdriver
+ * desk ticket must name (`shared/deskTicket.ts`) - the same person `judgeTailnet` trusts.
+ */
+export function parseSelfLogin(text: string): string {
+  try {
+    const j = parseIds(text) as { BackendState?: string; Self?: { UserID?: string }; User?: Record<string, { LoginName?: string }> }
+    if (j?.BackendState && j.BackendState !== 'Running') return ''
+    const id = String(j?.Self?.UserID ?? '')
+    return id ? String(j?.User?.[id]?.LoginName ?? '').trim() : ''
+  } catch {
+    return ''
+  }
+}
+
 /** The whole rule: serve's address, a node tailscale knows, the desk's own user, a phone. */
 export function judgeTailnet(source: TailnetSource, node: TailnetNode | null, selfUser: string): TailnetVerdict {
   if ('refused' in source) return { trusted: false, reason: source.refused, ip: '' }
