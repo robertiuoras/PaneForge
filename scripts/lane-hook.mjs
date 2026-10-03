@@ -95,6 +95,25 @@ const ENGINE = existsSync(SIBLING) ? SIBLING : join(ENGINE_REPO, 'scripts', 'lan
  */
 const NEVER = ['claude-memory']
 
+/**
+ * One spelling per folder where the file system ignores case (macOS, Windows). git names the
+ * repository as it is on disk (`PaneForge`) while a chat's cwd keeps whatever case it was
+ * typed in (`paneforge-a`, 2026-10-04): compared as raw strings, that chat was told it was
+ * in no lane folder and called a visitor, and its writes through that spelling skipped the
+ * guard. Compare folded; keep the original for anything shown or passed on.
+ */
+/**
+ * What follows `root` at the start of `orig`, or null when `orig` does not start with it.
+ * Compares a case-folded prefix of the SAME original length: lowercasing can change a
+ * string's length for some letters, so a folded copy must never be sliced by an offset.
+ */
+const restUnder = (orig, root) => {
+  const o = String(orig)
+  const r = String(root)
+  return o.length >= r.length && fold(o.slice(0, r.length)) === fold(r) ? o.slice(r.length) : null
+}
+const fold = (p) => (process.platform === 'darwin' || process.platform === 'win32' ? String(p).toLowerCase() : String(p))
+
 // ------------------------------------------------------------------ registry
 //
 // PreToolUse fires on every single edit, and it has to answer "is this path inside some
@@ -249,9 +268,9 @@ if (!session) process.exit(0)
  */
 function copyLetterOf(repo, dir) {
   if (!repo || !NEVER.includes(basename(repo))) return null
-  const t = resolve(dir)
-  if (t === repo || t.startsWith(repo + sep) || !t.startsWith(repo + '-')) return null
-  const letter = t.slice(repo.length + 1).split(sep)[0]
+  const rest = restUnder(resolve(dir), repo)
+  if (rest === null || rest === '' || rest.startsWith(sep) || !rest.startsWith('-')) return null
+  const letter = fold(rest.slice(1).split(sep)[0])
   return letter && existsSync(`${repo}-${letter}`) ? letter : null
 }
 
@@ -276,7 +295,9 @@ function giveBack(repo) {
     // of CREATE_NO_WINDOW (measured 2026-08-01 - every /clear popped one per repo,
     // stealing focus from a fullscreen game). wscript run-hidden.vbs runs it truly
     // windowless; conhost --headless was tried first and silently never ran the child.
-    const args = [ENGINE, 'release', '--session', session, '--repo', repo]
+    // `/clear` (Claude Code's SessionEnd reason "clear") is the same pane carrying on, so
+    // the engine keeps an unfinished lane's hold for the pane's next chat (releaseClaim).
+    const args = [ENGINE, 'release', '--session', session, '--repo', repo, ...(input.reason === 'clear' ? ['--cleared'] : [])]
     const win = process.platform === 'win32'
     const vbs = fileURLToPath(new URL('run-hidden.vbs', import.meta.url))
     spawn(
@@ -362,12 +383,12 @@ if (event === 'prompt') {
 
   // A chat started inside a checkout keeps that one: it may already have uncommitted work
   // there, and sending it to an empty lane would hide that work from it.
-  const t = resolve(cwd)
+  const rest0 = restUnder(resolve(cwd), repo)
   const prefer =
-    t === repo || t.startsWith(repo + sep)
+    rest0 === '' || rest0?.startsWith(sep)
       ? 'main'
-      : t.startsWith(repo + '-')
-        ? t.slice(repo.length + 1).split(sep)[0]
+      : rest0?.startsWith('-')
+        ? fold(rest0.slice(1).split(sep)[0])
         : null
 
   // A VISITOR is a chat whose own project is a different repository - it is only here
@@ -379,13 +400,14 @@ if (event === 'prompt') {
   const slugOf = (p) => String(p).replace(/[^A-Za-z0-9-]/g, '-')
   const tp = input.transcript_path ?? input.transcriptPath ?? ''
   const codexHome = codexHomeOf(tp)
-  const home = tp ? basename(dirname(tp)) : ''
+  const home = tp ? fold(basename(dirname(tp))) : ''
+  const slug = fold(slugOf(repo))
   const visitor =
     codexHome !== null
-      ? repoOf(codexHome) !== repo
+      ? fold(repoOf(codexHome) ?? '') !== fold(repo)
       : isCodexSessionPath(tp)
         ? false
-        : Boolean(home) && home !== slugOf(repo) && !home.startsWith(slugOf(repo) + '-')
+        : Boolean(home) && home !== slug && !home.startsWith(slug + '-')
 
   if (copy) {
     holdCopy(repo, copy, visitor)
@@ -579,11 +601,14 @@ if (event === 'pretool') {
   /** The registered repo a path belongs to - its own folder, or one of its lanes. */
   const ownerOf = (p) => {
     if (!p) return null
-    const t = resolve(p)
+    const t = fold(resolve(p))
     // Longest first: `<repo>-a` and `<repo>` both prefix-match a lane path as strings.
     return (
       roots
-        .filter((root) => t === root || t.startsWith(root + sep) || t.startsWith(root + '-'))
+        .filter((root) => {
+          const r = fold(root)
+          return t === r || t.startsWith(r + sep) || t.startsWith(r + '-')
+        })
         .sort((a, b) => b.length - a.length)[0] ?? null
     )
   }

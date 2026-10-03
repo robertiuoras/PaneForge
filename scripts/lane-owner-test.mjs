@@ -206,6 +206,25 @@ const twoDead = {
 }
 
 {
+  // After /clear the lane keeps the hold, stamped `ended` with the pane's id, and the app
+  // moves the pane onto the NEW chat, so the old chat id matches no pane and is in no
+  // `living` set. The sweep must still see the open pane as the owner; a closed pane's
+  // kept hold is still swept.
+  state({ a: { session: CHAT_A, pane: 'paneP', ended: now - 3600_000, cwd: repo, claimed: now - 4 * 3600_000, seen: now - 3600_000 } })
+  const { attachLaneOwners, goneLanes, laneBoard } = await load()
+  const open = attachLaneOwners(laneBoard(), [{ id: 'paneP', cwd: repo, resumeId: CHAT_B }])
+  check('a kept hold whose pane is still open is owned by that pane',
+    open.lanes.find((l) => l.lane === 'a')?.ownerPane === 'paneP')
+  check('the sweep leaves a kept hold whose pane is open', goneLanes(open, new Set([CHAT_B]), now).length === 0,
+    JSON.stringify(goneLanes(open, new Set([CHAT_B]), now)))
+  const closed = attachLaneOwners(laneBoard(), [{ id: 'other', cwd: repo, resumeId: CHAT_B }])
+  check('a kept hold whose pane is closed is still swept', goneLanes(closed, new Set([CHAT_B]), now).includes(CHAT_A))
+  state({ a: { session: CHAT_A, pane: 'paneP', cwd: repo, claimed: now - 4 * 3600_000, seen: now - 3600_000 } })
+  const live = attachLaneOwners((await load()).laneBoard(), [{ id: 'paneP', cwd: repo, resumeId: CHAT_B }])
+  check('a live (not ended) hold is not matched by pane id alone', live.lanes.find((l) => l.lane === 'a')?.ownerPane === null)
+}
+
+{
   // Two projects open on one desk, which is the normal case now that lanes are not this
   // repo's alone. `findRepo` votes and one project wins, and the winner used to be the
   // only one that got a heartbeat or a hand-back: every other repo's panes file went
