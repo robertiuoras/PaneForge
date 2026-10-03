@@ -1086,6 +1086,8 @@ button.row-lane:hover { color: var(--text); }
 .worker-meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .worker-meta > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .worker-time { margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.worker-step { margin-top: 3px; color: var(--muted); font-size: 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worker-step-ago, .workers-tokens { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .workers-note { font-size: 10px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; }
 .pane > .workers { flex-shrink: 0; margin: 0 8px 5px; }
 @keyframes worker-breathe { 50% { opacity: .45; } }
