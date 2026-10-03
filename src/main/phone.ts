@@ -483,6 +483,9 @@ export class PhoneServer {
   private nativeTokens = new Map<string, { since: number; n: number }>()
   private nativeTailnets = new Map<string, { since: number; n: number }>()
   private nativeTickets = new Map<string, { since: number; n: number }>()
+  /** Redeems waiting on taskdriver.ai, and how many this minute from every address together. */
+  private redeemsInFlight = 0
+  private redeemMinute = { since: 0, n: 0 }
   /** `/pf/ask` requests a trusted phone made: already answered, waiting for their poll */
   private trustedAsks = new Map<string, { token: string; at: number }>()
   /** last time each (address, verdict) was written to the trust log by a per-request check */
@@ -1093,7 +1096,23 @@ b.onclick=async()=>{
       : ['', '']
     if (!owner) return refuse('this desk\'s owner is unknown (no Tailscale login)')
     if (!aud) return refuse('this desk\'s own Tailscale name is unknown')
-    const redeemed = await redeemDeskTicket({ ticket, deviceId, aud, token })
+    // Each redeem holds a call carrying the ingest token for up to 8 s. Many addresses at once
+    // must not pile those up or spend taskdriver.ai's limit for that token, which would lock
+    // the owner's own phone out: at most 4 waiting and 30 a minute in all (Opus review of v2).
+    const now = Date.now()
+    if (now - this.redeemMinute.since >= 60_000) this.redeemMinute = { since: now, n: 0 }
+    if (this.redeemsInFlight >= 4 || this.redeemMinute.n >= 30) {
+      log(false, 'too many sign-ins at once')
+      return this.plain(res, 429, 'try later')
+    }
+    this.redeemMinute.n++
+    this.redeemsInFlight++
+    let redeemed: Awaited<ReturnType<typeof redeemDeskTicket>>
+    try {
+      redeemed = await redeemDeskTicket({ ticket, deviceId, aud, token })
+    } finally {
+      this.redeemsInFlight--
+    }
     if ('refused' in redeemed) return refuse(redeemed.refused)
     if (!sameOwner(redeemed.email, owner)) return refuse('Taskdriver vouched for another account, not this desk\'s owner')
     try {

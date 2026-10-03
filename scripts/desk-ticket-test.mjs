@@ -50,7 +50,7 @@ const MAC = 'roberts-macbook-pro.tail6c8b58.ts.net'
 
 const issued = new Map() // sha256(ticket) -> { deviceId, aud, email, exp, used }
 const redeems = [] // every request the desk made: headers + body
-let mode = 'real' // 'real' | 'hang' | 'garbage' | 'other-email'
+let mode = 'real' // 'real' | 'hang' | 'slow' | 'garbage' | 'big' | 'big-chunked' | 'other-email'
 const fake = createServer((req, res) => {
   let text = ''
   req.setEncoding('utf8')
@@ -62,6 +62,14 @@ const fake = createServer((req, res) => {
     if (mode === 'hang') return // never answers; the desk's timeout must end it
     const send = (code, value) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof value === 'string' ? value : JSON.stringify(value)) }
     if (mode === 'garbage') return send(200, '<html>not json</html>')
+    if (mode === 'big') return send(200, { email: OWNER, pad: 'x'.repeat(10_000) })
+    if (mode === 'big-chunked') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.write(`{"email":"${OWNER}","pad":"`)
+      for (let i = 0; i < 10; i++) res.write('x'.repeat(1000))
+      return res.end('"}')
+    }
+    if (mode === 'slow') return setTimeout(() => send(403, { error: 'ticket refused' }), 1500)
     if (req.url !== '/api/app/desk-ticket/redeem' || req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: 'unauthorized' })
     const row = body && typeof body.ticket === 'string' ? issued.get(createHash('sha256').update(body.ticket).digest('hex')) : null
     if (!row || row.used || row.exp <= Date.now() || row.deviceId !== body.deviceId || row.aud !== body.aud) return send(403, { error: 'ticket refused' })
@@ -123,8 +131,26 @@ const statusJson = (dns = `${PC}.`, state = 'Running') => `{"BackendState":"${st
   const started = Date.now()
   const late = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN }, 300)
   ok('refused' in late && /did not answer/.test(late.refused) && Date.now() - started < 3000, 'a server that never answers is refused at the timeout', `${JSON.stringify(late)} ${Date.now() - started} ms`)
+  mode = 'big'
+  const big = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN })
+  ok('refused' in big && /far more/.test(big.refused), 'a 200 far bigger than an email is refused unread', JSON.stringify(big))
+  mode = 'big-chunked'
+  const chunked = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN })
+  ok('refused' in chunked && /far more/.test(chunked.refused), 'so is one sent in chunks with no length', JSON.stringify(chunked))
   mode = 'real'
   const url = process.env.PF_TASKDRIVER_REDEEM_URL
+  for (const [value, kept] of [
+    ['https://evil.example/api/app/desk-ticket/redeem', false],
+    ['http://10.0.0.5/api/app/desk-ticket/redeem', false],
+    ['http://127.0.0.1.evil.example/x', false],
+    ['http://127.0.0.1@evil.example/x', false],
+    ['', false],
+    ['http://localhost:4000/api/app/desk-ticket/redeem', true],
+    [url, true]
+  ]) {
+    process.env.PF_TASKDRIVER_REDEEM_URL = value
+    ok(T.redeemUrl() === (kept ? value : T.REDEEM_URL), `override ${value || '(empty)'} is ${kept ? 'used (loopback test server)' : 'ignored'}`, T.redeemUrl())
+  }
   process.env.PF_TASKDRIVER_REDEEM_URL = 'http://127.0.0.1:9/api/app/desk-ticket/redeem'
   const down = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN })
   ok('refused' in down && /could not be reached/.test(down.refused), 'a server that is down is refused', JSON.stringify(down))
@@ -305,6 +331,29 @@ try {
   let last = 0
   for (let i = 0; i < 11; i++) last = (await signIn(randomBytes(32).toString('base64url'), { headers: funnel('198.51.100.7') })).status
   ok(last === 429, 'the eleventh try in a minute is 429', String(last))
+
+  // Many addresses at once: at most 4 redeems wait on taskdriver.ai and 30 go out a minute in
+  // all, so a crowd cannot pile up token-carrying calls or spend the token's limit at Taskdriver.
+  const capped = new T.PhoneServer(phoneDeps)
+  await capped.start(0, '127.0.0.1')
+  try {
+    const cport = capped.server.address().port
+    const capIn = (i, t = randomBytes(32).toString('base64url')) => callOn(cport, 'POST', '/pf/native/v1/auth/taskdriver', { headers: funnel(`192.0.2.${i}`), body: { ticket: t, ...app } })
+    mode = 'slow'
+    redeems.length = 0
+    const n = logs.length
+    const crowd = await Promise.all([1, 2, 3, 4, 5].map((i) => capIn(i)))
+    const codes = crowd.map((x) => x.status).sort().join()
+    ok(codes === '403,403,403,403,429' && redeems.length === 4, 'five at once: four redeemed, the fifth 429', `${codes} redeems=${redeems.length}`)
+    ok(logs.slice(n).some((l) => /REFUSED .* too many sign-ins at once/.test(l)), 'the crowd refusal is logged', logs.slice(n).join(' | '))
+    mode = 'real'
+    let sent = 4, code = 0
+    for (let i = 6; i < 60 && code !== 429; i++) { code = (await capIn(i)).status; if (code !== 429) sent++ }
+    ok(code === 429 && sent === 30 && redeems.length === 30, 'the 31st redeem in a minute from fresh addresses is 429', `code=${code} sent=${sent} redeems=${redeems.length}`)
+  } finally {
+    mode = 'real'
+    await capped.stop()
+  }
 
   // Phone access switched off: the loopback-only listener refuses before anyone is asked.
   const locked = new T.PhoneServer(phoneDeps)
