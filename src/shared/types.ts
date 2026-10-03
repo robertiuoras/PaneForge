@@ -1318,6 +1318,14 @@ export interface HistoryEntry {
    * `shared/closeWhenDone.ts`), so a later chat can read why a pane stopped.
    */
   closedBecause?: string
+  /**
+   * The pane was sent to another computer and its copy here closed - the one close that is
+   * not an ending, because the chat carries on over there. Written by `main/history.ts`
+   * `recordMoved` after the far end proved it is running; `shared/historyMoved.ts` reads it
+   * to say `open on <computer>` instead of `closed`. `pane` is the chat's id ON that
+   * computer, so it can be looked up in that computer's pane list.
+   */
+  movedTo?: { device: string; name: string; pane: string }
   bytes: number
   /**
    * What this session was asked to do, in one line - the first thing typed at the agent.

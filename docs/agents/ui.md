@@ -129,6 +129,9 @@ stable; people use Review and Open report, not the storage folder.
 
 Row = FIRST ask + count (`shared/gist.ts`, `test:gist`) from relayed keystrokes. Newest closed
 top (`endedAt ?? startedAt`); `closed 5 min ago`/date; green `open since`, red `closed …`.
+A chat sent to another computer keeps its row green: `movedTo` (`recordMoved`, after the proven move) +
+`movedView` (`shared/historyMoved.ts`, `test:historymoved`) = `open on <PC>` while that computer's pane list has it,
+`moved to <PC>` when it is not connected, plain `closed` once its list no longer has it.
 `View all` = `summaryFull`. Closed before recording = archive line or none. `/clear` ends a
 job (`noteAskInto`); three shown, WORK asks counted, twelve chapters; `recordStart` reruns.
 Transcript RENDERED (`renderer/src/termRender.ts`). `Open again` is never refused by the closed

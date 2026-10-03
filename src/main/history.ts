@@ -334,6 +334,29 @@ export function recordEnd(id: string, resumeId?: string, closedBecause?: string)
 }
 
 /**
+ * Say, on the row of a pane that was just sent to another computer, where it went.
+ *
+ * A move closes the copy here, and History then read exactly like a chat that was finished:
+ * red `closed`, while the same conversation sat open on the other computer (2026-10-03, s37
+ * to the PC: "i thought it was closed"). Asynchronous because a move is not the quit path;
+ * and only on a row that has ended, so a close that was refused cannot leave the mark on a
+ * pane that carries on here. A later end stamp keeps it: the moved pane's own process exit
+ * writes one more, often after this. `recordStart` drops it if the id ever opens here again.
+ */
+export async function recordMoved(id: string, to: NonNullable<HistoryEntry['movedTo']>): Promise<void> {
+  try {
+    const entry = JSON.parse(await readFile(metaFile(id), 'utf8')) as HistoryEntry
+    if (typeof entry.endedAt !== 'number') return
+    entry.movedTo = to
+    await writeFile(metaFile(id), JSON.stringify(entry), 'utf8')
+  } catch (err) {
+    // No row (History was off when it started) is nothing to say; anything else is.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT')
+      logProblem('history', `could not record that ${id} moved to ${to.name}: ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/**
  * Whether this pane's History row says it ended. Only half a proof on its own - quitting
  * stamps every open pane, and restore brings them back under the same id - so it is read
  * only for a pane that is no longer on the desk (`holdIsOver`, `shared/laneTaken.ts`).

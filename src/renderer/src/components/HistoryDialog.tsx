@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
 import { placeOf } from '@shared/place'
-import type { HistoryEntry, HistoryHit } from '@shared/types'
+import type { HistoryEntry, HistoryHit, RemotePeerState } from '@shared/types'
 import { whenWords } from '@shared/elapsed'
 import { rankBy } from '@shared/historySearch'
+import { movedView } from '@shared/historyMoved'
 import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
@@ -21,6 +22,8 @@ const LOG_BYTES = 8 * 1024 * 1024
 
 interface Props {
   agents: AgentInfo[]
+  /** the other computers and the chats each one has - a chat sent to one is open THERE */
+  peers?: RemotePeerState[]
   /** relaunch a past session in its old folder with its old agent */
   onResume: (e: HistoryEntry) => void
   /** words already typed into Ctrl K, carried over so the search starts where it was */
@@ -33,7 +36,7 @@ interface Props {
  * that the useful part of an agent session is usually a sentence it printed an
  * hour ago, and closing the pane used to destroy it.
  */
-export default function HistoryDialog({ agents, onResume, initialQuery, onClose }: Props): JSX.Element {
+export default function HistoryDialog({ agents, peers, onResume, initialQuery, onClose }: Props): JSX.Element {
   const dialog = useDialogFocus()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [query, setQuery] = useState(initialQuery)
@@ -185,13 +188,19 @@ export default function HistoryDialog({ agents, onResume, initialQuery, onClose 
           </>
         ) : (
           <div className="hist-list">
-            {shown.map((e) => (
+            {shown.map((e) => {
+              /* A chat sent to another computer closed its copy HERE and is still open
+                 there: green, with the computer's name, not the red `closed` that says it
+                 is finished (`movedView`). */
+              const there = movedView(e, peers)
+              const closed = Boolean(e.endedAt) && !there
+              return (
               /* Still open or closed is the first thing the eye needs off this list - a
                  row for the pane that is on screen right now reads exactly like a row
                  for one closed a week ago. Green edge for live, red for closed, and the
                  chip below carries the same two colours so the answer is not carried by
                  hue alone. */
-              <div key={e.id} className={`hist-item ${e.endedAt ? 'closed' : 'live'}`}>
+              <div key={e.id} className={`hist-item ${closed ? 'closed' : 'live'}`}>
                 <div className="hist-head" onClick={() => setOpen(e)}>
                   <AgentLogo id={e.agent} spec={agents.find((a) => a.id === e.agent)} size={13} />
                   <strong>{e.title}</strong>
@@ -208,16 +217,20 @@ export default function HistoryDialog({ agents, onResume, initialQuery, onClose 
                       the clock in their own status bar first. The exact moment is still
                       there, on the hover. */}
                   <span
-                    className={`chip ${e.endedAt ? 'dead' : 'kept'}`}
+                    className={`chip ${closed ? 'dead' : 'kept'}`}
                     title={
-                      e.endedAt
-                        ? `Closed ${new Date(e.endedAt).toLocaleString()}, opened ${new Date(e.startedAt).toLocaleString()}`
-                        : `Still open, since ${new Date(e.startedAt).toLocaleString()}`
+                      there
+                        ? `Sent to ${there.name} on ${new Date(e.endedAt!).toLocaleString()}. ${there.open ? 'Still open there.' : 'That computer is not connected right now, so this cannot say whether it is still open there.'}`
+                        : e.endedAt
+                          ? `Closed ${new Date(e.endedAt).toLocaleString()}, opened ${new Date(e.startedAt).toLocaleString()}`
+                          : `Still open, since ${new Date(e.startedAt).toLocaleString()}`
                     }
                   >
-                    {e.endedAt
-                      ? `closed ${whenWords(e.endedAt, now)}`
-                      : `open since ${whenWords(e.startedAt, now)}`}
+                    {there
+                      ? `${there.open ? 'open on' : 'moved to'} ${there.name}`
+                      : e.endedAt
+                        ? `closed ${whenWords(e.endedAt, now)}`
+                        : `open since ${whenWords(e.startedAt, now)}`}
                   </span>
                   {/* How long the window was actually open, which is the question the
                       two timestamps make somebody do arithmetic on. Frozen for a closed
@@ -328,7 +341,8 @@ export default function HistoryDialog({ agents, onResume, initialQuery, onClose 
                   </button>
                 </div>
               </div>
-            ))}
+              )
+            })}
             {!shown.length && (
               <div className="empty">
                 {!entries.length

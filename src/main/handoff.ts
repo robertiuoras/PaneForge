@@ -230,6 +230,12 @@ export interface SendDeps {
   snapshot(): StartSessionRequest[]
   kill(id: string): void
   /**
+   * Tell History where a pane went, once its copy here is closed: `pane` is the chat's id
+   * over there. Without it the closed row reads as a chat that finished, while it is still
+   * open on the other computer.
+   */
+  rememberMove?(id: string, to: { device: string; name: string; pane: string }): Promise<void>
+  /**
    * Stop the agent in this pane and keep everything else - card, screen, conversation -
    * so a press wakes it here in the same conversation. What an AGENT handoff does to its
    * source once the far end is running: the pane is not killed (the remote resume is
@@ -517,6 +523,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // this one is now a second window onto old state. Closed, not slept: an asleep copy of a
   // conversation that lives elsewhere is the duplicate row this used to leave behind.
   deps.kill(pane.id)
+  if (result.session?.id) await deps.rememberMove?.(pane.id, { device, name: where, pane: result.session.id })
   // ...and the dev server it left on ppid 1, which the far end has just started its own
   // copy of (`payload.dev`). Only after the move is proven: a refused move keeps its server.
   if (dev.length && strays.length && deps.stopDev) {
