@@ -980,6 +980,38 @@ function preservedRecovery(state, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => !r.ref && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
+// A lane item whose pinned commit (and recorded receipt commit, if any) trunk already
+// contains has nothing left to preserve. An owner that ended mid-recovery at `owned` left
+// it unfinished forever otherwise: only that owner may `recover` the key and the clock
+// revisits only `recovery.active`, so every later `ready` on the lane threw. Measured on
+// research-lab 2026-10-03: lane:b:dc8c599, owner ended 2026-10-02, dc8c599 already in
+// origin/main. Same proof against the same local trunk as the parked-ref closure in
+// dispatchCompletion. `session` holds the lane, so the recorded owner no longer works in
+// it; the caller's own item keeps its verification gate. Contention fails closed.
+// Ancestry proves nothing about uncommitted changes: an item pinned for them (`dirty`)
+// needs its receipt commit in trunk, and a checkout holding hand edits is never closed.
+function closeShippedRecovery(state, session, lane) {
+  const inTrunk = (c) => typeof c === 'string' && /^[a-f0-9]{40,64}$/.test(c) && gitSafe(MAIN, 'merge-base', '--is-ancestor', c, MB).ok
+  const shipped = (r) => !r.ref && r.lane === lane && r.owner !== session && !['complete', 'reviewed'].includes(r.status) &&
+    inTrunk(r.commit) && (r.receipt?.commit == null ? !r.dirty : inTrunk(r.receipt.commit))
+  if (state.recoveryError || !Object.values(state.recovery?.items ?? {}).some(shipped)) return
+  const status = gitSafe(laneDir(lane), ...WORK_STATUS)
+  if (!status.ok || (status.out && !machineWrittenPaths(laneDir(lane)))) return
+  const unlock = recoveryLock()
+  if (!unlock) return
+  try {
+    const fresh = readRecovery({})
+    if (fresh.recoveryError) return
+    const closed = Object.entries(fresh.recovery.items).filter(([, r]) => shipped(r))
+    for (const [key, r] of closed) {
+      fresh.recovery.items[key] = { ...r, status: 'reviewed', at: now(), reason: 'included by trunk ancestry' }
+      if (fresh.recovery.active === key) delete fresh.recovery.active
+    }
+    if (closed.length) writeRecovery(fresh)
+    state.recovery = fresh.recovery
+  } finally { unlock() }
+}
+
 function preservedCheckout(state, lane) {
   const r = preservedRecovery(state, lane)
   if (!r) return null
@@ -1067,7 +1099,9 @@ function dispatchCompletion() {
     }
     if (!dirt && !/^\+ /m.test(diff.out) && merged.ok) continue
     const key = `lane:${id}:${tip.out}`
-    if (!items[key] || resume?.key === key) candidates.push({ ...(resume?.key === key ? resume : {}), key, lane: id, commit: tip.out, problem })
+    // `dirty`: the pinned work includes uncommitted changes, so trunk holding `commit` is
+    // not proof it shipped (closeShippedRecovery).
+    if (!items[key] || resume?.key === key) candidates.push({ ...(resume?.key === key ? resume : {}), key, lane: id, commit: tip.out, problem, ...(dirt && !machineWrittenPaths(dir) ? { dirty: true } : {}) })
   }
   discoveredParked(state)
   for (const p of [...Object.values(state.parkedWork ?? {}), ...unregisteredWip(state)]) {
@@ -4511,7 +4545,11 @@ function ready(session, wanted) {
     id = wanted
   }
   if (!id) throw new Error('this session holds no lane')
-  const recovery = recoveryFor(state, session, id) ?? preservedRecovery(state, id)
+  let recovery = recoveryFor(state, session, id)
+  if (!recovery) {
+    closeShippedRecovery(state, session, id)
+    recovery = preservedRecovery(state, id)
+  }
   if (recovery && (recovery.owner !== session || recovery.status !== 'verified' || recovery.receipt?.commit !== gitSafe(laneDir(id), 'rev-parse', 'HEAD').out)) {
     throw new Error('recovered work requires a current verification receipt and independent review before ready')
   }
@@ -4598,7 +4636,9 @@ function releaseClaim(session, { gone = false } = {}) {
       // A chat that ends with committed, clean work meant that work to go out - it just
       // never said so. Uncommitted work is the opposite: nobody released half an edit.
       const w = laneWork(id)
-      if (!gone && !recoveryFor(state, session, id) && !preservedRecovery(state, id) && !state.ready[id] && !w.dirty && w.ahead > 0) {
+      const own = recoveryFor(state, session, id)
+      if (!gone && !own) closeShippedRecovery(state, session, id)
+      if (!gone && !own && !preservedRecovery(state, id) && !state.ready[id] && !w.dirty && w.ahead > 0) {
         // Same catch-up as `ready`, minus anyone to resolve a conflict: if it does not merge
         // cleanly it is recorded by name instead of being marked ready and failing later.
         const caught = catchUp(id)

@@ -74,6 +74,10 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   proves inclusion in the remote trunk. `blocked`/`reviewed` receipts require a reason and
   persist for the pinned snapshot so an ambiguous ref does not reopen on every tick.
   Recovery never publishes a version; that remains Robert's publisher's action.
+  A lane item another owner left unfinished closes as `reviewed` ("included by trunk
+  ancestry") when the chat now holding the lane runs `ready` or ends, but only if its pinned
+  commit (and receipt commit) is in trunk, it was not pinned for uncommitted changes
+  (`dirty`), and the checkout has no hand edits (`closeShippedRecovery`, `test:lanecompletion`).
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).
