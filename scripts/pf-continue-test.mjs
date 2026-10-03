@@ -284,6 +284,14 @@ for (const returnedResumeId of ['bbbbbbbb-0000-0000-0000-000000000000', undefine
   ok(Boolean(shell.error), 'rule: a shell pane is never a conversation to continue')
 }
 
+// A pane still in its FIRST turn has no `resumeId` yet but lists the conversation it is on.
+{
+  const first = continueTarget(CHAT, [{ id: 's9', status: 'working', conversationId: CHAT }], [])
+  ok(first.action === 'tell' && first.pane.id === 's9', 'rule: a first-turn pane (conversationId, no resumeId) is told', JSON.stringify(first))
+  const other = continueTarget(CHAT, [{ id: 's9', status: 'idle', resumeId: 'eeeeeeee-0000-0000-0000-000000000000', conversationId: CHAT }], [])
+  ok(Boolean(other.error), 'rule: a pane whose resumeId names another chat is not matched by conversationId', JSON.stringify(other))
+}
+
 server.close()
 rmSync(work, { recursive: true, force: true })
 console.log(`pf continue: ${pass} passed, ${failed} failed`)
