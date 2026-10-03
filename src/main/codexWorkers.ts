@@ -125,7 +125,7 @@ export function describeStep(name: string, raw: unknown): string {
     case 'list_items': case 'list_dir': return 'Listing files'
     case 'update_plan': return 'Updating its plan'
     case 'web_search': case 'search': case 'web__run': return 'Searching the web'
-    default: return cut(`Using ${addOn(name) ?? (name || 'a tool')}`)
+    default: return cut(`Using ${addOn(name) ?? (name.replace(/_+/g, ' ').trim() || 'a tool')}`)
   }
 }
 

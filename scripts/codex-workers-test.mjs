@@ -61,7 +61,8 @@ try {
   assert.equal(describeStep('list_dir', '{}'), 'Listing files')
   assert.equal(describeStep('update_plan', '{}'), 'Updating its plan')
   assert.equal(describeStep('web_search', '{}'), 'Searching the web')
-  assert.equal(describeStep('mcp_tool', undefined), 'Using mcp_tool')
+  assert.equal(describeStep('mcp_tool', undefined), 'Using mcp tool')
+  assert.equal(describeStep('read_item', '{}'), 'Using read item')
   // An add-on tool's name (PC 2026-10-03: `mcp__node_repl__js`) reads as words, not code.
   assert.equal(describeStep('mcp__node_repl__js', '{}'), 'Using node repl: js')
   // Same table as PaneForge Next (2026-10-03): a script's own `a__b` tools and the web tool.
