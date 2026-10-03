@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { mock } from 'node:test'
+import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -111,6 +112,20 @@ buildSync({
 
 const req = createRequire(join(work, 'x.cjs'))
 const { SessionManager, claudeAcceptedPrompt, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
+
+// Every wait the app makes here is cut to 120-200ms so the file runs in a minute and a half,
+// which makes this process's own event loop part of every check: measured on the PC 28 Sep-
+// 2 Oct, red in 4% of full runs with at most two other jobs on the machine and 33-43% with
+// three or more, a different check nearly every time. A red run therefore says how late its
+// loop got, so a starved machine reads differently from a broken app.
+const loopLag = monitorEventLoopDelay({ resolution: 20 })
+loopLag.enable()
+process.on('exit', (code) => {
+  if (!code) return
+  const ms = (ns) => Math.round(ns / 1e6)
+  console.log(`event loop: worst stall ${ms(loopLag.max)}ms, p99 ${ms(loopLag.percentile(99))}ms ` +
+    `(the app's waits in this file are 120-200ms; a stall past them can fail a check the app passed)`)
+})
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -486,20 +501,22 @@ let eatenDone = 0
 eatenProc.say(COMPOSER)
 manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
 // The return goes in and the pane stays exactly as it was - quiet at its composer, with
-// nothing printed. The old code settled on that silence within one poll (40ms here).
-// Timed off the RETURN, never off a fixed sleep: the give-up settle lands
-// PROMPT_CONFIRM_MS x PROMPT_ENTER_TRIES after it, and on a loaded Windows box a
-// 400ms sleep overshot far enough to reach that give-up and read it as a landing
-// (2026-09-10, test:pc). Three polls is still long past the single poll the old bug
-// settled in, and the elapsed guard makes a slow machine FAIL rather than pass.
-const eatenReturnAt = await sentReturnAt(eatenProc)
-await sleep(Number(process.env.PF_PROMPT_POLL_MS) * 3)
-const sinceReturn = Date.now() - eatenReturnAt
+// nothing printed. The old code settled on that silence within one poll and wrote
+// `command landed`; the right answer waits the confirm window out and writes `return
+// swallowed`. So the check reads WHICH WAY the app went, off its own log, and no clock.
+// The clock it had (three polls after the return, under PROMPT_CONFIRM_MS x
+// PROMPT_ENTER_TRIES) measured the machine: promptsubmit's most frequent red on the PC
+// (10 of 72 red runs, 28 Sep-2 Oct), and reproduced on the Mac with the event loop blocked
+// 700ms a second - "813ms after the return, budget 600ms" while the app had settled nothing
+// and logged nothing wrong (2026-10-03).
+await sentReturnAt(eatenProc)
 const confirmBudget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+const eatenVerdict = await logSays(eaten.id, /return swallowed/, 10_000)
+const beforeVerdict = logOf(eaten.id).split(/return swallowed/)[0]
 ok(
-  eatenDone === 0 && sinceReturn < confirmBudget,
+  eatenVerdict && !/landed|submitted/.test(beforeVerdict),
   'a command that printed nothing has not landed',
-  `settles=${eatenDone}, ${sinceReturn}ms after the return, budget ${confirmBudget}ms\n${logOf(eaten.id)}`
+  `settles=${eatenDone}\n${logOf(eaten.id)}`
 )
 ok(
   eatenProc.writes.some((w) => w === '\r'),
@@ -1272,6 +1289,43 @@ const ANSWERING =
     manager.kill(pane.id, 'user')
   }
 
+  // A FINISHED PANE CARRYING A BACKGROUND AGENT STILL TAKES WHAT IS QUEUED FOR IT. 2026-10-03
+  // 9:05-9:55am, pane s23-murj80i9: `pf tell`s sat "waiting behind you" for 50 minutes while
+  // its turn was over and only a background agent ran. The turn had been sent from outside, so
+  // that Enter's draft hold was up, and the agent row's timer repaints once a second for as
+  // long as the agent lives: the sweep lifts the hold only off a pane quiet for a second, and
+  // the queue types only into one quiet for its own gap, so neither came until the agent
+  // ended (fixture pane s33-murmzkt1 the same morning: held 4m04s, the agent's whole run).
+  // The ticks here come faster than every quiet gap in this file, as the real ones do.
+  {
+    cli('sess-bg-agent'); hooksDone('sess-bg-agent', 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(pane.id)
+    const p = live.proc
+    p.say(IDLE)
+    manager.write(pane.id, 'run the slow suite in a background agent\r', 'phone')
+    manager.setBusyOnScreen(pane.id, true)
+    // One tick as the pane's log has it (see autoclear-test.mjs): cursor hops, the title glyph
+    // flipping, and the one grey digit that moved, on a row below the composer.
+    const E = '\x1b'
+    const tick = (n) => `${E}[2C${E}[8A${E}[?25h${E}]0;${n % 2 ? '◑' : '◐'} Faster PaneForge tests\x07${E}[?25l${E}[2D` +
+      `${E}[8B\r${E}[101C${E}[1A${E}[38;2;153;153;153m${n % 10}${E}[39m\r\r\n`
+    let n = 0
+    const ticking = setInterval(() => p.say(tick(n++)), 60)
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => {}, 60_000)
+    await sleep(1500)
+    const duringTurn = typings(p)
+    // The turn ends as the window reads its footer; the agent it started does not.
+    p.say(IDLE)
+    manager.setBusyOnScreen(pane.id, false)
+    const at = await typedAt(p, 15_000)
+    clearInterval(ticking)
+    ok(!duringTurn, 'a prompt queued behind a running turn waits for it', logOf(pane.id))
+    ok(at, 'and goes in once the turn is over, though the background agent it started ticks on',
+      `typed ${at ? 'yes' : 'no'}, drafting ${live.meta.drafting}, held ${Boolean(live.draftConfirmation)}, ${n} ticks\n${logOf(pane.id)}`)
+    manager.kill(pane.id, 'user')
+  }
+
   // ...and with no pid file there is no receipt to wait for: past twice the pid-file wait,
   // the returns come back rather than a minute of nothing. On a desk with no SessionStart
   // hooks, so the typing is not itself held to the ceiling for hooks still to come (that
@@ -1563,7 +1617,9 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   // busy footer re-anchors `runSince` whether or not the return went in.
   ok(/heldNow !== true && \(still\.meta\.runSince/.test(fn),
     'a turn is not proof while the composer still holds the prompt')
-  ok(/proof === 'idle' && idle\(still\) && \(still\.meta\.lastOutput \?\? 0\) > typedAt/.test(fn),
+  // `contentAt`, not `lastOutput`: a background agent's footer timer ticks once a second and
+  // would prove every command it sat beside (s23-murj80i9, 2026-10-03).
+  ok(/proof === 'idle' && idle\(still\) && still\.contentAt > typedAt/.test(fn),
     'a command is proven by the pane PRINTING something, never by silence')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
   // ...AND THE CONFIRM IS BOUNDED BY ITS OWN CLOCK, NOT THE WAIT'S.

@@ -523,11 +523,12 @@ export function isCounterRepaint(chunk: string): boolean {
 /**
  * The pane's "last said something" stamp after a chunk of its output.
  *
- * `meta.lastOutput` is every byte, and a dozen other readings (stall alert, attention,
- * reclaim, the prompt queue) are right to keep it that way. The autoclear quiet floor reads
- * THIS one instead: the same stamp, minus the ticks of a footer counter on a pane that is
- * not mid-turn. A working pane stamps every chunk - exactly as before - and so does anything
- * that is not provably a tick, which is what keeps the second-reply protection whole.
+ * `meta.lastOutput` is every byte, and other readings (stall alert, attention, reclaim)
+ * are right to keep it that way. The autoclear quiet floor, the prompt queue's quiet gaps
+ * and the draft hold's read THIS one instead: the same stamp, minus the ticks of a footer
+ * counter on a pane that is not mid-turn. A working pane stamps every chunk - exactly as
+ * before - and so does anything that is not provably a tick, which is what keeps the
+ * second-reply protection whole.
  */
 export function contentStampAfter(p: { stamp: number; now: number; idle: boolean; chunk: string }): number {
   return p.idle && isCounterRepaint(p.chunk) ? p.stamp : p.now

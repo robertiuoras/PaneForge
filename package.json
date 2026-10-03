@@ -316,7 +316,7 @@
     "test:lanepeers": "node scripts/lane-peers-test.mjs",
     "test:lanedevice": "node scripts/lane-device-test.mjs",
     "typecheck:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run typecheck",
-    "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test",
+    "test:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm test -- --full",
     "verify": "npm run typecheck && npm test",
     "verify:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run verify",
     "build:pc": "node ../claude-memory/claude-config/rbuild.mjs --repo . -- npm run build",
@@ -370,7 +370,8 @@
     "test:wakewatch": "node scripts/wake-watch-test.mjs",
     "test:launchinstall": "node scripts/launch-install-test.mjs",
     "test:straylaunch": "node scripts/stray-launch-test.mjs",
-    "test:claudemd": "node scripts/claudemd-size-test.mjs"
+    "test:claudemd": "node scripts/claudemd-size-test.mjs",
+    "test:suiteplan": "node scripts/suite-plan-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

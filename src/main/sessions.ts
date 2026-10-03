@@ -67,7 +67,7 @@ import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneS
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, isCounterRepaint, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -566,16 +566,19 @@ interface Live {
    * `lastOutput`. A cancel key (Ctrl-U, Ctrl-C) is not typing, so the CLI's box-emptying
    * redraw lands in that grace, and an idle composer prints nothing after it: read off
    * `lastOutput`, the draft hold never saw the box go empty. `confirmDraft` reads this.
+   * Not counted: a footer counter ticking on a pane that is not mid-turn (`isCounterRepaint`),
+   * which changes nothing in the box and, under a background agent, never stops.
    */
   paintSeq: number
-  /** When the newest data event arrived, grace repaints included. */
+  /** When the newest data event arrived, grace repaints included, counter ticks not. */
   paintedAt: number
   /**
    * When this pane last SAID something: `meta.lastOutput` minus the once-a-second tick of a
    * footer counter on a pane that is not mid-turn (`contentStampAfter`). Read by the three
-   * autoclear quiet gates and nothing else - a finished pane carrying a background agent
-   * repaints its timer for ever, and `lastOutput` on it is never 10s old (s72, 2026-10-02:
-   * 115 holds in 20 minutes, no clear). Reset wherever `lastOutput` is.
+   * autoclear quiet gates, the prompt queue's quiet gaps and the draft hold's - a finished
+   * pane carrying a background agent repaints its timer for ever, and `lastOutput` on it is
+   * never 10s old (s72, 2026-10-02: 115 holds in 20 minutes, no clear; s23, 2026-10-03:
+   * queued prompts held 50 minutes). Reset wherever `lastOutput` is.
    */
   contentAt: number
   /**
@@ -4067,9 +4070,15 @@ export class SessionManager extends EventEmitter {
       // dead output into the fresh buffer.
       if (live.proc !== proc) return
       live.buffer.push(data)
-      // Before the repaint gate below: a repaint changes what the composer holds.
-      live.paintSeq++
-      live.paintedAt = Date.now()
+      // Before the repaint gate below: a repaint changes what the composer holds. A footer
+      // counter ticking on a pane that is not mid-turn does not, and on a finished pane that
+      // carries a background agent it ticks every second for the agent's whole run: counted,
+      // it kept the draft hold of the Enter that started the turn up for 50 minutes, and every
+      // prompt queued for the pane waited behind it (s23-murj80i9, 2026-10-03).
+      if (!(meta.status !== 'working' && isCounterRepaint(data))) {
+        live.paintSeq++
+        live.paintedAt = Date.now()
+      }
       recordData(id, data)
       // A gate in the pane refusing a command is not output the pane produced and not
       // anything this app decided, but it costs the pane a whole round trip and nothing
@@ -4482,7 +4491,7 @@ export class SessionManager extends EventEmitter {
         turnLive:
           Boolean(live.meta.runSince) ||
           live.busyUntil > Date.now() ||
-          Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
+          Date.now() - live.contentAt < PERSON_QUIET_MS
       })
       if (decision === 'abandon') return decision
       if (waitingForTurn) {
@@ -4519,9 +4528,11 @@ export class SessionManager extends EventEmitter {
     // while the fresh session sits ready: every post-clear resume on 2026-09-23 read busy
     // until the 45s budget ran out (22 of 22 at 44.5-45.3s; fresh panes 2-3s), and at
     // 10:54:14 Robert started typing into s4-mudqp2ef 41s in, so the resume never went.
+    // Quiet is `contentAt`, not `lastOutput`: a background agent's timer ticking under a
+    // finished turn is not the pane talking (s23-murj80i9, 2026-10-03, see `Live.contentAt`).
     const idle = (live: Live): boolean => {
       repaint(live)
-      const quietMs = Date.now() - live.meta.lastOutput
+      const quietMs = Date.now() - live.contentAt
       return quietMs >= PROMPT_QUIET_MS && (quietMs >= PROMPT_STALE_BUSY_MS || !readsBusy(painted)) && !composerHeld(painted)
     }
 
@@ -4606,15 +4617,15 @@ export class SessionManager extends EventEmitter {
     const sameCodex = (live: Live): boolean =>
       live === owner?.live && live.proc === owner.proc && this.codexQueued.get(id) === owner && stillOwed(key)
     const commandLanded = async (held: { key: string; live: Live; proc: Live['proc']; commandOutputAt?: number }, live: Live): Promise<boolean> => {
-      if (held.commandOutputAt === undefined || live.meta.lastOutput <= held.commandOutputAt || blocked(live) || !idle(live)) return false
+      if (held.commandOutputAt === undefined || live.contentAt <= held.commandOutputAt || blocked(live) || !idle(live)) return false
       const raw = live.buffer.read()
       const keyboard = live.meta.lastKeyboard
-      const output = live.meta.lastOutput
+      const output = live.contentAt
       let box: Awaited<ReturnType<typeof composerOf>> = null
       try { box = await composerOf(raw, live.cols, live.rows, 'codex') } catch { return false }
       return this.sessions.get(id) === live && held.live === live && held.proc === live.proc &&
         this.codexQueued.get(id) === held && stillOwed(held.key) && !blocked(live) && idle(live) &&
-        live.meta.lastKeyboard === keyboard && live.meta.lastOutput === output && live.buffer.read() === raw &&
+        live.meta.lastKeyboard === keyboard && live.contentAt === output && live.buffer.read() === raw &&
         Boolean(box && box.text.trim() === '')
     }
     // Unlike a turn clock or a repaint, a native receipt proves the entire payload,
@@ -4740,7 +4751,7 @@ export class SessionManager extends EventEmitter {
         acLog(`${id} selector on screen, return withheld (try ${tries + 1}/${PROMPT_ENTER_TRIES}) - the prompt may be queued or still typed; not proven`)
         return settle('withheld')
       }
-      if (owner?.proof === 'idle') owner.commandOutputAt = live.meta.lastOutput
+      if (owner?.proof === 'idle') owner.commandOutputAt = live.contentAt
       ourWrite('\r')
       // Renderer submissions record at `prompt:used`; queued continuations and handoffs
       // bypass that event, so capture their typed prompt here on the first return only.
@@ -4759,7 +4770,8 @@ export class SessionManager extends EventEmitter {
       // the pair as one slash command and answered `Model 'opus\n\nContinue the handoff...'
       // not found` - the clear happened, the handover did not.
       //
-      // `lastOutput` is the pty's own stamp, so it cannot be moved by the return this sends.
+      // `contentAt` is the pty's own stamp, so it cannot be moved by the return this sends -
+      // and, unlike `lastOutput`, a background agent's timer ticking is not an answer either.
 
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
       if (!firstReturnAt) firstReturnAt = typedAt
@@ -4840,7 +4852,7 @@ export class SessionManager extends EventEmitter {
           // painting" - 24s and two stray keystrokes on every clear, before the resume
           // prompt was even queued. For a command, the composer coming back idle IS the
           // proof, read at the poll cadence rather than the confirm's.
-          if (!owner && proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
+          if (!owner && proof === 'idle' && idle(still) && still.contentAt > typedAt) {
             acLog(`${id} command landed - the composer is idle again (no turn expected)`)
             return settle('sent')
           }
@@ -4850,8 +4862,8 @@ export class SessionManager extends EventEmitter {
           // a live session, which is the thing this path spent 2026-09-02 removing. Only
           // when the whole confirm window has gone by with the pane silent does this fall
           // through to the retry below and send another return.
-          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt && Date.now() < confirmUntil) return confirm()
-          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt) {
+          if (proof === 'idle' && still.contentAt <= typedAt && Date.now() < confirmUntil) return confirm()
+          if (proof === 'idle' && still.contentAt <= typedAt) {
             acLog(`${id} return swallowed - nothing was printed in ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms`)
           }
           if (!idle(still)) {
@@ -5596,7 +5608,8 @@ export class SessionManager extends EventEmitter {
         }
       }
       // Quiet by paint as well: a grace repaint stamps no output and may still be arriving.
-      if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
+      // Quiet is `contentAt`: a background agent's timer ticking never lets `lastOutput` age.
+      if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && now - live.contentAt >= 1000 &&
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
       // has typed is its queue's. This is only the flag left once both are gone.

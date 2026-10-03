@@ -170,7 +170,8 @@ function main() {
   console.log(`${tag}: publishing - ${plan.why}`)
   console.log(`${tag}: running test suite...`)
   try {
-    execFileSync('npm', ['test'], { cwd: ROOT, stdio: 'inherit' })
+    // --full: a release runs the lane suites test-all skips when their scripts already passed.
+    execFileSync('npm', ['test', '--', '--full'], { cwd: ROOT, stdio: 'inherit' })
   } catch (e) {
     console.error(`${tag}: tests failed - refusing to publish.`)
     process.exit(1)
