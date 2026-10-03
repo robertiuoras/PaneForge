@@ -9,10 +9,13 @@
 // Nothing here touches this checkout: everything happens in a temp repo that is
 // deleted at the end.
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const SCRIPT = fileURLToPath(new URL('./release-notes.mjs', import.meta.url))
 
 const { bumpFor, changeLog, hasChanges, nextVersion, notes, rangeFor, versionTags, parse } =
   await import('./release-notes.mjs')
@@ -292,6 +295,26 @@ check('a patch is still a patch there', nextVersion('1.2.3', 'patch') === '1.2.4
     changeLog(miss, '0.1.1')
   )
   check('a range git cannot read says nothing', unpublished(miss, 'v9.9.9..HEAD').length === 0)
+
+  // The one place a releaser reads before the tag goes out is this script's own run, and
+  // `doctor` only names the misses on a repo that versions itself; this one merges. v0.8.236:
+  // the phone sign-in, the headline of the release, was three sentence subjects and the
+  // printed notes said nothing about leaving it out. stderr, so the page stays the same.
+  {
+    const run = spawnSync(process.execPath, [SCRIPT, '0.1.1', '--repo', miss, '--changes-only'], {
+      encoding: 'utf8'
+    })
+    check(
+      'the script run names the miss on stderr',
+      run.stderr.includes('Fix browser image drags by fetching URIs'),
+      JSON.stringify(run.stderr)
+    )
+    check(
+      'and keeps it off the page it prints',
+      run.status === 0 && !run.stdout.includes('browser image drags'),
+      JSON.stringify(run.stdout)
+    )
+  }
 
   // git's default core.quotepath wraps a path holding a non-ASCII character in double
   // quotes, and `"src/café.ts"` does not start with `src/` - so the commit was dropped

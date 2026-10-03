@@ -352,4 +352,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     argv.find((a) => !a.startsWith('--')) ??
     JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version
   process.stdout.write((changesOnly ? changeLog(repo, version) : notes(repo, version)) + '\n')
+  // `doctor` names these only on a repo that versions itself, and this one merges, so the
+  // releaser running this before the tag is the last reader who can still reword them.
+  const missed = unpublished(repo, rangeFor(repo, version))
+  if (missed.length) {
+    process.stderr.write(
+      `Not on the release page (touched src/, no feat:/fix:/perf: subject):\n` +
+        missed.map((m) => `  ${m}\n`).join('')
+    )
+  }
 }
