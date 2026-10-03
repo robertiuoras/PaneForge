@@ -1209,8 +1209,8 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('no countdown path writes the woke-up words without asking whether the pane is still there',
     !/skipClose\([^)]*'it went back to work/.test(app))
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
-  check('the close-request line names who closed the pane', /kill\(id: string, by: CloseBy\): boolean/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
-  check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
+  check('the close-request line names who closed the pane', /kill\(id: string, by: CloseBy(?:, why\?: string)?\): boolean/.test(sessions) && /quitting: this\.down, by(?:, why: \w+)? \}/.test(sessions))
+  check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'(?:, \w+)?\)/.test(sessions))
   // Log review 2026-10-01: s16-munpf9fk and s2-munmghtf closed while `working`, no `by`.
   check('an automatic close of a working pane is refused, and says so', /action: 'close-refused'/.test(sessions) &&
     /closeRefused\(by, s\.meta\.status\)/.test(sessions))

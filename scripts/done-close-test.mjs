@@ -70,7 +70,8 @@ export class Harness {
   sessions = new Map(); activeId = null; killed: unknown[] = []
   windowFocused = () => false; deskWatched = () => false
   openChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
-  kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id) }
+  kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id); return true }
+  replyFor = null; turnOpenFor = () => null
 ${method('doneReadings', 'turnRead')}
 ${method('closeAfterResult', 'killAll')}
 }
@@ -749,4 +750,64 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   for (let i = 0; i < 3; i++) assert.deepEqual(main.sweepDoneClose(deps), [])
   assert.deepEqual(lines, ['unseeded stays - no finished turn: it never showed a turn ending here, and its conversation does not say one ended'], 'an idle agent pane with no turn end says why, once; working, asleep, kept and shell panes add nothing')
   console.log('done-close: a pane that arrives finished gets its turn end, and a pane without one says so ok')
+}
+
+// s105 (2026-10-02, 7:39:20pm Gold Coast): a client chat was closed into Review MID-TURN.
+// The agent was between two Chrome tool calls - a browser tool prints nothing for 10-30 s -
+// and the screen's footer read had gone quiet at 09:36:52Z, so the pane looked finished.
+// The transcript said otherwise: its last row was a tool result at 09:39:17Z with no turn
+// end after it. Replay that moment with the real rows (trimmed): the close must not happen.
+{
+  const { closedBecause } = await bundle('src/shared/closeWhenDone.ts', 'closewhendone.cjs')
+  const { openTurnOf } = await bundle('src/shared/replyRead.ts', 'replyread.cjs')
+  const fixture = readFileSync(join(root, 'scripts/fixtures/claude-midturn-browser-calls.jsonl'), 'utf8')
+  const transcript = join(work, 's105.jsonl')
+  writeFileSync(transcript, fixture)
+  const at = (iso) => Date.parse(iso)
+  const CLOSE_AT = at('2026-10-02T09:39:20.244Z')
+  const lines = []
+  const shut = []
+  const deps = {
+    enabled: () => true, now: () => CLOSE_AT, log: (l) => lines.push(l),
+    readings: () => [{
+      id: 's105', agent: 'claude', printed: at('2026-10-02T09:39:17.000Z') - 9000, status: 'idle',
+      lastKeyboard: at('2026-10-02T09:36:32.034Z'), turnEndedAt: at('2026-10-02T09:36:52.128Z'), lookedAt: at('2026-10-02T09:37:20.000Z')
+    }],
+    transcriptFor: () => transcript, resumeIdFor: () => 'native-s105', history: () => [],
+    titleOf: () => ({ title: 'client setup', cwd: '/Users/r/Projects/clients/clients/client', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {}
+  }
+  assert.deepEqual(main.sweepDoneClose(deps), [], 's105: a turn open in its transcript is never closed into Review')
+  assert.deepEqual(shut, [])
+  assert.match(lines[0] ?? '', /^s105 stays - its turn is still open - its conversation's last entry is a tool result the agent has not answered yet \(2026-10-02T09:39:17\.212Z\)/, 'done-close.log names the evidence')
+  // The same reading the moment the turn really ends closes as before.
+  const ended = join(work, 's105-ended.jsonl')
+  writeFileSync(ended, fixture +
+    JSON.stringify({ type: 'assistant', isSidechain: false, timestamp: '2026-10-02T09:45:00.000Z', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Set up and verified.\n\n## Next steps\n- None' }] } }) + '\n' +
+    JSON.stringify({ type: 'system', subtype: 'turn_duration', isSidechain: false, timestamp: '2026-10-02T09:45:00.500Z' }) + '\n')
+  const why = []
+  const done = { ...deps, now: () => at('2026-10-02T09:50:00Z'), transcriptFor: () => ended, close: (id, _t, w) => { why.push(w); return { closed: true } },
+    readings: () => [{ ...deps.readings()[0], turnEndedAt: at('2026-10-02T09:45:01Z'), lookedAt: undefined }] }
+  assert.deepEqual(main.sweepDoneClose(done), ['s105'], 'a turn that ended closes')
+  assert.match(why[0], /^finished: the screen said its turn ended at 2026-10-02T09:45:01\.000Z, its conversation's last entry is turn-end \(2026-10-02T09:45:00\.500Z\), turn-end row 2026-10-02T09:45:00\.500Z, quiet \d+s, unread/, 'the close carries its reason')
+
+  // Every close writes a plain reason; a close with an open turn says INCIDENT.
+  const read = main.readReply('claude', transcript, CLOSE_AT)
+  const open = openTurnOf(read, CLOSE_AT)
+  const words = closedBecause('idle-clock', undefined, { status: 'idle', footerEndedAt: at('2026-10-02T09:36:52.128Z'), lastEntry: read.lastEntry, openTurn: open })
+  assert.match(words, /^the idle countdown ran out\. Asked by: idle-clock\. Seen: status idle, screen said the turn ended at 2026-10-02T09:36:52\.128Z, conversation's last entry tool_result at 2026-10-02T09:39:17\.212Z, no turn-end row\. INCIDENT: closed with its turn still open/)
+  assert.doesNotMatch(closedBecause('user', undefined, { status: 'idle', footerEndedAt: 0 }), /INCIDENT/)
+  assert.match(closedBecause('user', undefined, { status: 'idle', footerEndedAt: 0 }), /^a person closed it in the window\. Asked by: user\. Seen: status idle, screen showed no finished turn, conversation not read/)
+
+  // The manager wires it: every kill computes the reason and hands it to History, the
+  // close-request line carries it, an automatic closer refuses an open turn, and the Review
+  // close checks the transcript itself (a decision nothing calls closes nothing).
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /kill\(id: string, by: CloseBy, why\?: string\)[\s\S]{0,900}closedBecause\(by, why,[\s\S]{0,400}action: 'close-request'[\s\S]{0,200}why: because[\s\S]{0,200}action: 'close-open-turn'[\s\S]{0,1500}recordEnd\(id, resumeIdFor\(id\), because\)/)
+  assert.match(sessions, /closeRefusedFor\(id: string, by: CloseBy\)[\s\S]{0,600}closeRefused\(by, 'working'\)[\s\S]{0,200}turnOpenFor/)
+  assert.match(sessions, /closeAfterResult\(id: string, reportedAt: number, why\?: string\)[\s\S]{0,1200}turnOpenFor[\s\S]{0,200}its turn is still open[\s\S]{0,100}this\.kill\(id, 'review', why\)/)
+  const history = readFileSync(join(root, 'src/main/history.ts'), 'utf8')
+  assert.match(history, /if \(closedBecause\) entry\.closedBecause = closedBecause/)
+  console.log('done-close: s105 - a turn still open in its transcript is never closed, and every close says why ok')
 }

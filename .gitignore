@@ -45,3 +45,6 @@ node_modules.pf-tmp/
 # generated code graph (regenerable, machine-local)
 graphify-out/
 /Microsoft/
+
+# jscpd report written into the checkout by slop sweeps (archive lives in ~/.claude/slop-sweep)
+.slop-sweep/

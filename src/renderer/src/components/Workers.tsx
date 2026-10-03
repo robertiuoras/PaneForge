@@ -8,6 +8,10 @@ export default function Workers({ session, spec }: { session: Session; spec?: Pi
   const reading = session.agent === 'codex' ? session.codexWorkers : session.claudeWorkers
   const workers = reading?.workers ?? []
   const running = workers.filter(w => w.state === 'running')
+  // Nothing running = nothing to show. A standing "0 running" / "Count unavailable" strip
+  // on every pane was noise (Robert 2026-10-03: "showing background workers even when 0
+  // running ... no point").
+  if (!running.length) return null
   const uncertain = !reading || reading.status !== 'fresh' || workers.some(w => w.state === 'unknown' || w.state === 'stale')
   const stopped = workers.length - running.length
   const summary = !reading || (reading.status === 'unknown' && !workers.length)
@@ -27,7 +31,7 @@ export default function Workers({ session, spec }: { session: Session; spec?: Pi
           <li key={w.id} className={`worker worker-${w.state}`}>
             <div className="worker-heading"><span className="worker-name" title={w.name}>{w.name}</span><span className="worker-state">{w.state === 'stale' ? 'Not recently observed' : w.state === 'unknown' ? 'Status unknown' : w.state}</span></div>
             <div className="worker-meta">
-              <span>{w.model ? agentModelLabel(spec, w.model) || w.model : 'Model unknown'}{w.effort ? ` · ${w.effort}` : ''}</span>
+              <span>{w.model ? agentModelLabel(spec, w.model) || w.model : w.requestedModel ? `Asked for ${agentModelLabel(spec, w.requestedModel) || w.requestedModel}` : 'Model unknown'}{w.effort ? ` · ${w.effort}` : ''}</span>
               {w.startedAt !== undefined && (w.state === 'running' || w.endedAt !== undefined || w.updatedAt !== undefined)
                 ? <Elapsed since={w.startedAt} until={w.state === 'running' ? undefined : w.endedAt ?? w.updatedAt} className="worker-time" title={w.state === 'running' ? 'Time since the native task started' : w.endedAt !== undefined ? 'Duration of this task' : 'Time observed; stopped at the last event'} />
                 : <span className="worker-time">Time unknown</span>}

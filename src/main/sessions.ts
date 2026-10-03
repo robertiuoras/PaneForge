@@ -59,7 +59,8 @@ const TITLE_TAIL_BYTES = 256 * 1024
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
-import { closeRefused, doneEnough, type CloseBy } from '../shared/closeWhenDone'
+import { closeRefused, closedBecause, doneEnough, type CloseBy } from '../shared/closeWhenDone'
+import { openTurnOf, type ReplyRead } from '../shared/replyRead'
 import { closeHeldBy, personLooking, replyFinished, seedTurnEnd, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
@@ -684,6 +685,8 @@ interface Live {
   draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean; key?: string }
   /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
   draftRecheckAt?: number
+  /** What still holds this pane's queued clear, as last logged (`sweepIdle`): logged once per change. */
+  clearHeldBy?: string
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -927,7 +930,7 @@ export class SessionManager extends EventEmitter {
   /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
   keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
-  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number; turnEndedAt?: number } | undefined) | null = null
+  replyFor: ((id: string, agent: string) => ReplyRead | undefined) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -3830,12 +3833,22 @@ export class SessionManager extends EventEmitter {
    * so the countdown was blamed for it. Required since log review 2026-10-01, where two
    * working panes closed with no `by` at all. Answers whether the pane closed.
    */
-  kill(id: string, by: CloseBy): boolean {
+  kill(id: string, by: CloseBy, why?: string): boolean {
     const s = this.sessions.get(id)
     if (!s) return false
     if (this.closeRefusedFor(id, by)) return false
+    // What this close was judged on, kept where a later chat reads it: the close-request
+    // line and History's `closedBecause`. s105 (2026-10-02) closed mid-turn and nothing on
+    // disk said what the close had seen.
+    const turn = s.meta.agent === 'shell' ? undefined : this.replyFor?.(id, s.meta.agent)
+    const openTurn = this.turnOpenFor(s, turn)
+    const because = closedBecause(by, why, { status: s.meta.status, footerEndedAt: s.footerEndedAt, lastEntry: turn?.lastEntry, transcriptTurnEndedAt: turn?.turnEndedAt, openTurn })
     logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
-      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by })
+      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by, why: because })
+    if (openTurn) {
+      logReclaim({ action: 'close-open-turn', pane: id, by, incident: true, reason: openTurn })
+      console.warn(`close: INCIDENT ${id} closed by ${by} with its turn still open - ${openTurn}`)
+    }
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
@@ -3845,7 +3858,7 @@ export class SessionManager extends EventEmitter {
       /* already dead */
     }
     stopPipe(id)
-    recordEnd(id, resumeIdFor(id))
+    recordEnd(id, resumeIdFor(id), because)
     // A prompt this pane was owed dies with it, and SAYS so: the card is gone, so nothing
     // will ever restore that id, and a row left behind would be a promise the app cannot
     // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
@@ -3868,14 +3881,27 @@ export class SessionManager extends EventEmitter {
   closeRefusedFor(id: string, by: CloseBy): boolean {
     const s = this.sessions.get(id)
     if (!s) return false
-    const reason = closeRefused(by, s.meta.status)
+    let reason = closeRefused(by, s.meta.status)
+    // The same refusal by the transcript, for a turn the screen has stopped showing: a
+    // browser tool call prints nothing for 10-30 s (s105, 2026-10-02, closed by Review
+    // between two Chrome calls). A person's or a named command's close still goes.
+    if (!reason && closeRefused(by, 'working')) {
+      const open = s.meta.agent === 'shell' ? null : this.turnOpenFor(s, this.replyFor?.(id, s.meta.agent))
+      if (open) reason = `its turn is still open - ${open}`
+    }
     if (!reason) return false
     logReclaim({ action: 'close-refused', pane: id, processPid: s.proc?.pid, status: s.meta.status, by, reason })
     return true
   }
 
+  /** `openTurnOf` for a live pane with a process; asleep or exited has no turn to lose. */
+  private turnOpenFor(s: Live, turn: ReplyRead | undefined): string | null {
+    if (!s.proc || s.meta.asleep || s.meta.status === 'exited') return null
+    return openTurnOf(turn)
+  }
+
   /** Close only at a review-safe boundary; records are written before this is called. */
-  closeAfterResult(id: string, reportedAt: number): { closed: boolean; reason?: string } {
+  closeAfterResult(id: string, reportedAt: number, why?: string): { closed: boolean; reason?: string } {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
@@ -3885,7 +3911,9 @@ export class SessionManager extends EventEmitter {
     const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
-    this.kill(id, 'review')
+    const open = m.agent === 'shell' ? null : this.turnOpenFor(live, this.replyFor?.(id, m.agent))
+    if (open) return { closed: false, reason: `its turn is still open - ${open}` }
+    if (!this.kill(id, 'review', why)) return { closed: false, reason: 'close refused' }
     return { closed: true }
   }
 
@@ -5455,7 +5483,8 @@ export class SessionManager extends EventEmitter {
     }
     if (!box || box.text.trim()) return
     if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
-        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) || !live.meta.drafting) return
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) ||
+        (!live.meta.drafting && !live.typed.trim())) return
     live.draft = newDraft()
     live.typed = ''
     live.meta.drafting = undefined
@@ -5571,7 +5600,12 @@ export class SessionManager extends EventEmitter {
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
       // has typed is its queue's. This is only the flag left once both are gone.
-      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+      // A pane owed an automatic clear waits on exactly this flag: read it sooner.
+      const clearOwed = this.autoClearPending.has(meta.id)
+      // `typed` holds a clear as surely as the flag does (`dropFor`), and Ctrl-U / Ctrl-C
+      // empty the box without emptying it: read the screen for either.
+      const held = { ...meta, drafting: meta.drafting || Boolean(live.typed.trim()) }
+      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(held, live.draftRecheckAt ?? 0, now, clearOwed) &&
           now - live.paintedAt >= 1000) void this.recheckDraft(live)
       // A CLEAR QUEUED FOR A TURN END ON A PANE WITH NO TURN LEFT. `endRun` re-asks a queued
       // clear the moment a turn ends, and a draft flag still up then - the hold of the prompt
@@ -5584,6 +5618,17 @@ export class SessionManager extends EventEmitter {
           now - meta.lastKeyboard >= 1000 && !dropFor({ ...meta, typed: live.typed })) {
         acLog(`${meta.id} queued clear asked again - the pane is idle and its box is empty`)
         this.resumePendingAutoClear(meta.id)
+      } else if (this.autoClearPending.has(meta.id) && meta.status === 'idle' && now - meta.lastKeyboard >= 60_000) {
+        // 2026-10-03 PC: three panes logged "queued ... (drafting)" once and nothing for hours,
+        // and nothing said which of these held them. Named once per change, never per tick.
+        const why = [
+          live.draftConfirmation && 'an Enter not yet seen to land', meta.drafting && 'the draft flag',
+          live.typed.trim() && `a typed line (${live.typed.length} chars)`, meta.owedPrompt && 'an owed prompt',
+          this.promptInFlight(live) && 'a prompt in flight', meta.autoClearAt && 'a countdown',
+          this.autoClearArmTimers.has(meta.id) && 'an arm timer', meta.runSince && 'a running job'
+        ].filter(Boolean).join(', ') || 'nothing named'
+        if (why !== live.clearHeldBy) acLog(`${meta.id} queued clear still held by: ${why}`)
+        live.clearHeldBy = why
       }
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to

@@ -98,6 +98,52 @@ export function closeRefused(by: CloseBy, status: string): string | undefined {
   return 'it is mid-turn - only a person or a command naming it closes a working pane'
 }
 
+/** What each closer means, for History's `closedBecause` when the caller said nothing more. */
+const BY_WORDS: Record<CloseBy, string> = {
+  user: 'a person closed it in the window',
+  phone: 'a person closed it from the phone',
+  remote: 'a paired machine closed it',
+  pf: 'a `pf close`/`pf move` command named it',
+  handoff: 'it was handed off to another pane',
+  review: 'its result was recorded in Review and it closed itself',
+  'close-when-done': 'it was opened to close when done',
+  'idle-clock': 'the idle countdown ran out',
+  'exited-sweep': 'its program had exited',
+  'exit-close': 'its program exited',
+  'cwd-gone': 'its folder no longer exists',
+  'tidy-dupes': 'it was a duplicate of another pane',
+  unnamed: 'something outside the app closed it without saying who'
+}
+
+/** What a close saw, the evidence `closedBecause` names. */
+export interface CloseEvidence {
+  status: string
+  /** When the screen's footer said the turn ended; 0 = it never did, or a turn was running. */
+  footerEndedAt: number
+  /** The transcript's last entry (`ReplyRead.lastEntry`); unset = not read. */
+  lastEntry?: { kind: string; at?: number }
+  /** The transcript's turn-end row. */
+  transcriptTurnEndedAt?: number
+  /** `openTurnOf`'s words when the transcript says the turn is still open. */
+  openTurn?: string | null
+}
+
+/**
+ * One plain-words line saying why a pane closed and what that was judged on, for History's
+ * `closedBecause` and the `close-request` line. Robert, 2026-10-03, after s105 closed
+ * mid-turn: "better logs in future so we know why it was stopped and what happened".
+ */
+export function closedBecause(by: CloseBy, why: string | undefined, ev: CloseEvidence): string {
+  const iso = (t: number): string => new Date(t).toISOString()
+  const seen = [
+    `status ${ev.status}`,
+    ev.footerEndedAt ? `screen said the turn ended at ${iso(ev.footerEndedAt)}` : 'screen showed no finished turn',
+    ev.lastEntry ? `conversation's last entry ${ev.lastEntry.kind}${ev.lastEntry.at ? ` at ${iso(ev.lastEntry.at)}` : ''}` : 'conversation not read',
+    ev.transcriptTurnEndedAt ? `turn-end row ${iso(ev.transcriptTurnEndedAt)}` : 'no turn-end row'
+  ]
+  return `${why || BY_WORDS[by]}. Asked by: ${by}. Seen: ${seen.join(', ')}.${ev.openTurn ? ` INCIDENT: closed with its turn still open - ${ev.openTurn}.` : ''}`
+}
+
 /**
  * Who a `sessions:kill` came from. The window's own IPC is a person. Everything else
  * arrives through `callInvoke` (pf and the phone share that door): the window's code in a

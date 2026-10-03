@@ -10,7 +10,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -155,7 +155,7 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
 // The Review row and the GuardDeck card carried the follow-up alone, and the hook's words
 // were read as what Robert last typed.
 {
-  const { readFileSync } = await import('node:fs')
+  // readFileSync imported at the top
   const s42 = readClaudeReply(readFileSync(join(root, 'scripts/fixtures/claude-stophook-followup.jsonl'), 'utf8'))
   assert.ok(s42.text.startsWith("I can't release this one myself"), 'the report comes first')
   assert.ok(s42.text.includes('**Next steps:**\n1. Say "release"'), 'with its own steps')
@@ -190,4 +190,34 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(readCodexReply(codex.join('\n')).turnEndedAt, Date.parse('2026-10-02T09:39:22.068Z'), 'codex task_complete ends it')
   assert.equal(readCodexReply([...codex, ev('task_started', '2026-10-02T09:40:00.000Z')].join('\n')).turnEndedAt, undefined, 'codex task_started reopens it')
   console.log('reply-read: last turn end ok')
+}
+
+// The transcript's last word says whether the turn is still open (s105, 2026-10-02: closed
+// between two Chrome tool calls because the screen had gone quiet).
+{
+  const { openTurnOf, OPEN_TURN_STALE_MS } = createRequire(import.meta.url)(out)
+  const at = (iso) => Date.parse(iso)
+  const rowAt = (ts, o) => JSON.stringify({ isSidechain: false, timestamp: ts, ...o })
+  const call = (ts) => rowAt(ts, { type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_x', name: 'mcp__claude-in-chrome__computer', input: {} }] } })
+  const result = (ts) => rowAt(ts, { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: [{ type: 'text', text: 'Clicked' }] }] } })
+  const final = (ts) => rowAt(ts, { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } })
+  const end = (ts) => rowAt(ts, { type: 'system', subtype: 'turn_duration' })
+  const prompt = (ts, text) => rowAt(ts, { type: 'user', message: { role: 'user', content: text } })
+  const NOW = at('2026-10-02T09:39:20.244Z')
+  const fixture = readFileSync(join(root, 'scripts/fixtures/claude-midturn-browser-calls.jsonl'), 'utf8')
+  const real = readClaudeReply(fixture)
+  assert.deepEqual(real.lastEntry, { kind: 'tool_result', at: at('2026-10-02T09:39:17.212Z') }, 'the real s105 tail ends on a tool result')
+  assert.match(openTurnOf(real, NOW), /tool result the agent has not answered yet/)
+  assert.match(openTurnOf(readClaudeReply([prompt('2026-10-02T09:39:00Z', 'go'), call('2026-10-02T09:39:05Z')].join('\n')), NOW), /tool call with no result yet/, 'mid tool call')
+  assert.match(openTurnOf(readClaudeReply(prompt('2026-10-02T09:39:00Z', 'go')), NOW), /prompt the agent has not answered/, 'prompt not started on')
+  assert.equal(openTurnOf(readClaudeReply([call('2026-10-02T09:39:05Z'), result('2026-10-02T09:39:06Z'), final('2026-10-02T09:39:07Z'), end('2026-10-02T09:39:08Z')].join('\n')), NOW), null, 'turn-end row: closed')
+  assert.equal(openTurnOf(readClaudeReply([call('2026-10-02T09:39:05Z'), result('2026-10-02T09:39:06Z'), final('2026-10-02T09:39:07Z')].join('\n')), NOW), null, 'a final reply with no row yet is the screen\'s call, as before')
+  assert.equal(openTurnOf(readClaudeReply([call('2026-10-02T09:39:05Z'), prompt('2026-10-02T09:39:06Z', '[Request interrupted by user for tool use]')].join('\n')), NOW), null, 'interrupted: closed')
+  const slash = [final('2026-10-02T09:39:07Z'), end('2026-10-02T09:39:08Z'), rowAt('2026-10-02T09:39:09Z', { type: 'user', isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } }), prompt('2026-10-02T09:39:09Z', '<command-name>/model</command-name>')]
+  assert.equal(openTurnOf(readClaudeReply(slash.join('\n')), NOW), null, 'a slash command after the end opens nothing')
+  assert.equal(openTurnOf(readClaudeReply(call('2026-10-02T09:00:00Z')), at('2026-10-02T09:00:00Z') + OPEN_TURN_STALE_MS + 1), null, 'a CLI dead mid-call for 20 min does not hold for ever')
+  const codex = (type, ts) => JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type } })
+  assert.match(openTurnOf(readCodexReply(codex('task_started', '2026-10-02T09:39:00Z')), NOW), /turn it started/, 'codex mid-turn')
+  assert.equal(openTurnOf(readCodexReply([codex('task_started', '2026-10-02T09:39:00Z'), codex('task_complete', '2026-10-02T09:39:10Z')].join('\n')), NOW), null)
+  console.log('reply-read: open turn by the transcript ok')
 }

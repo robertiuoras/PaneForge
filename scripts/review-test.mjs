@@ -15,12 +15,12 @@ const repo = fileURLToPath(new URL('..', import.meta.url))
 
 function closeAfterResultFromSource() {
   const source = readFileSync(join(repo, 'src/main/sessions.ts'), 'utf8')
-  const start = source.indexOf('  closeAfterResult(id: string, reportedAt: number)')
+  const start = source.indexOf('  closeAfterResult(id: string, reportedAt: number, why?: string)')
   const end = source.indexOf('\n  killAll()', start)
   assert.ok(start >= 0 && end > start, 'closeAfterResult method is present')
   const method = source.slice(start, end).replace(
-    /closeAfterResult\(id: string, reportedAt: number\): \{ closed: boolean; reason\?: string \} \{/,
-    'function closeAfterResult(id, reportedAt) {'
+    /closeAfterResult\(id: string, reportedAt: number, why\?: string\): \{ closed: boolean; reason\?: string \} \{/,
+    'function closeAfterResult(id, reportedAt, why) {'
   )
   // Exercise the actual hold helpers with no external question records or native claims.
   return Function('closeHeldBy', 'heldByGuardDeck', 'readGuardDeckQuestions', 'resumeIdFor', `${method}; return closeAfterResult`)(
@@ -33,7 +33,9 @@ function fakeManager(meta, busyUntil = 0) {
   return {
     kills,
     sessions: new Map([['pane_1', { meta, busyUntil }]]),
-    kill(id) { kills.push(id) }
+    replyFor: null,
+    turnOpenFor: () => null,
+    kill(id) { kills.push(id); return true }
   }
 }
 const temp = mkdtempSync(join(tmpdir(), 'pf-review-'))

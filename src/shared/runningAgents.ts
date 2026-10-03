@@ -25,7 +25,7 @@
 
 export interface AgentScan {
   /** tool_use id -> what was launched */
-  launched: Map<string, { via: string; at: number | null; label?: string }>
+  launched: Map<string, { via: string; at: number | null; label?: string; model?: string }>
   /** tool_use id -> the agent id its own result named (background agents only) */
   answered: Map<string, string>
   /** tool_use ids a task-notification has said stopped */
@@ -55,6 +55,8 @@ export interface RunningAgent {
   at: number | null
   /** the launch's own `description`, e.g. "Visual review Design 4 pages" */
   label?: string
+  /** the model the launch ASKED for (`input.model`); never proof of what ran */
+  model?: string
 }
 
 /**
@@ -129,13 +131,14 @@ export function scanAgentLines(scan: AgentScan, text: string): void {
     for (const c of content as Array<Record<string, unknown>>) {
       if (!c || typeof c !== 'object') continue
       if (c.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage' || c.name === 'Workflow') && typeof c.id === 'string') {
-        const input = (c.input ?? {}) as { description?: unknown; scriptPath?: unknown; name?: unknown }
+        const input = (c.input ?? {}) as { description?: unknown; scriptPath?: unknown; name?: unknown; model?: unknown }
         const graph = c.name === 'Workflow' ? `workflow ${String(input.name ?? input.scriptPath ?? '').split('/').pop()?.replace(/\.m?js$/, '') ?? ''}`.trim() : undefined
         const at = j.timestamp ? Date.parse(j.timestamp) : NaN
         scan.launched.set(c.id, {
           via: c.name as string,
           at: Number.isFinite(at) ? at : null,
-          label: graph ?? (typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined)
+          label: graph ?? (typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined),
+          ...(typeof input.model === 'string' && input.model.trim() ? { model: input.model.trim().slice(0, 80) } : {})
         })
       } else if (c.type === 'tool_use' && c.name === 'Bash' && typeof c.id === 'string' && (c.input as { run_in_background?: unknown } | undefined)?.run_in_background === true) {
         const input = c.input as { description?: unknown }
@@ -191,7 +194,7 @@ export function runningAgents(scan: AgentScan, opts: { since?: number; now?: num
     if (!l) continue
     if (l.at != null && opts.since != null && l.at < opts.since) continue
     if (l.at != null && opts.now != null && opts.now - l.at > AGENT_MAX_AGE_MS) continue
-    out.push({ id: agent, toolUseId, via: l.via, at: l.at, label: l.label })
+    out.push({ id: agent, toolUseId, via: l.via, at: l.at, label: l.label, ...(l.model ? { model: l.model } : {}) })
   }
   return out
 }

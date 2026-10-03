@@ -239,6 +239,67 @@ try {
     assert.equal(swept(), false, 'idle with an empty box: the queued clear is asked again')
     assert.ok(live.meta.autoClearAt, 'and its countdown is on screen')
   }
+  // The same idle pane, but the flag is a STALE one: 'drafting' over a box that is empty on
+  // screen (the stray-keystroke / Esc Esc shape). Only `recheckDraft` clears that, and it used
+  // to wait 60 s after the last key; a pane owed a clear reads it after 10 s and then asks
+  // again. Red-capable: with the owed pair back at 60 s / 30 s the 12 s case stays queued.
+  {
+    const ESC = '\x1b'
+    const NB = String.fromCharCode(0xa0)
+    const rule = '─'.repeat(60)
+    const screenOf = (line) => `${rule}\r\n❯${NB}${line}\r\n${rule}\r\n${ESC}[2;3H`
+    // The headless terminal the box read replays into schedules its own zero-delay timers; those must really fire.
+    const faked = global.setTimeout
+    global.setTimeout = (fn, ms) => (ms ? faked(fn, ms) : realTimers(fn, ms))
+    const flush = () => new Promise((r) => realTimers(r, 1500))
+    const staleCase = async (keyAgoMs, line, typedOnly = false) => {
+      global.__pfHandoff = valid()
+      const manager = new SessionManager()
+      const { id } = manager.start({ cwd: root, agent: 'claude' })
+      const live = manager.sessions.get(id)
+      live.turnPending = false
+      live.meta.status = 'idle'
+      live.meta.lastKeyboard = Date.now() - keyAgoMs
+      printedAgo(live, 30_000)
+      live.paintedAt = Date.now() - 30_000
+      live.meta.runSince = Date.now() - 60_000
+      assert.match(manager.armAutoClear(id, { prompt: 'continue', steps: ['continue work'], seconds: 15 }).reason ?? '', /queued/, 'stale: the mid-turn ask is queued')
+      live.meta.drafting = true
+      live.draft = { text: '', certain: false, inPaste: false }
+      // The Ctrl-U / Ctrl-C shape: the draft knows the box was emptied, the slash-command
+      // record (`typed`, which never clears on those keys) still holds the words.
+      if (typedOnly) {
+        live.meta.drafting = undefined
+        live.draft = { text: '', certain: true, inPaste: false }
+        live.typed = 'a line somebody deleted'
+      }
+      manager.endRun(live)
+      live.draftConfirmation = undefined
+      live.cols = 60
+      live.rows = 12
+      live.buffer = { read: () => screenOf(line) }
+      assert.equal(manager.autoClearPending.has(id), true, 'stale: queued under the flag')
+      manager.sweepIdle()
+      await flush()
+      manager.sweepIdle()
+      return { manager, live, id }
+    }
+    let r = await staleCase(12_000, '')
+    assert.equal(r.manager.autoClearPending.has(r.id), false, 'a clear owed over a stale flag is asked again 12 s after the last key')
+    assert.ok(r.live.meta.autoClearAt, 'stale flag: and its countdown is on screen')
+    r = await staleCase(5_000, '')
+    assert.equal(r.manager.autoClearPending.has(r.id), true, 'a key 5 s ago keeps it waiting')
+    r = await staleCase(12_000, 'half a prompt')
+    assert.equal(r.manager.autoClearPending.has(r.id), true, 'a line in the box on screen keeps it waiting')
+    // 2026-10-03 PC: s11, s14 and s22 each sat owed a clear for hours, logged "(drafting)"
+    // once and never again, with `drafting` unset - only `typed` was holding them.
+    r = await staleCase(12_000, '', true)
+    assert.equal(r.manager.autoClearPending.has(r.id), false, 'a deleted line only the typed record still holds is read off the screen and the clear asked again')
+    assert.equal(r.live.typed, '', 'and the typed record is emptied with it')
+    r = await staleCase(12_000, 'still there', true)
+    assert.equal(r.manager.autoClearPending.has(r.id), true, 'but a typed line still in the box on screen keeps it waiting')
+    global.setTimeout = faked
+  }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {
   global.setTimeout = realTimers

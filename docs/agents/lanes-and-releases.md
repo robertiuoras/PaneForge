@@ -120,7 +120,9 @@ try -- --pull --show`.
 
 `"release": "version"`: below 1.0 patch (`feat:`), `feat!:` minor, `ship minor|major`. One per
 2h (`COOLDOWN_MS`); manual `npm version`/`git tag`/tag push blocked; `npm run ship` skips the
-gate. Stops named: typecheck, `npm test` (`suiteFailure`), conflict (`test:gate`). Notes =
+gate. Stops named: typecheck, `npm test` (`suiteFailure`), conflict (`test:gate`). The suite runs
+as its own detached `suite-job` (one per tree, `state.suiteRun`); a clock tick (`retry`, `release --gone`)
+never waits on it, a chat's `ready` does (`test:lanesuiterun`). Notes =
 subjects between tags (`scripts/release-notes.mjs`, `test:notes`). Asset size before fixing
 `latest.yml` (`reconcileFeed`, `test:laneargs`). Tag push runs `Release` (mac AND win). `npm
 run release` (`scripts/release.mjs`) is a GUARD: refuses over a complete release, before the

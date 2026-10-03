@@ -213,6 +213,9 @@ const TESTS = [
   ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
+  // One test run per tree, a timed-out run killed whole, and the run outlives a killed clock
+  // tick and leaves its verdict (2026-10-02/03). ~2.5 min on the PC.
+  ['lanesuiterun', 'lane-suite-run-test.mjs'],
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
   // dirt in main does not hold a merge (2026-09-28).
   ['lanecleared', 'lane-cleared-test.mjs'],

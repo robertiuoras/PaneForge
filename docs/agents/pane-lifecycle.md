@@ -126,6 +126,15 @@ agent pane with no turn end logs `stays - no finished turn: ...` once (`test:don
 PC, written by the Mac on the replica that first carries `closedAt`, never for a close older
 than `PEER_NOTICE_MAX_AGE_MS` 12h (`storeRemoteReview`, `test:review`).
 
+A turn still open in the TRANSCRIPT never closes, whatever the screen says (s105,
+2026-10-02: Review closed a client chat between two Chrome tool calls, footer quiet):
+`shared/replyRead.ts` `openTurnOf` (last row a tool call, an unanswered tool result or
+prompt, Codex `task_started`; stale after `OPEN_TURN_STALE_MS` 20 min) holds `doneVerdict`,
+`closeAfterResult`, and `closeRefusedFor` for every automatic closer. Every `kill` writes
+`closedBecause` (`shared/closeWhenDone.ts`: who, why, status, screen turn end, transcript
+last entry, turn-end row) to the `close-request` line and History; a close with an open
+turn adds `close-open-turn` (reclaim.log) and `INCIDENT` (`test:doneclose`, `test:replyread`).
+
 Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
 even when automatic closure is disabled. Shell closure retains its existing command semantics.
 
