@@ -169,10 +169,19 @@ export interface CodexWorker {
   startedAt?: number
   endedAt?: number
   updatedAt?: number
+  /** Codex only, native readings, visibility only: tokens this helper has used so far. */
+  tokens?: number
+  /** Codex only, visibility only: its newest native tool call in plain words, and when. */
+  action?: string
+  actionAt?: number
 }
 export interface CodexWorkerReading {
   workers: CodexWorker[]
   status: 'fresh' | 'unknown' | 'limited'
+  /** Codex only, native readings, visibility only: the chat's own tokens. */
+  parentTokens?: number
+  /** Every helper below the chat, their own helpers included. */
+  subagentTokens?: number
 }
 
 export interface Session {

@@ -47,6 +47,7 @@ if (process.platform !== 'win32') {
 const TESTS = [
   ['freshreplay', 'fresh-replay-test.mjs'],
   ['codexworkers', 'codex-workers-test.mjs'],
+  ['codexaltarrow', 'codex-alt-arrow-test.mjs'],
   ['paneanswer', 'pane-answer-test.mjs'],
   ['includedaccounts', 'included-accounts-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
