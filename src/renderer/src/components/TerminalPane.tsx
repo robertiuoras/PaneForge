@@ -13,6 +13,7 @@ import {
   type Cell
 } from '@shared/mirrorFit'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
+import { codexAltArrow } from '@shared/codexKeys'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -3311,7 +3312,15 @@ function TerminalPane({
     }
 
     t.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown' || e.altKey) return true
+      if (e.type !== 'keydown') return true
+      // Alt+Left/Right is Codex's switch between a chat's subagents; see `codexAltArrow`.
+      const subagentSwitch = codexAltArrow(agentRef.current, e, isMac)
+      if (subagentSwitch) {
+        e.preventDefault()
+        t.input(subagentSwitch)
+        return false
+      }
+      if (e.altKey) return true
       // Copy mode owns the keyboard while it is on: `j` is a motion, not a keystroke for
       // the agent. Returning false is what stops xterm writing it to the pty - the same
       // door the app's own Ctrl chords use below.
