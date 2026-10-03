@@ -25,10 +25,17 @@ export function openNextSteps(md: string): string[] {
   if (start < 0) return []
   const rest = text.slice(start).split('\n').slice(1)
   const steps: string[] = []
+  let first = true
   for (const raw of rest) {
     if (/^#{1,4}\s/.test(raw)) break // the next section
     const line = raw.trim()
     if (!line) continue
+    // A section that OPENS with None is closed, whatever is listed under it: PC
+    // s15-muqrpdgh (2026-10-02) wrote "None. All closed..." and then four bullets of the
+    // work it had FINISHED, and read as four open steps for ever. "None for agents" is
+    // not that: the bullets after it are still read.
+    if (first && NONE_OPENS.test(line.replace(/^(?:[-*]|\d+[.)])\s+/, '').replace(/^\[[ xX]\]\s*/, '').replace(/\*\*/g, ''))) return []
+    first = false
     const m = line.match(/^(?:[-*]|\d+[.)])\s+(.*)$/)
     if (!m) continue
     const body = m[1].replace(/^\[[ xX]\]\s*/, '').replace(/\*\*/g, '').trim()
@@ -38,6 +45,9 @@ export function openNextSteps(md: string): string[] {
   }
   return steps
 }
+
+/** "None.", "Nothing left", "None - all closed", "No open steps": the whole section says it is closed. */
+const NONE_OPENS = /^(?:(?:none|nothing)(?:\s*$|[.!:;,]|\s+[-–—(]|\s+(?:open|left|remaining|outstanding|to do)\b)|no (?:open|next|remaining|outstanding) steps\b)/i
 
 /**
  * What is wrong with a handoff's shape, or null when `openNextSteps` can read it.
@@ -109,6 +119,41 @@ function personOwned(body: string): boolean {
 /** What a `Once ...` trigger waits on that no session in this chat controls. */
 const EXTERNAL_WAIT = /\b(?:ci\b|releas|install|deploy|merg|review|build|green|approv|robert\b|he\b|she\b|they\b|you\b)/i
 
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?'
+const DATE = `(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}|${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?|\\d{4}-\\d{2}-\\d{2})`
+const DAY = '(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?'
+/** Dated for later: "On or after 5 Oct 2026, run...", "After 5 Oct...", "...tomorrow.", "at 7:50am Sun". */
+const DATED = new RegExp(
+  `^(?:on or after|after|on|from|not before|no earlier than)\\s+${DATE}\\b|^(?:tomorrow|tonight)\\b|\\b(?:tomorrow|tonight)\\s*[.,;:!]?\\s*$|\\bat\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)\\s+${DAY}`,
+  'i'
+)
+/** Another chat's: "Chat 6 reports when...", "Pane 4 will...", "...waiting on chat 6". */
+const OTHER_CHAT = /^(?:chat|pane)\s+#?\d+\b|\bwaiting (?:on|for) (?:chat|pane)\s+#?\d+\b/i
+/** It happens by itself: "The Mac's sync pulls the fix by itself", "The check booked for 7:50am Sun will confirm". */
+const AUTOMATIC = /\b(?:by itself|on its own|automatically)\b|\b(?:booked|scheduled) (?:for|at)\b|\b(?:re-?check|check) (?:runs|fires) (?:at|on|in)\b/i
+/** ...said as a statement about something else, never an order: "Make it run automatically" is work. */
+const STATEMENT = /^(?:the|this|that|it|its|each|every|both|a|an)\b|^[\w.-]+['’]s\b/i
+/** A later sentence that is work after all. */
+const WORK = /^(?:then|and then|fix|run|rerun|re-run|commit|push|merge|add|write|update|build|test|deploy|ship|wire|make|remove|delete|send|move|rename|implement|investigate|verify|finish|continue|apply|install|release|open|create|edit|change)\b/i
+
+/**
+ * A step nobody can or need start NOW (Robert, 2026-10-03: a chat that leaves nothing it
+ * can do now closes). Judged on its FIRST sentence - automatic or passive, another chat's,
+ * or dated for later - and held after all if a later sentence orders work. Real cases:
+ * Mac s15-murh3a5m "Chat 6 reports when the new GuardDeck is installed...", PC s25-murguhxd
+ * "The Mac's sync pulls the fix by itself. The check booked for 7:50am Sun will
+ * confirm...", PC s26-muriaoad "On or after 5 Oct 2026, run the two checks...". Kept
+ * narrow on purpose: closing a chat that has real work is worse than holding one.
+ */
+export function notForNow(body: string): boolean {
+  const sentences = unquoted(body).split(/(?<=[.!])\s+(?=[A-Z])/).map((x) => x.trim()).filter(Boolean)
+  const [head, ...rest] = sentences
+  if (!head) return false
+  const later = (x: string): boolean => OTHER_CHAT.test(x) || DATED.test(x) || (STATEMENT.test(x) && AUTOMATIC.test(x))
+  if (!later(head)) return false
+  return !rest.some((x) => WORK.test(x) && !later(x))
+}
+
 /**
  * Can a fresh session start this step? `prev` = the step before it could. `Once X:`
  * right after a startable step is its second half, unless X waits on something outside
@@ -118,6 +163,7 @@ const EXTERNAL_WAIT = /\b(?:ci\b|releas|install|deploy|merg|review|build|green|a
 function stepActionable(body: string, prev: boolean): boolean {
   if (/\bblocked (?:until|on|by|pending)\b/i.test(body)) return false
   if (personOwned(body)) return false
+  if (notForNow(body)) return false
   if (BLOCKED_OPENER.test(body)) {
     if (!prev || !/^once\s/i.test(body)) return false
     const trigger = body.replace(/^once\s+/i, '').split(/[:,;]|\s[-–—]\s/)[0]
@@ -164,10 +210,30 @@ export function personOwnedSteps(md: string): string[] {
  * born a day after it - read `session-handoff.md` written 26 Sep 04:41Z as "1 step open",
  * and a finished pane with one never closes.
  */
-export function handoffOpenAfter(hand: { path: string | null; open: number; mtimeMs: number }, promptAt?: number): number | undefined {
+export function handoffOpenAfter(
+  hand: { path: string | null; open: number; mtimeMs: number; meta?: { paneId?: string } },
+  promptAt?: number,
+  pane?: { id: string; since?: number }
+): number | undefined {
   if (!hand.path) return undefined
   if (promptAt && hand.mtimeMs < promptAt) return undefined
+  // Another chat's handoff, or one older than this pane's conversation, says nothing about
+  // it. PC 2026-10-02: s23-murfiff5 held on `session-handoff.md` another chat wrote at
+  // 21:01 (its own was rotated at its 21:20 clear); s27-murjmmk3 on a taskdriver-ai one
+  // from 28 Sep. `promptAt` is often unset (only a read reply sets it), so the pane's own
+  // start - its last clear or creation - is the floor. A pane's OWN handoff always counts.
+  if (pane && !handoffIsPanes(hand, pane.id)) {
+    const floor = Math.max(promptAt ?? 0, pane.since ?? 0)
+    if (floor && hand.mtimeMs < floor) return undefined
+  }
   return hand.open
+}
+
+/** The pane's own handoff: its pane-scoped file, or one whose metadata names it. */
+export function handoffIsPanes(hand: { path: string | null; meta?: { paneId?: string } }, paneId: string): boolean {
+  const slot = paneSlot(paneId)
+  if (slot && hand.path && hand.path.replace(/\\/g, '/').endsWith(`/session-handoff${slot}.md`)) return true
+  return !!paneId && hand.meta?.paneId === paneId
 }
 
 /** What a card says beside a pane, or null when there is nothing worth a chip. */

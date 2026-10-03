@@ -8,6 +8,7 @@ import { composerWipe } from '@shared/draft'
 import type {
   Agent,
   Config,
+  CopyMade,
   DiffScope,
   HistoryEntry,
   Preset,
@@ -184,6 +185,7 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
+import CopyToast from './components/CopyToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
@@ -370,6 +372,8 @@ function reclaimPaneOf(
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
     pinned,
+    // A finished chat that expects its person: never on a close clock. See `ReclaimPane.waitsForYou`.
+    waitsForYou: !!s.waitsForYou,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
     asleep: s.asleep,
@@ -617,6 +621,9 @@ const GRID_RANK: Record<FleetState, number> = {
   needsYou: 0, stalled: 1, working: 1, starting: 1, ready: 2, exited: 3
 }
 
+/** Why a countdown let a finished chat stay: it expects its person (`Session.waitsForYou`). */
+const WAITING_FOR_YOU = 'it is waiting for you to answer or act on what it said'
+
 /**
  * How long a countdown has to survive before it is worth a sound.
  *
@@ -841,6 +848,8 @@ export default function App(): JSX.Element {
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
+  // The first copy of a project, explained once per machine - see CopyToast.
+  const [copyMade, setCopyMade] = useState<CopyMade | undefined>(undefined)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
   const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
@@ -1255,11 +1264,13 @@ export default function App(): JSX.Element {
     // reconnect finishing - all of them change what the sidebar says.
     const offR = api.onRemote(setRemote)
     const offP = api.onPhone(setPhone)
+    const offCopy = api.onCopyMade(setCopyMade)
     return () => {
       offS()
       offC()
       offR()
       offP()
+      offCopy()
     }
   }, [])
 
@@ -2399,7 +2410,7 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | { what: 'closed' | 'moved' | 'trimmed' | 'kept'; panes: ActedPane[]; mb?: number; at: number; where?: string }
     | undefined
   >(undefined)
   /**
@@ -2991,6 +3002,7 @@ export default function App(): JSX.Element {
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
         pinned: pinnedRef.current[s.id],
+        waitsForYou: !!s.waitsForYou,
         asleep: s.asleep
       })),
       capacity,
@@ -4387,6 +4399,8 @@ export default function App(): JSX.Element {
     if (s.owedPrompt) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
+    // A finished chat that expects its person: main refuses its close (`closeIntoReview`).
+    if (s.waitsForYou) return false
     const st = fleetState(s)
     return st === 'ready' || st === 'exited' || st === 'needsYou'
   }, [])
@@ -4441,6 +4455,19 @@ export default function App(): JSX.Element {
         skipClose(held, 'it was kept open or started serving during the countdown')
         mb = Math.round((mb * (ids.length - held.length)) / ids.length)
         ids = ids.filter((id) => !held.includes(id))
+        if (!ids.length) return
+      }
+      // A chat that waits for its person is refused by main, which answers nothing either
+      // way, so "Do it now" said "Closed" over a pane still on the desk (review of
+      // e7965562). Skipped here and said in plain words; the person is told why.
+      const waiting = ids.filter((id) => sessionsRef.current.find((x) => x.id === id)?.waitsForYou)
+      if (waiting.length) {
+        skipClose(waiting, WAITING_FOR_YOU)
+        if (byPerson)
+          setActed({ what: 'kept', panes: waiting.map((id) => paneActedRef.current(id)), at: Date.now(),
+            where: waiting.length === 1 ? sessionsRef.current.find((x) => x.id === waiting[0])?.waitsForYou : undefined })
+        mb = Math.round((mb * (ids.length - waiting.length)) / ids.length)
+        ids = ids.filter((id) => !waiting.includes(id))
         if (!ids.length) return
       }
       const live = ids.filter((id) => stillCloseable(id))
@@ -4767,9 +4794,13 @@ export default function App(): JSX.Element {
     const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
     if (!woke.length) return
     // Named, not counted: this is the line that answers "why was my pane armed twice and
-    // never closed" a week later. See `skipClose`.
+    // never closed" a week later. See `skipClose`. A chat that started waiting for its person
+    // did not go back to work, and the line says which it was.
+    const stopped = woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id))
+    const waiting = stopped.filter((id) => sessionsRef.current.find((x) => x.id === id)?.waitsForYou)
+    if (waiting.length) skipClose(waiting, WAITING_FOR_YOU)
     skipGone(
-      woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id)),
+      stopped.filter((id) => !waiting.includes(id)),
       'it went back to work while the countdown was running'
     )
     const gone = new Set(woke.map((s) => soonKey(s)))
@@ -5500,14 +5531,16 @@ export default function App(): JSX.Element {
                           anybody: how long is left, and the press that stops it. Never
                           beside a question or a move - a pane holding either is refused by
                           `idleCloseAt` outright, so the three can never be true at once. */}
-                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.doneClosingAt ?? alarmAt(s.id) ?? s.closingAt) ? (
+                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (alarmAt(s.id) ?? s.closingAt) ? (
                         // While the 15s countdown card is up, the CHIP shows that card's
                         // deadline and not the idle clock's. They are two readings of one
                         // decision and they disagreed on screen - the card counted down
                         // while the chip sat at `closes 0:01` (reported 2026-08-28). The
                         // armed countdown is the one that is about to act, so it wins.
+                        // A finished chat's countdown (`doneClosingAt`) is GuardDeck's
+                        // alone (Robert, 2026-10-03: "only show countdown in guardeck").
                         <CloseClock
-                          at={s.doneClosingAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
+                          at={alarmAt(s.id) ?? (s.closingAt as number)}
                           // A countdown card naming this pane may be a plan to SLEEP it,
                           // and the chip says which.
                           sleep={alarmSleeps(s.id)}
@@ -7605,13 +7638,8 @@ export default function App(): JSX.Element {
           hand already is. Order is urgency - a countdown that is about to take something
           away sits nearest the corner, a tip sits furthest from it. */}
       <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
-      {sessions.filter(s => s.doneClosingAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
-        <div className="autoclear-card" role="status" key={`review-${s.id}`}>
-          <span>{s.title} will move to Review. Reopen it there to continue.</span>
-          <CloseClock at={s.doneClosingAt!} onKeep={() => keepOpen([s.id])} />
-          <button className="autoclear-keep" onClick={() => keepOpen([s.id])}>Keep open</button>
-        </div>
-      ))}
+      {/* A finished chat's countdown is drawn in GuardDeck only, whose Stop is
+          `sessions:keepOpen` (Robert, 2026-10-03). */}
       <AutoClearToast
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
@@ -7640,6 +7668,9 @@ export default function App(): JSX.Element {
       {/* A Claude Code pane's first ask read lighter or harder than its model/effort. */}
       <ModelAdvice sessions={sessions} agents={agents} />
       <QuitGuard />
+      {/* The first copy of a project, explained once. High in the stack: nothing is about
+          to be taken away, so it must never be the card under the hand. */}
+      <CopyToast made={copyMade} onDone={() => setCopyMade(undefined)} />
       <UpdateToast />
       <WhatsNewCard />
       {/* Only ever drawn in a `npm run try` copy - walks through what this build has that

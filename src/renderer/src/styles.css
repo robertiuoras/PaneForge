@@ -3395,6 +3395,19 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
   box-shadow: var(--shadow); padding: 13px 14px; display: flex; flex-direction: column; gap: 9px;
 }
+/* The first copy of a project, explained once (CopyToast.tsx). Same shape as the update
+   card above: it is a sentence to read, not a countdown. */
+.copy-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 320px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
+}
+.copy-toast-say { color: var(--text); font-size: 13px; }
+.copy-toast-say strong { color: var(--accent-text); font-weight: 590; }
+/* A path, so it wraps rather than ellipsing: an ellipsed path is one nobody can find. */
+.copy-toast-where { color: var(--muted); font-size: 11px; font-family: var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.copy-toast-why { color: var(--muted); font-size: 12px; }
+.copy-toast-acts { display: flex; justify-content: flex-end; gap: 6px; }
 .ut-text { display: flex; flex-direction: column; gap: 3px; }
 .ut-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
@@ -5028,6 +5041,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 .corner-stack > .autoclear-card,
 .corner-stack > .move-soon,
 .corner-stack > .update-toast,
+.corner-stack > .copy-toast,
 .corner-stack > .tour-card,
 .corner-stack > .tip-toast {
   /* relative, not static: `.card-x` anchors to its own card, not the whole stack. */
@@ -5039,7 +5053,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 
 /* Room for the dismiss button in the top-right of every corner card, so it never
    overlaps the card's first line. */
-.autoclear-card, .move-soon, .update-toast, .tour-card, .tip-toast {
+.autoclear-card, .move-soon, .update-toast, .copy-toast, .tour-card, .tip-toast {
   padding-right: 32px;
 }
 /* The one dismiss button every corner card draws first, top-right. Follows

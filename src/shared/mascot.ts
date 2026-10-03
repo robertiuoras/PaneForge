@@ -618,12 +618,13 @@ export interface ActedPane {
  * bug this argument exists to close.
  */
 export function actedWords(
-  what: 'closed' | 'moved' | 'trimmed',
+  what: 'closed' | 'moved' | 'trimmed' | 'kept',
   panes: ActedPane[],
   mb?: number,
   agoMs = 0,
   /** Which machine it went to. Named, because "the paired device" is the one fact a
-   *  person cannot get back from anywhere on screen once the pane has gone. */
+   *  person cannot get back from anywhere on screen once the pane has gone. For `kept`,
+   *  why the chat waits for its person (`Session.waitsForYou`), when it is one pane. */
   where?: string
 ): string {
   const subject = (p: ActedPane): string => {
@@ -635,7 +636,9 @@ export function actedWords(
   const when = agoWords(agoMs)
   const back = mb ? `, about ${formatMb(mb)} back` : ''
   const head =
-    what === 'trimmed'
+    what === 'kept'
+      ? `Did not close ${who} - it is waiting for you${where ? ` (${where})` : ''}. Answer it, or close it yourself.`
+      : what === 'trimmed'
       ? `Trimmed ${who} ${when}${mb ? `, about ${formatMb(mb)}` : ''} - this machine was short of memory.`
       : what === 'moved'
         ? `Moved ${who} to ${where || 'the paired device'} ${when} - it is mirrored here, so it is still on screen.`

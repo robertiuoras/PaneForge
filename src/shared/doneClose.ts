@@ -12,7 +12,7 @@
 // The refusals are the whole file, and each one is something that would be LOST rather
 // than finished. `doneEnough` (`shared/closeWhenDone.ts`) supplies the pane-state half; the
 // half that is new here is READING THE REPLY - a step an agent could take next keeps the
-// pane open, a question keeps it open, a person reading it keeps it open.
+// pane open, a question keeps it open. Looking at it does not (Robert, 2026-10-03).
 //
 // Pure. `main/doneClose.ts` reads the transcript and closes; `npm run test:doneclose`.
 
@@ -25,8 +25,6 @@ import { actionableNextSteps, openNextSteps, personOwnedSteps } from './handoffS
  */
 export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | 'handoffQueuedAt' | 'handoffOpen' | 'handoverUntil'> {
   agent: string
-  /** A person is looking at this pane right now. */
-  focused?: boolean
   lastKeyboard: number
   /** When the pane's own footer last said the turn was over; 0 = mid-turn or never ran. */
   turnEndedAt: number
@@ -75,8 +73,11 @@ export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | '
    * The last moment a person was looking at this pane (`personLooking`) since its turn
    * ended; unset when nobody has since. A value older than `turnEndedAt` is an earlier
    * turn's and counts as unset, so a new turn resets it without anybody clearing it.
+   * It no longer delays or cancels the close; it only means the phone is not pushed.
    */
   lookedAt?: number
+  /** What the sweep last published as `Session.waitsForYou`, so it publishes only a change. */
+  waitsForYou?: string
   /**
    * A person said to keep this pane open (the card's "Keep this pane open",
    * `config.pinnedPanes`). Robert, 2026-09-29: "mark a session as keep open so auto close
@@ -88,13 +89,10 @@ export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | '
 }
 
 /**
- * How long a pane somebody has READ waits after they look away. Robert, 2026-09-28 (s93, a
- * one-line answer he read and left): "should've closed that session automatically after
- * like 30secs after i read it".
+ * Has somebody looked at this turn's reply since it ended? Only the phone push reads it
+ * (`notify`'s `looked`): looking never holds, delays or cancels a close (Robert,
+ * 2026-10-03: "if i go in paneforge in that chat it shouldn't stop the coutndown").
  */
-export const READ_QUIET_MS = 30_000
-
-/** Has somebody looked at this turn's reply since it ended? */
 export function wasRead(p: Pick<DoneReading, 'lookedAt' | 'turnEndedAt'>): boolean {
   return Boolean(p.turnEndedAt && p.lookedAt && p.lookedAt >= p.turnEndedAt)
 }
@@ -130,21 +128,25 @@ export function closeHeldBy(m: CloseHolds, now = Date.now()): string[] {
 }
 
 /**
- * How long a finished reply must sit unread before its pane goes. Long enough to walk
- * back from the kettle; the pane a person is IN never counts, and a card in Review is
- * one press from being a pane again.
+ * How long a finished reply sits after its turn ended (and after the last key) before its
+ * countdown starts. Robert, 2026-10-03: "3 minutes is too long i think make it 1 minute by
+ * default". A card in Review is one press from being a pane again.
  */
-export const AUTO_CLOSE_QUIET_MS = 3 * 60_000
+export const AUTO_CLOSE_QUIET_MS = 60_000
+
+/**
+ * The countdown after that wait, shown only in GuardDeck, whose Stop is `sessions:keepOpen`.
+ * Robert, 2026-10-03: "only show countdown in guardeck like 15secs with option to stop it".
+ */
+export const DONE_COUNTDOWN_MS = 15_000
 
 /**
  * The same wait on a machine MEASURED short of memory (`sleepPressureOf` over the capacity
- * verdict): one minute when tight, thirty seconds when over - the clocks the pressure
- * sleep used, which this close replaced (Robert, 2026-09-28: "id rather they close than
- * sleep"). A finished pane's ~190 MB is exactly what a short machine lacks, and it is one
- * press from Review either way.
+ * verdict): thirty seconds when tight, fifteen when over (Robert, 2026-09-28: "id rather
+ * they close than sleep"). A finished pane's ~190 MB is exactly what a short machine lacks.
  */
 export function doneQuietMs(pressure: 'ok' | 'tight' | 'over'): number {
-  return pressure === 'over' ? 30_000 : pressure === 'tight' ? 60_000 : AUTO_CLOSE_QUIET_MS
+  return pressure === 'over' ? 15_000 : pressure === 'tight' ? 30_000 : AUTO_CLOSE_QUIET_MS
 }
 
 /**
@@ -203,14 +205,11 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
   if (p.kept) return { close: false, reason: 'kept open by hand' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
-  if (p.focused) return { close: false, reason: 'somebody is looking at it' }
   if (p.openedOthers) return { close: false, reason: 'it opened other panes and collects their summary' }
   if (p.owedPrompt) return { close: false, reason: 'a prompt is on its way to it' }
+  // Typing counts; looking does not (Robert, 2026-10-03).
   const quiet = now - Math.max(p.turnEndedAt, p.lastKeyboard)
-  // A read pane always waits READ_QUIET_MS from when they looked away.
-  const read = wasRead(p)
-  const readQuiet = read ? now - Math.max(p.lookedAt ?? 0, p.lastKeyboard) >= READ_QUIET_MS : false
-  if (quietMs !== 0 && ((read && !readQuiet) || (!read && quiet < quietMs))) return { close: false, reason: 'not quiet long enough' }
+  if (quietMs !== 0 && quiet < quietMs) return { close: false, reason: 'not quiet long enough' }
   const busy = whyNotDone(p, quiet, now)
   if (busy) return { close: false, reason: busy }
   // What `closeAfterResult` refuses on, refused here first: passed here and refused there,
@@ -222,7 +221,25 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }
-  return { close: true, personSteps: replyPersonSteps(p.reply), read }
+  return { close: true, personSteps: replyPersonSteps(p.reply), read: wasRead(p) }
+}
+
+/**
+ * Does this finished chat expect its person, in words - null when it leaves nothing for
+ * itself to do? Robert, 2026-10-03: a chat that asks him something, reports unfinished
+ * work, lists steps an agent could take, has subagents out, a handoff with open steps, or
+ * waits for the panes it opened STAYS OPEN until he acts. `doneVerdict` already held these;
+ * this is the same reading published as `Session.waitsForYou` so the idle clock
+ * (`shared/reclaim.ts`), `sessions:closeIntoReview` and the asleep sweep never close it
+ * either. Steps only a person can take never count: they become GuardDeck to-dos.
+ */
+export function waitsForYou(
+  p: Pick<DoneReading, 'reply' | 'runningAgents' | 'openedOthers'> & CloseHolds,
+  now = Date.now()
+): string | null {
+  if (p.openedOthers) return 'it opened other panes and collects their summary'
+  if (p.handoffOpen) return 'a handoff with open steps'
+  return p.reply === undefined ? null : replyLeaves(p.reply, p.runningAgents)
 }
 
 /**

@@ -85,10 +85,9 @@ armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
 
 `shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
 on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
-`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
-quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
-(`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
-`READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
+`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`),
+quiet `doneQuietMs` (1 min, 30 s tight, 15 s over) past max(turn end, last key); LOOKING
+never holds or cancels it (Robert 2026-10-03), `lookedAt` only means no phone push; `doneEnough`, no prompt owed, opener only while its
 children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
 `test:replyread`), no running subagent, reply not ending `?`, `actionableNextSteps` empty,
 the folder NEVER holds it (Robert 2026-10-02): `gitCached` changed files / unpushed commits (a failed or pre-turn read
@@ -108,9 +107,10 @@ queue, blocks followers and is never pasted again on restore. Only a native rece
 the entire payload releases it; a matching first line or a turn clock is insufficient
 (`test:promptsubmit`, `test:closedone`, `test:busy`). A pre-paste trust-choice Enter does not
 claim Codex's composer; existing empty, idle and unchanged checks still govern delivery.
-Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
-any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
-An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
+Once eligible, the sweep publishes `doneClosingAt` and waits `DONE_COUNTDOWN_MS` 15 s; any
+refusal cancels it. ONLY GuardDeck draws it (PaneForge's card/corner do not); its Stop =
+`sessions:keepOpen` [id, keep] (`surface.ts` `keepPaneOpen`, so `/pf/call`; `@device/` panes
+forwarded) = the card's pin + drops the countdown. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
 `cardAfterClose` (direct close, arm, `sessions:kill`). `pf tidy` = `sessions:closeDone`: same
 sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
@@ -138,8 +138,13 @@ turn adds `close-open-turn` (reclaim.log) and `INCIDENT` (`test:doneclose`, `tes
 Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
 even when automatic closure is disabled. Shell closure retains its existing command semantics.
 
-Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
-refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
+A finished chat that expects its person (`shared/doneClose.ts` `waitsForYou`: question,
+agent steps, unfinished work, subagents out, handoff with open steps, opened panes) is
+published every tick as `Session.waitsForYou` (cleared by a running or open turn) and NEVER
+closed by any closer: idle clock (`onTheClock`), `reclaimPlan`, `closeIntoReview`
+(`close-refused waits-for-you`), `asleepSweep`; sleeping it stays allowed (`test:reclaim`).
+
+Finished-turn sweeps recheck every refusal on the countdown's expiry; Keep open persists the pin. Local/remote pins also cancel an armed
 clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
 for the lifetime of the app, until a manual fresh session changes its ID.
 
