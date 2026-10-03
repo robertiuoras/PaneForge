@@ -48,7 +48,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { markFor } from '../shared/deviceWatch'
 import { NativeAuth, nativeDeviceValid, type NativeGrant, type NativePromptReceipt } from './nativeAuth'
 import { judgeTailnet, tailnetSource, trustLine, type TailnetNode, type TailnetVerdict } from '../shared/tailnetIdentity'
-import { deskHost, verifyDeskTicket } from '../shared/deskTicket'
+import { deskTicketShape, redeemDeskTicket, sameOwner } from './deskTicket'
 import { deviceKind, hostOf, originOf } from '../shared/net'
 import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState, Session } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
@@ -409,10 +409,17 @@ export interface PhoneDeps {
    * "Is this Robert's phone on Tailscale": who owns a tailnet address and which user this
    * desk is (`main/tailnetIdentity.ts`). Absent = no request is ever trusted that way.
    */
-  tailnet?: { whois(ip: string): Promise<TailnetNode | null>; selfUser(): Promise<string>; selfLogin(): Promise<string> }
+  tailnet?: {
+    whois(ip: string): Promise<TailnetNode | null>
+    selfUser(): Promise<string>
+    /** this desk's own Tailscale login: the account a Taskdriver desk ticket must name */
+    selfLogin(): Promise<string>
+    /** this desk's own Tailscale DNS name: the audience a desk ticket is redeemed for */
+    selfDns(): Promise<string>
+  }
   /**
-   * The TaskDriver ingest token this desk holds (`main/limitWaves.ts` `ingestToken()`): the
-   * root of the key a Taskdriver desk ticket is signed with. Absent/null = no ticket is trusted.
+   * The TaskDriver ingest token this desk holds (`main/limitWaves.ts` `ingestToken()`): how the
+   * desk authenticates when it redeems a desk ticket. Absent/null = no ticket is redeemed.
    */
   ingestToken?(): string | null
   /** one line per trust decision (`phone-trust.log`); names and addresses, never a token */
@@ -476,8 +483,6 @@ export class PhoneServer {
   private nativeTokens = new Map<string, { since: number; n: number }>()
   private nativeTailnets = new Map<string, { since: number; n: number }>()
   private nativeTickets = new Map<string, { since: number; n: number }>()
-  /** Taskdriver desk tickets already used: jti -> exp (ms), pruned and capped by `verifyDeskTicket` */
-  private ticketsSeen = new Map<string, number>()
   /** `/pf/ask` requests a trusted phone made: already answered, waiting for their poll */
   private trustedAsks = new Map<string, { token: string; at: number }>()
   /** last time each (address, verdict) was written to the trust log by a per-request check */
@@ -1050,22 +1055,23 @@ b.onclick=async()=>{
   }
 
   /**
-   * Sign-in for Robert's phone with no Tailscale on it and no code: taskdriver.ai, where the
-   * app is signed in with Google, signs a two-minute ticket naming this desk, the app's device
-   * id and the owner's email, keyed from the ingest token this desk already holds. Trusted only
-   * when `shared/deskTicket.ts` says so and the email is this desk's own Tailscale login (the
-   * person `shared/tailnetIdentity.ts` trusts); anything else is 403 and writes nothing. The
-   * answer is the same shape `/auth/token` and `/auth/tailnet` return.
+   * Sign-in for Robert's phone with no Tailscale on it and no code (desk ticket contract v2):
+   * the app, signed in to taskdriver.ai with Google, brings a random single-use ticket that
+   * taskdriver.ai issued to its owner for this desk. The desk cannot judge a ticket and does
+   * not try - it redeems it at taskdriver.ai (`main/deskTicket.ts`) for its OWN Tailscale name,
+   * and only an answer naming this desk's own Tailscale login (the person
+   * `shared/tailnetIdentity.ts` trusts) gets the grant. Anything else is 403 and writes nothing.
+   * The answer is the same shape `/auth/token` and `/auth/tailnet` return.
    */
   private async nativeTaskdriver(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!isTls(req)) return this.plain(res, 400, 'https required')
     if (!this.nativeRate(req, this.nativeTickets, 10)) return this.plain(res, 429, 'try later')
     const body = await this.readNativeWire<Record<string, unknown>>(req, res)
     if (!body) return
-    const ticket = typeof body.ticket === 'string' ? body.ticket : ''
+    const ticket = body.ticket
     const deviceId = String(body.deviceId ?? '')
     const deviceName = String(body.deviceName ?? '')
-    if (!ticket || !nativeDeviceValid(deviceId, deviceName)) return this.plain(res, 400, 'native authorization refused')
+    if (!deskTicketShape(ticket) || !nativeDeviceValid(deviceId, deviceName)) return this.plain(res, 400, 'native authorization refused')
     const ip = addressOf(req)
     // deviceName passed nativeDeviceValid: letters, digits and a few marks, never a newline.
     const log = (allowed: boolean, reason: string): void => {
@@ -1077,20 +1083,23 @@ b.onclick=async()=>{
     }
     const refuse = (reason: string): void => {
       log(false, reason)
-      this.plain(res, 403, 'not the desk owner\'s Taskdriver ticket')
+      this.plain(res, 403, 'ticket refused')
     }
     if (this.localOnly) return refuse('phone access is switched off')
     const token = this.deps.ingestToken?.() ?? ''
     if (!token) return refuse('this desk holds no Taskdriver token')
-    const owner = this.deps.tailnet ? await this.deps.tailnet.selfLogin().catch(() => '') : ''
+    const [owner, aud] = this.deps.tailnet
+      ? await Promise.all([this.deps.tailnet.selfLogin().catch(() => ''), this.deps.tailnet.selfDns().catch(() => '')])
+      : ['', '']
     if (!owner) return refuse('this desk\'s owner is unknown (no Tailscale login)')
-    const host = deskHost(req.headers.host)
-    const verdict = verifyDeskTicket({ ticket, deviceId, host, now: Date.now(), ingestToken: token, owner, seen: this.ticketsSeen })
-    if (!verdict.ok) return refuse(verdict.reason)
+    if (!aud) return refuse('this desk\'s own Tailscale name is unknown')
+    const redeemed = await redeemDeskTicket({ ticket, deviceId, aud, token })
+    if ('refused' in redeemed) return refuse(redeemed.refused)
+    if (!sameOwner(redeemed.email, owner)) return refuse('Taskdriver vouched for another account, not this desk\'s owner')
     try {
       const row = this.saveDevice(`td-${createHash('sha256').update(deviceId).digest('hex').slice(0, 24)}`, ip, () => ({ kind: 'iPhone', ua: `Taskdriver app (${deviceName.trim()})` }))
-      const grant = this.native.grantDirect({ deviceId, deviceName }, row.id, /^[a-z0-9.-]{1,253}$/.test(host) ? host : 'localhost')
-      log(true, 'a Taskdriver ticket for this desk\'s owner')
+      const grant = this.native.grantDirect({ deviceId, deviceName }, row.id, aud)
+      log(true, 'Taskdriver redeemed a ticket for this desk\'s owner')
       this.json(res, 200, grant)
     } catch {
       log(false, 'the grant could not be written')
@@ -1645,8 +1654,15 @@ b.onclick=async()=>{
 
   private async readNativeWire<T>(req: IncomingMessage, res: ServerResponse, limit = NATIVE_JSON_LIMIT): Promise<T | null> {
     try {
-      const body = await readBody(req, limit)
-      return decodeWire(body || '{}') as T
+      const body = decodeWire((await readBody(req, limit)) || '{}')
+      // Every caller reads fields off an object and returns on null, so null / undefined /
+      // an array / a bare value is answered here: before, `null` returned unanswered and the
+      // socket hung until the client gave up.
+      if (Object.prototype.toString.call(body) !== '[object Object]') {
+        this.plain(res, 400, 'bad body')
+        return null
+      }
+      return body as T
     } catch (err) {
       // A rejected upload may still have an unread body; never reuse its socket.
       res.setHeader('connection', 'close')

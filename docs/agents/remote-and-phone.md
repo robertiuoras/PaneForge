@@ -103,12 +103,15 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   `X-Forwarded-For` + `tailscale whois`, same Tailscale user as the desk, iOS/android, never Funnel or
   cloudflared, never with phone access off), `POST /pf/native/v1/auth/tailnet`, trusted `/pf/ask` and
   control unlock; grants slide 30 days while in use; `phone-trust.log`; `test:tailnettrust`.
-- Robert's iPhone WITHOUT Tailscale signs in with no code by a Taskdriver desk ticket:
-  taskdriver.ai signs `v1.<payload>.<sig>` (HMAC keyed from the ingest token, `limitWaves.ts`
-  `ingestToken()`) for its owner only; `POST /pf/native/v1/auth/taskdriver` (`shared/deskTicket.ts`)
-  checks sig, exp, life <=300 s, aud = Host, deviceId, jti once, email = the desk's own Tailscale
-  login (`selfLogin()`); never with phone access off. Row `td-<sha256(deviceId)>`, same read+control
-  grant as tailnet; a lapsed control window is 423 and the app signs in again; `test:deskticket`.
+- Robert's iPhone WITHOUT Tailscale signs in with no code by a Taskdriver desk ticket (contract
+  v2): taskdriver.ai issues a random single-use ticket to its owner; `POST /pf/native/v1/auth/taskdriver`
+  never checks it locally but REDEEMS it (`main/deskTicket.ts`: `/api/app/desk-ticket/redeem`, Bearer
+  ingest token as `postPush`, 8 s, `PF_TASKDRIVER_REDEEM_URL` for tests) with aud = the desk's own
+  `Self.DNSName` (`selfDns()`, never Host: Funnel passes Host through), and grants only when the
+  email is the desk's own Tailscale login (`selfLogin()`, ASCII-lowercase, strict). v1's HMAC from the
+  ingest token was dropped: every agent can read that token. Never with phone access off. Row
+  `td-<sha256(deviceId)>`, same read+control grant as tailnet; lapsed control = 423, the app signs in
+  again; `test:deskticket`. A native body that is not a JSON object is 400 (`readNativeWire`).
 - The phone server never starts on a port something already answers on at 127.0.0.1
   (`answersOnLoopback` in `PhoneServer.start`, `test:pfaccess`): a copy would otherwise shadow
   the installed app's loopback for `pf`, the tunnel and `tailscale serve`.

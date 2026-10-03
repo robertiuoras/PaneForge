@@ -131,7 +131,7 @@ export function parseSelfUser(text: string): string {
 /**
  * This desk's own Tailscale login (an email) out of `tailscale status --json`: the profile
  * `User[Self.UserID].LoginName`; '' when unreadable or not running. The account a Taskdriver
- * desk ticket must name (`shared/deskTicket.ts`) - the same person `judgeTailnet` trusts.
+ * desk ticket must name (`main/deskTicket.ts`) - the same person `judgeTailnet` trusts.
  */
 export function parseSelfLogin(text: string): string {
   try {
@@ -139,6 +139,22 @@ export function parseSelfLogin(text: string): string {
     if (j?.BackendState && j.BackendState !== 'Running') return ''
     const id = String(j?.Self?.UserID ?? '')
     return id ? String(j?.User?.[id]?.LoginName ?? '').trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * This desk's own Tailscale DNS name out of `tailscale status --json` (`Self.DNSName`, trailing
+ * dot removed, lowercase); '' when unreadable or not running. The audience a Taskdriver desk
+ * ticket is redeemed for - never the Host header, which serve and Funnel pass through as sent.
+ */
+export function parseSelfDns(text: string): string {
+  try {
+    const j = JSON.parse(text) as { BackendState?: string; Self?: { DNSName?: unknown } }
+    if (j?.BackendState && j.BackendState !== 'Running') return ''
+    const name = String(j?.Self?.DNSName ?? '').trim().replace(/\.$/, '').replace(/[A-Z]/g, (c) => c.toLowerCase())
+    return /^[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/.test(name) ? name : ''
   } catch {
     return ''
   }

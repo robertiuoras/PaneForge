@@ -1,15 +1,17 @@
-// Robert's iPhone signs in to a desk with a ticket taskdriver.ai signed - no Tailscale on the
-// phone, no code - and nothing else does.
+// Robert's iPhone signs in to a desk with a ticket taskdriver.ai issued - no Tailscale on the
+// phone, no code - and nothing else does. Desk ticket contract v2 (3 Oct 2026): the desk never
+// checks a ticket itself; it redeems it at taskdriver.ai, which spends it once and names the
+// owner. Holding the ingest token (every agent on both desks can read it) mints nothing.
 //
-// The rule is `src/shared/deskTicket.ts`, the door `src/main/phone.ts`
-// (`/pf/native/v1/auth/taskdriver`), the owner `src/main/tailnetIdentity.ts` `selfLogin()`.
-// No network, no window: the ticket is the contract's test vector (desk-ticket contract v1,
-// 3 Oct 2026) and requests arrive on loopback the way Tailscale Funnel delivers them.
+// The client `src/main/deskTicket.ts`, the door `src/main/phone.ts`
+// (`/pf/native/v1/auth/taskdriver`), the owner + audience `src/main/tailnetIdentity.ts`
+// (`selfLogin`, `selfDns`). No network: taskdriver.ai is a fake on loopback that keeps tickets
+// the way the contract's `desk_tickets` table does, and requests arrive the way Funnel sends them.
 
 import { buildSync } from 'esbuild'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { request as httpRequest } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -29,8 +31,8 @@ const root = process.cwd().replace(/\\/g, '/')
 writeFileSync(
   entry,
   [
-    `export * from '${root}/src/shared/deskTicket.ts'`,
-    `export { parseSelfLogin, parseSelfUser } from '${root}/src/shared/tailnetIdentity.ts'`,
+    `export * from '${root}/src/main/deskTicket.ts'`,
+    `export { parseSelfDns, parseSelfLogin, parseSelfUser } from '${root}/src/shared/tailnetIdentity.ts'`,
     `export { TailnetIdentity } from '${root}/src/main/tailnetIdentity.ts'`,
     `export { PhoneServer, LOCAL_ONLY } from '${root}/src/main/phone.ts'`
   ].join('\n')
@@ -39,81 +41,102 @@ const bundle = join(work, 'bundle.mjs')
 buildSync({ entryPoints: [entry], outfile: bundle, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' })
 const T = await import(pathToFileURL(bundle).href)
 
-// ---- the contract's test vector -------------------------------------------------------------
-
 const TOKEN = 'test-ingest-token'
 const OWNER = 'robertiuoras@gmail.com'
-const DESK = 'desktop-cmsucm1.tail6c8b58.ts.net'
-const VECTOR_JSON = `{"email":"robertiuoras@gmail.com","deviceId":"dev-123","aud":"desktop-cmsucm1.tail6c8b58.ts.net","iat":1790000000,"exp":1790000120,"jti":"AAAAAAAAAAAAAAAAAAAAAA"}`
-const VECTOR = 'v1.eyJlbWFpbCI6InJvYmVydGl1b3Jhc0BnbWFpbC5jb20iLCJkZXZpY2VJZCI6ImRldi0xMjMiLCJhdWQiOiJkZXNrdG9wLWNtc3VjbTEudGFpbDZjOGI1OC50cy5uZXQiLCJpYXQiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDEyMCwianRpIjoiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSJ9.1pBg1C0aBNpx9tHFpsOaS0OSJnFaWb0v_bK57y37Nkg'
+const PC = 'desktop-cmsucm1.tail6c8b58.ts.net'
+const MAC = 'roberts-macbook-pro.tail6c8b58.ts.net'
 
-const mint = (over = {}, token = TOKEN) => {
-  const iat = over.iat ?? Math.floor(Date.now() / 1000)
-  const c = { email: OWNER, deviceId: 'dev-123', aud: DESK, iat, exp: iat + 120, jti: randomBytes(16).toString('base64url'), ...over }
-  return T.mintDeskTicket(JSON.stringify({ email: c.email, deviceId: c.deviceId, aud: c.aud, iat: c.iat, exp: c.exp, jti: c.jti }), token)
+// ---- a fake taskdriver.ai: issue + redeem, single use, the contract's checks ------------------
+
+const issued = new Map() // sha256(ticket) -> { deviceId, aud, email, exp, used }
+const redeems = [] // every request the desk made: headers + body
+let mode = 'real' // 'real' | 'hang' | 'garbage' | 'other-email'
+const fake = createServer((req, res) => {
+  let text = ''
+  req.setEncoding('utf8')
+  req.on('data', (c) => (text += c))
+  req.on('end', () => {
+    let body = null
+    try { body = JSON.parse(text) } catch { /* recorded as null */ }
+    redeems.push({ method: req.method, url: req.url, auth: req.headers.authorization, type: req.headers['content-type'], body, raw: text })
+    if (mode === 'hang') return // never answers; the desk's timeout must end it
+    const send = (code, value) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof value === 'string' ? value : JSON.stringify(value)) }
+    if (mode === 'garbage') return send(200, '<html>not json</html>')
+    if (req.url !== '/api/app/desk-ticket/redeem' || req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: 'unauthorized' })
+    const row = body && typeof body.ticket === 'string' ? issued.get(createHash('sha256').update(body.ticket).digest('hex')) : null
+    if (!row || row.used || row.exp <= Date.now() || row.deviceId !== body.deviceId || row.aud !== body.aud) return send(403, { error: 'ticket refused' })
+    row.used = true
+    send(200, { email: mode === 'other-email' ? 'someone@example.com' : row.email })
+  })
+})
+await new Promise((r) => fake.listen(0, '127.0.0.1', r))
+const fakePort = fake.address().port
+process.env.PF_TASKDRIVER_REDEEM_URL = `http://127.0.0.1:${fakePort}/api/app/desk-ticket/redeem`
+const issue = ({ deviceId, aud = PC, email = OWNER, life = 120_000 } = {}) => {
+  const ticket = randomBytes(32).toString('base64url')
+  issued.set(createHash('sha256').update(ticket).digest('hex'), { deviceId, aud, email, exp: Date.now() + life, used: false })
+  return ticket
 }
 
-// ---- 1. the pure rule -----------------------------------------------------------------------
-
-{
-  ok(T.mintDeskTicket(VECTOR_JSON, TOKEN) === VECTOR, 'minting the vector payload reproduces the contract ticket byte for byte')
-  ok(T.deskTicketKey(TOKEN).length === 32, 'the derived key is 32 raw bytes')
-  const at = 1_790_000_060_000
-  const base = { ticket: VECTOR, deviceId: 'dev-123', host: DESK, now: at, ingestToken: TOKEN, owner: OWNER }
-  const v = (over = {}) => T.verifyDeskTicket({ ...base, seen: new Map(), ...over })
-  const good = v()
-  ok(good.ok && good.email === OWNER && good.jti === 'AAAAAAAAAAAAAAAAAAAAAA' && good.exp === 1790000120, 'the contract vector verifies', JSON.stringify(good))
-  ok(v({ owner: 'RobertIuoras@Gmail.com' }).ok, 'the owner compare is case-insensitive')
-  const flip = VECTOR.slice(0, -1) + (VECTOR.endsWith('g') ? 'h' : 'g')
-  ok(!v({ ticket: flip }).ok && /signature/.test(v({ ticket: flip }).reason), 'a changed signature is refused', v({ ticket: flip }).reason)
-  const [, p, s] = VECTOR.split('.')
-  const forged = `v1.${Buffer.from(VECTOR_JSON.replace('dev-123', 'dev-999')).toString('base64url')}.${s}`
-  ok(!v({ ticket: forged, deviceId: 'dev-999' }).ok, 'a changed payload under the old signature is refused')
-  ok(!v({ ingestToken: 'another-token' }).ok, 'a ticket signed with another desk\'s token is refused')
-  ok(!v({ ticket: `v2.${p}.${s}` }).ok && !v({ ticket: '' }).ok && !v({ ticket: 42 }).ok, 'not a v1 ticket is refused')
-  ok(/expired/.test(v({ now: 1_790_000_120_000 }).reason ?? ''), 'a ticket at its exp is expired', v({ now: 1_790_000_120_000 }).reason)
-  const life = (secs) => T.verifyDeskTicket({ ...base, ticket: mint({ iat: 1790000000, exp: 1790000000 + secs }), seen: new Map() })
-  ok(life(300).ok, 'a ticket living exactly 300 s is accepted', life(300).reason)
-  ok(!life(301).ok && /longer/.test(life(301).reason), 'a ticket living 301 s is refused', life(301).reason)
-  const future = T.verifyDeskTicket({ ...base, ticket: mint({ iat: 1790000200, exp: 1790000300 }), seen: new Map() })
-  ok(!future.ok && /future/.test(future.reason), 'a ticket issued minutes ahead of the desk clock is refused', future.reason)
-  ok(/another desk/.test(v({ host: 'roberts-macbook-pro.tail6c8b58.ts.net' }).reason ?? ''), 'a ticket for the other desk is refused')
-  ok(!v({ host: '' }).ok, 'no Host header is refused')
-  ok(/another device/.test(v({ deviceId: 'dev-124' }).reason ?? ''), 'a ticket for another device is refused')
-  ok(/another account/.test(v({ owner: 'someone@example.com' }).reason ?? ''), 'a ticket for another account is refused')
-  ok(!v({ owner: '' }).ok && !v({ ingestToken: '' }).ok, 'no owner or no token refuses everything')
-  const seen = new Map()
-  ok(v({ seen }).ok && seen.get('AAAAAAAAAAAAAAAAAAAAAA') === 1_790_000_120_000, 'a good ticket is remembered until its exp')
-  const replay = v({ seen })
-  ok(!replay.ok && /already used/.test(replay.reason), 'the same ticket twice is refused', replay.reason)
-  const later = new Map([['old-jti-0000000000000', 1_790_000_000_000]])
-  v({ seen: later })
-  ok(!later.has('old-jti-0000000000000') && later.size === 1, 'expired jtis are pruned')
-  const full = new Map(Array.from({ length: 1024 }, (_, i) => [`jti-${String(i).padStart(18, '0')}`, at + 60_000]))
-  ok(!v({ seen: full }).ok && full.size === 1024, 'the replay memory is bounded: full refuses, never forgets')
-  ok(T.deskHost('Desktop-CMSUCM1.tail6c8b58.ts.net:443') === DESK && T.deskHost(undefined) === '' && T.deskHost('[::1]:8443') === '[::1]', 'Host is lowercased with its port stripped')
-  const reasons = [flip, forged].map((t) => v({ ticket: t }).reason).join(' ')
-  ok(!reasons.includes(s) && !reasons.includes(p.slice(0, 20)), 'a refusal reason never carries the ticket')
-}
-
-// ---- 2. the desk's owner: Tailscale's login for its own user --------------------------------
+// ---- 1. the desk's owner and name: Tailscale's own answers -----------------------------------
 
 const ME = '7132691346616570'
-// Measured on the Mac 2026-10-03: `User[Self.UserID]` carries ID, LoginName, DisplayName, ProfilePicURL.
-const statusJson = `{"BackendState":"Running","Self":{"UserID":${ME},"OS":"macOS"},"User":{"${ME}":{"ID":${ME},"LoginName":"${OWNER}","DisplayName":"Robert","ProfilePicURL":""},"1929821953316901":{"ID":1929821953316901,"LoginName":"other@example.com"}}}`
+// Measured on the Mac 2026-10-03: `User[Self.UserID]` carries ID, LoginName, DisplayName,
+// ProfilePicURL; `Self.DNSName` is the full name with a trailing dot.
+const statusJson = (dns = `${PC}.`, state = 'Running') => `{"BackendState":"${state}","Self":{"UserID":${ME},"OS":"windows","DNSName":"${dns}"},"User":{"${ME}":{"ID":${ME},"LoginName":"${OWNER}","DisplayName":"Robert","ProfilePicURL":""},"1929821953316901":{"ID":1929821953316901,"LoginName":"other@example.com"}}}`
 {
-  ok(T.parseSelfLogin(statusJson) === OWNER, 'status gives this desk\'s own login', T.parseSelfLogin(statusJson))
-  ok(T.parseSelfUser(statusJson) === ME, 'and still its user id')
-  ok(T.parseSelfLogin('{"BackendState":"Stopped","Self":{"UserID":1},"User":{"1":{"LoginName":"x@y"}}}') === '', 'a stopped tailscaled has no login')
-  ok(T.parseSelfLogin('') === '' && T.parseSelfLogin('{"BackendState":"Running","Self":{"UserID":5}}') === '', 'unreadable status has no login')
+  ok(T.parseSelfLogin(statusJson()) === OWNER, 'status gives this desk\'s own login', T.parseSelfLogin(statusJson()))
+  ok(T.parseSelfUser(statusJson()) === ME, 'and still its user id')
+  ok(T.parseSelfDns(statusJson()) === PC, 'and its own DNS name, trailing dot removed', T.parseSelfDns(statusJson()))
+  ok(T.parseSelfDns(statusJson('Roberts-MacBook-Pro.tail6c8b58.ts.net.')) === MAC, 'the DNS name is lowercased')
+  ok(T.parseSelfDns(statusJson(`${PC}.`, 'Stopped')) === '' && T.parseSelfLogin(statusJson(`${PC}.`, 'Stopped')) === '', 'a stopped tailscaled has no name and no owner')
+  ok(T.parseSelfDns('') === '' && T.parseSelfDns(statusJson('')) === '' && T.parseSelfDns(statusJson('bad name.')) === '', 'unreadable status has no name')
   const calls = []
-  const id = new T.TailnetIdentity({ binary: 'tailscale', run: async (_b, args) => { calls.push(args); return { out: statusJson, err: '', code: 0 } } })
-  const [login, user] = await Promise.all([id.selfLogin(), id.selfUser()])
-  ok(login === OWNER && user === ME && calls.length === 1, 'login and user id come from one cached status call', String(calls.length))
-  ok((await new T.TailnetIdentity({ binary: '' }).selfLogin()) === '', 'no tailscale on the machine: no owner')
+  const id = new T.TailnetIdentity({ binary: 'tailscale', run: async (_b, args) => { calls.push(args); return { out: statusJson(), err: '', code: 0 } } })
+  const [login, user, dns] = await Promise.all([id.selfLogin(), id.selfUser(), id.selfDns()])
+  ok(login === OWNER && user === ME && dns === PC && calls.length === 1, 'login, user id and name come from one cached status call', String(calls.length))
+  const none = new T.TailnetIdentity({ binary: '' })
+  ok((await none.selfLogin()) === '' && (await none.selfDns()) === '', 'no tailscale on the machine: no owner, no name')
 }
 
-// ---- 3. the door ----------------------------------------------------------------------------
+// ---- 2. the redeem client and the owner compare ----------------------------------------------
+
+{
+  ok(T.REDEEM_URL === 'https://app.taskdriver.ai/api/app/desk-ticket/redeem' && T.REDEEM_TIMEOUT_MS === 8000, 'contract address and 8 s timeout')
+  ok(T.deskTicketShape(randomBytes(32).toString('base64url')) && !T.deskTicketShape('v1.abc.def') && !T.deskTicketShape('') && !T.deskTicketShape(42), 'a ticket is 43 base64url characters')
+  const dev = 'TDdevice-0123456789abcdef'
+  const t = issue({ deviceId: dev })
+  redeems.length = 0
+  const good = await T.redeemDeskTicket({ ticket: t, deviceId: dev, aud: PC, token: TOKEN })
+  ok(good.email === OWNER, '200 with an email redeems', JSON.stringify(good))
+  const sent = redeems[0]
+  ok(sent?.method === 'POST' && sent.auth === `Bearer ${TOKEN}` && sent.type === 'application/json', 'sent as postPush sends: POST, Bearer ingest token, JSON', JSON.stringify(sent && { m: sent.method, t: sent.type }))
+  ok(sent && JSON.stringify(sent.body) === JSON.stringify({ ticket: t, deviceId: dev, aud: PC }), 'body is exactly {ticket, deviceId, aud}', sent?.raw)
+  const again = await T.redeemDeskTicket({ ticket: t, deviceId: dev, aud: PC, token: TOKEN })
+  ok('refused' in again && /HTTP 403/.test(again.refused), 'a spent ticket is 403 refused', JSON.stringify(again))
+  const wrongToken = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: 'not-the-token' })
+  ok('refused' in wrongToken, 'a wrong ingest token is refused', JSON.stringify(wrongToken))
+  mode = 'garbage'
+  const garbage = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN })
+  ok('refused' in garbage && /not JSON/.test(garbage.refused), 'a 200 that is not JSON is refused', JSON.stringify(garbage))
+  mode = 'hang'
+  const started = Date.now()
+  const late = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN }, 300)
+  ok('refused' in late && /did not answer/.test(late.refused) && Date.now() - started < 3000, 'a server that never answers is refused at the timeout', `${JSON.stringify(late)} ${Date.now() - started} ms`)
+  mode = 'real'
+  const url = process.env.PF_TASKDRIVER_REDEEM_URL
+  process.env.PF_TASKDRIVER_REDEEM_URL = 'http://127.0.0.1:9/api/app/desk-ticket/redeem'
+  const down = await T.redeemDeskTicket({ ticket: issue({ deviceId: dev }), deviceId: dev, aud: PC, token: TOKEN })
+  ok('refused' in down && /could not be reached/.test(down.refused), 'a server that is down is refused', JSON.stringify(down))
+  process.env.PF_TASKDRIVER_REDEEM_URL = url
+
+  ok(T.sameOwner('robertiuoras@gmail.com', OWNER) && T.sameOwner('RobertIuoras@Gmail.COM', OWNER), 'owner compare: ASCII case-insensitive')
+  ok(!T.sameOwner('someone@example.com', OWNER), 'another account is not the owner')
+  ok(!T.sameOwner('', '') && !T.sameOwner(OWNER, '') && !T.sameOwner('', OWNER), 'empty never matches')
+  ok(!T.sameOwner('robertiuoras@gmail.com ', OWNER) && !T.sameOwner('robertiuoras@gmail.coK', 'robertiuoras@gmail.cok'), 'strict: no trimming, no Unicode folding (Kelvin sign is not k)')
+}
+
+// ---- 3. the door ------------------------------------------------------------------------------
 
 const staticDir = join(work, 'renderer')
 mkdirSync(staticDir, { recursive: true })
@@ -123,7 +146,8 @@ let grants = []
 let receipts = []
 let token = TOKEN
 let owner = OWNER
-let selfLoginCalls = 0
+let selfName = PC
+let tailscaleAsked = 0
 const logs = []
 const phoneDeps = {
   staticDir,
@@ -145,8 +169,13 @@ const phoneDeps = {
   sessions: () => [{ id: 's1', title: 'One', agent: 'claude', status: 'idle', createdAt: Date.now() }],
   setKeepOpen: () => true,
   isKeepOpen: () => false,
-  // The phone is NOT on the tailnet: whois never knows it. Only the desk's own login matters.
-  tailnet: { whois: async () => null, selfUser: async () => ME, selfLogin: async () => { selfLoginCalls++; return owner } },
+  // The phone is NOT on the tailnet: whois never knows it. Only the desk's own answers matter.
+  tailnet: {
+    whois: async () => null,
+    selfUser: async () => { tailscaleAsked++; return ME },
+    selfLogin: async () => { tailscaleAsked++; return owner },
+    selfDns: async () => { tailscaleAsked++; return selfName }
+  },
   ingestToken: () => token,
   trustLog: (line) => logs.push(line)
 }
@@ -154,9 +183,10 @@ const server = new T.PhoneServer(phoneDeps)
 await server.start(0, '127.0.0.1')
 const port = server.server.address().port
 
-function callOn(p, method, path, { headers = {}, body } = {}) {
+/** One request; a door that never answers is a FAILED check after 10 s, not a hung run (Windows takes ~2 s to refuse a closed loopback port). */
+function callOn(p, method, path, { headers = {}, body, raw } = {}) {
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ host: '127.0.0.1', port: p, method, path, headers: { host: DESK, ...headers, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) } }, (res) => {
+    const req = httpRequest({ host: '127.0.0.1', port: p, method, path, headers: { host: PC, ...headers, ...(body !== undefined || raw !== undefined ? { 'content-type': 'application/json' } : {}) } }, (res) => {
       let text = ''
       res.setEncoding('utf8')
       res.on('data', (c) => (text += c))
@@ -166,25 +196,28 @@ function callOn(p, method, path, { headers = {}, body } = {}) {
         resolve({ status: res.statusCode, text, json })
       })
     })
+    req.setTimeout(10_000, () => { req.destroy(); resolve({ status: 'no answer in 10 s', text: '', json: null }) })
     req.on('error', reject)
-    req.end(body === undefined ? undefined : JSON.stringify(body))
+    req.end(raw !== undefined ? raw : body === undefined ? undefined : JSON.stringify(body))
   })
 }
 const call = (...a) => callOn(port, ...a)
 // What Tailscale Funnel hands the phone server: one public address, https, the Funnel mark.
 let nextIp = 10
-const funnel = (ip = `203.0.113.${nextIp++}`) => ({ 'x-forwarded-for': ip, 'x-forwarded-proto': 'https', 'x-forwarded-host': DESK, 'tailscale-funnel-request': '?1' })
+const funnel = (ip = `203.0.113.${nextIp++}`) => ({ 'x-forwarded-for': ip, 'x-forwarded-proto': 'https', 'x-forwarded-host': PC, 'tailscale-funnel-request': '?1' })
 const app = { deviceId: 'TDdevice-0123456789abcdef', deviceName: 'Robert iPhone' }
 const signIn = (ticket, { headers = funnel(), body = {} } = {}) => call('POST', '/pf/native/v1/auth/taskdriver', { headers, body: { ticket, ...app, ...body } })
-const appTicket = (over = {}, key = TOKEN) => mint({ deviceId: app.deviceId, ...over }, key)
-const ROW = 'td-' + (await import('node:crypto')).createHash('sha256').update(app.deviceId).digest('hex').slice(0, 24)
+const appTicket = (over = {}) => issue({ deviceId: app.deviceId, ...over })
+const ROW = 'td-' + createHash('sha256').update(app.deviceId).digest('hex').slice(0, 24)
 
 try {
+  redeems.length = 0
   const ticket = appTicket()
   const r = await signIn(ticket)
   ok(r.status === 200, 'a good ticket gets a grant', `${r.status} ${r.text}`)
   ok(r.json && Object.keys(r.json).sort().join() === 'accessToken,deviceId,expiresAt,grantId,hostName,unlockedUntil' && Object.values(r.json).every((x) => typeof x === 'string'), 'it answers the NativeTokenResponse shape', r.text)
-  ok(r.json?.hostName === DESK && r.json?.deviceId === app.deviceId, 'hostName is the desk the phone reached', r.json?.hostName)
+  ok(r.json?.hostName === PC && r.json?.deviceId === app.deviceId, 'hostName is this desk', r.json?.hostName)
+  ok(redeems.length === 1 && redeems[0].auth === `Bearer ${TOKEN}` && JSON.stringify(redeems[0].body) === JSON.stringify({ ticket, deviceId: app.deviceId, aud: PC }), 'the desk redeemed it once with its own name as aud', redeems.map((x) => x.raw).join(' | '))
   ok(Date.parse(r.json?.unlockedUntil) > Date.now() + 14 * 60_000 && Date.parse(r.json?.expiresAt) > Date.now() + 29 * 86_400_000, 'read+control for 30 days with the 15-minute control window')
   ok(devices.length === 1 && devices[0].id === ROW && devices[0].kind === 'iPhone' && devices[0].ua === 'Taskdriver app (Robert iPhone)', 'one Devices row for the app install', JSON.stringify(devices.map(({ token: _t, ...d }) => d)))
   ok(grants.length === 1 && grants[0].browserDevice === ROW && grants[0].scopes.join() === 'read,control', 'grant bound to that row with read+control')
@@ -195,43 +228,61 @@ try {
   const control = await call('POST', '/pf/native/v1/sessions/s1/keep-open', { headers: { ...funnel(), ...auth }, body: { keepOpen: true } })
   ok(control.status === 200, 'and controls inside its 15-minute window', `${control.status} ${control.text}`)
 
-  // Refusals: 403, nothing written, one log line each, never the ticket.
+  // Refusals: 403, nothing written, one log line each, never the ticket or the token.
   const before = JSON.stringify({ devices, grants })
-  const refusals = [
-    ['bad signature', ticket.slice(0, -2) + (ticket.endsWith('AA') ? 'BB' : 'AA'), {}],
-    ['expired', appTicket({ iat: Math.floor(Date.now() / 1000) - 200, exp: Math.floor(Date.now() / 1000) - 80 }), {}],
-    ['long-lived', appTicket({ exp: Math.floor(Date.now() / 1000) + 3600 }), {}],
-    ['wrong aud', appTicket({ aud: 'roberts-macbook-pro.tail6c8b58.ts.net' }), {}],
-    ['wrong host header', appTicket(), { headers: { ...funnel(), host: 'evil.example.com' } }],
-    ['wrong device', appTicket({ deviceId: 'TDdevice-someone-elses-0000' }), {}],
-    ['replay', ticket, {}],
-    ['wrong owner', appTicket({ email: 'someone@example.com' }), {}],
-    ['other token', appTicket({}, 'another-desk-token'), {}]
-  ]
-  for (const [what, t, opts] of refusals) {
+  const refusal = async (what, t, opts = {}, pattern = /REFUSED taskdriver sign-in/) => {
     const n = logs.length
     const res = await signIn(t, opts)
     ok(res.status === 403, `${what}: refused 403`, `${res.status} ${res.text}`)
-    ok(logs.length === n + 1 && /REFUSED taskdriver sign-in/.test(logs.at(-1)), `${what}: one REFUSED line`, logs.slice(n).join(' | '))
+    ok(logs.length === n + 1 && pattern.test(logs.at(-1)), `${what}: one REFUSED line`, logs.slice(n).join(' | '))
   }
+  await refusal('replay (Taskdriver spends a ticket once)', ticket)
+  await refusal('a ticket Taskdriver never issued', randomBytes(32).toString('base64url'))
+  await refusal('expired at Taskdriver', appTicket({ life: -1 }))
+  await refusal('issued for another device', appTicket({ deviceId: 'TDdevice-someone-elses-0000' }))
+  // Funnel and serve pass Host through: a PC ticket sent to the Mac carries Host = the PC's name.
+  selfName = MAC
+  redeems.length = 0
+  await refusal('a PC ticket at the Mac, Host saying PC', appTicket({ aud: PC }), { headers: { ...funnel(), host: PC } })
+  ok(redeems.at(-1)?.body?.aud === MAC, 'aud is the desk\'s own Tailscale name, never the Host header', JSON.stringify(redeems.at(-1)?.body))
+  selfName = PC
+  mode = 'other-email'
+  await refusal('Taskdriver names another account', appTicket(), {}, /another account/)
+  mode = 'garbage'
+  await refusal('Taskdriver answers garbage', appTicket())
+  mode = 'real'
+  const url = process.env.PF_TASKDRIVER_REDEEM_URL
+  process.env.PF_TASKDRIVER_REDEEM_URL = 'http://127.0.0.1:9/api/app/desk-ticket/redeem'
+  await refusal('Taskdriver is down', appTicket(), {}, /could not be reached/)
+  process.env.PF_TASKDRIVER_REDEEM_URL = url
+  redeems.length = 0
   token = null
-  const noToken = await signIn(appTicket())
-  ok(noToken.status === 403 && /no Taskdriver token/.test(logs.at(-1)), 'no ingest token on the desk: refused 403', `${noToken.status} ${logs.at(-1)}`)
+  await refusal('no ingest token on the desk', appTicket(), {}, /no Taskdriver token/)
   token = TOKEN
   owner = ''
-  const noOwner = await signIn(appTicket())
-  ok(noOwner.status === 403 && /owner/.test(logs.at(-1)), 'no Tailscale login for the desk: refused 403', `${noOwner.status} ${logs.at(-1)}`)
+  await refusal('no Tailscale login for the desk', appTicket(), {}, /owner/)
   owner = OWNER
+  selfName = ''
+  await refusal('no Tailscale name for the desk', appTicket(), {}, /name/)
+  selfName = PC
+  ok(redeems.length === 0, 'with no token, owner or name Taskdriver is never asked', String(redeems.length))
   ok(JSON.stringify({ devices, grants }) === before, 'refusals wrote no device row and no grant')
   const allLogs = logs.join('\n')
-  ok(!allLogs.includes(ticket.split('.')[1].slice(0, 24)) && !allLogs.includes(ticket.split('.')[2]) && !allLogs.includes(r.json?.accessToken), 'no ticket and no token in the log')
+  ok(!allLogs.includes(ticket) && !allLogs.includes(TOKEN) && !allLogs.includes(r.json?.accessToken), 'no ticket and no token in the log')
 
+  // Bad requests: 400 before anything is asked, and always ANSWERED.
   const plain = await signIn(appTicket(), { headers: { 'x-forwarded-for': '203.0.113.200' } })
-  ok(plain.status === 400, 'plain http is 400 before anything is asked', String(plain.status))
-  const badDevice = await signIn(appTicket(), { body: { deviceId: 'short' } })
-  ok(badDevice.status === 400, 'an invalid device id is 400', String(badDevice.status))
-  const noTicket = await call('POST', '/pf/native/v1/auth/taskdriver', { headers: funnel(), body: app })
-  ok(noTicket.status === 400, 'no ticket is 400', String(noTicket.status))
+  ok(plain.status === 400, 'plain http is 400', String(plain.status))
+  ok((await signIn(appTicket(), { body: { deviceId: 'short' } })).status === 400, 'an invalid device id is 400')
+  ok((await signIn('v1.not.a-ticket')).status === 400, 'a ticket of the wrong shape is 400')
+  ok((await call('POST', '/pf/native/v1/auth/taskdriver', { headers: funnel(), body: app })).status === 400, 'no ticket is 400')
+  for (const path of ['/pf/native/v1/auth/taskdriver', '/pf/native/v1/auth/tailnet']) {
+    for (const raw of ['null', '{"__pf_undefined":true}', '[1,2]', '"text"']) {
+      const res = await call('POST', path, { headers: funnel(), raw })
+      ok(res.status === 400, `${path.split('/').pop()}: body ${raw} is answered 400, never left hanging`, String(res.status))
+    }
+  }
+  ok(redeems.length === 0, 'and Taskdriver was never asked for any of them')
 
   // The contract's control flow: a lapsed window answers 423 off the tailnet, a fresh ticket
   // signs in again (same row, same grant id, old token replaced) and the call goes through.
@@ -239,7 +290,7 @@ try {
   const lapsed = await call('POST', '/pf/native/v1/sessions/s1/keep-open', { headers: { ...funnel(), ...auth }, body: { keepOpen: true } })
   ok(lapsed.status === 423, 'a lapsed control window is 423 locked', `${lapsed.status} ${lapsed.text}`)
   const again = await signIn(appTicket())
-  ok(again.status === 200 && again.json?.grantId === r.json?.grantId && devices.length === 1 && grants.length === 1, 'a fresh ticket signs in again on the same row and grant')
+  ok(again.status === 200 && again.json?.grantId === r.json?.grantId && devices.length === 1 && grants.length === 1, 'a fresh ticket signs in again on the same row and grant', `${again.status} ${again.text}`)
   const stale = await call('GET', '/pf/native/v1/sessions', { headers: { ...funnel(), ...auth } })
   ok(stale.status === 401, 'the previous token is replaced', String(stale.status))
   const retried = await call('POST', '/pf/native/v1/sessions/s1/keep-open', { headers: { ...funnel(), authorization: `Bearer ${again.json?.accessToken}` }, body: { keepOpen: true } })
@@ -252,24 +303,27 @@ try {
 
   // Rate limit, like the tailnet door: ten a minute per address.
   let last = 0
-  for (let i = 0; i < 11; i++) last = (await signIn(appTicket({ email: 'someone@example.com' }), { headers: funnel('198.51.100.7') })).status
+  for (let i = 0; i < 11; i++) last = (await signIn(randomBytes(32).toString('base64url'), { headers: funnel('198.51.100.7') })).status
   ok(last === 429, 'the eleventh try in a minute is 429', String(last))
 
-  // Phone access switched off: the loopback-only listener refuses before Tailscale is asked.
+  // Phone access switched off: the loopback-only listener refuses before anyone is asked.
   const locked = new T.PhoneServer(phoneDeps)
   await locked.start(0, T.LOCAL_ONLY)
   try {
     const lport = locked.server.address().port
-    const n = logs.length, devBefore = devices.length, grantBefore = grants.length, asked = selfLoginCalls
+    const n = logs.length, devBefore = devices.length, grantBefore = grants.length, asked = tailscaleAsked
+    redeems.length = 0
     const off = await callOn(lport, 'POST', '/pf/native/v1/auth/taskdriver', { headers: funnel(), body: { ticket: appTicket(), ...app } })
     ok(off.status === 403, 'phone access off: refused 403', `${off.status} ${off.text}`)
     ok(logs.length === n + 1 && /switched off/.test(logs.at(-1)), 'phone access off: refusal logged', logs.at(-1))
-    ok(devices.length === devBefore && grants.length === grantBefore && selfLoginCalls === asked, 'phone access off: nothing written, Tailscale never asked')
+    ok(devices.length === devBefore && grants.length === grantBefore && tailscaleAsked === asked && redeems.length === 0, 'phone access off: nothing written, neither Tailscale nor Taskdriver asked')
   } finally {
     await locked.stop()
   }
 } finally {
   await server.stop()
+  fake.closeAllConnections()
+  await new Promise((r) => fake.close(r))
   rmSync(work, { recursive: true, force: true })
 }
 
