@@ -198,6 +198,14 @@ export interface Session {
    * id has nothing another machine could resume. `pf continue` finds a pane by it.
    */
   resumeId?: string
+  /**
+   * The conversation this LOCAL pane is on right now, filled in when the list is read (never
+   * stored): `resumeId` once a turn has ended, otherwise what the app can already tell from
+   * the CLI's transcript. Unlike `resumeId` it exists during the pane's first turn, but it
+   * is not a promise the id is flushed for another machine - the automatic move reads
+   * `resumeId`, `pf continue` reads either.
+   */
+  conversationId?: string
   /** model passed to the agent, empty/undefined = the CLI's own default */
   model?: string
   status: SessionStatus

@@ -1367,8 +1367,28 @@ const receivePeerReview = (peer: { id: string; name: string; platform: string },
 remote.on('reviews', ({ peer, reviews }) => { for (const review of reviews) receivePeerReview(peer, review) })
 remote.on('review', ({ peer, review }) => receivePeerReview(peer, review))
 
+/**
+ * The conversation id of a pane that has no `resumeId` yet (its first turn). Claude panes
+ * with no claimed transcript scan the project folder and Codex/Antigravity read rollout and
+ * history files, and the list is polled often, so a miss is remembered for 5 s.
+ */
+const conversationMiss = new Map<string, number>()
+function conversationOf(s: Session): string | undefined {
+  if (s.resumeId || s.status === 'exited' || s.agent === 'shell') return s.resumeId
+  const missedAt = conversationMiss.get(s.id)
+  if (missedAt && Date.now() - missedAt < 5000) return undefined
+  let found: string | undefined
+  try { found = resumeIdFor(s.id) } catch { found = undefined }
+  if (found) conversationMiss.delete(s.id)
+  else conversationMiss.set(s.id, Date.now())
+  return found
+}
+
 function localSessions(): Session[] {
-  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
+  return manager.list().map(s => {
+    const conversationId = conversationOf(s)
+    return { ...s, keepOpen: keptOpen(s.id), ...(conversationId ? { conversationId } : {}) }
+  })
 }
 
 /**
