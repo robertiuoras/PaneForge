@@ -18,14 +18,20 @@
 //   test:view                                                  - needs a real window
 //   test:discordbrand, mac-update-test --live                   - need the network
 //
-//   node scripts/test-all.mjs             every test below
+//   node scripts/test-all.mjs             every test below, less the lane suites whose
+//                                         lane scripts already passed here (LANE_ONLY)
+//   node scripts/test-all.mjs --full      every test below, no exceptions (a release)
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
+//
+// A suite that goes red runs once more on its own: passing there is reported as a flake and
+// does not fail the run; failing again does (`suite-plan.mjs`).
 
 import { execFileSync, spawn, spawnSync, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fingerprint, passesFile, planRun, readPasses, recordPass, retryAlone, suiteInputs, summary } from './suite-plan.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -44,6 +50,7 @@ const TESTS = [
   ['paneanswer', 'pane-answer-test.mjs'],
   ['includedaccounts', 'included-accounts-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
+  ['suiteplan', 'suite-plan-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
   ['review', 'review-test.mjs'],
@@ -379,6 +386,7 @@ const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))
 const run = only.length
   ? TESTS.filter(([name]) => only.some((o) => name.includes(o)))
   : TESTS
+const fileOf = new Map(TESTS)
 
 if (!run.length) {
   console.error(`no test matches ${only.join(', ')}`)
@@ -457,6 +465,29 @@ const SERIAL = new Set([
   // one event loop, so a pool's stall moves the ground every check stands on.
   'promptsubmit'
 ])
+
+/**
+ * Suites that test scripts/lane.mjs (and the scripts it runs) against throwaway repositories
+ * and nothing else - no app code, no window. Measured on the PC 30 Sep-3 Oct 2026: 76% of all
+ * suite time in a run (1,100s of 1,450s summed), with gate (433s median then), lanecompletion
+ * (479s) and lanecleared (397s) the run's critical path, while about a quarter of master's
+ * commits touch a lane script. Each one is skipped when every file it can execute is the same
+ * bytes that already passed on this machine (`suiteInputs` follows what it imports AND the
+ * scripts it spawns by name). A release passes `--full`; a suite named on the command line
+ * always runs.
+ */
+const LANE_ONLY = new Set([
+  'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
+  'lanedamaged', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
+  'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice'
+])
+const PASSES = passesFile()
+const plan = planRun(run, {
+  cacheable: LANE_ONLY,
+  full: process.argv.includes('--full') || only.length > 0,
+  passes: readPasses(PASSES),
+  fingerprintOf: (file) => fingerprint(root, suiteInputs(root, file))
+})
 
 const failed = []
 const started = Date.now()
@@ -542,11 +573,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   })
 }
 
-function runChild(file) {
+function runChild(file, tmp) {
   return new Promise((done) => {
     const kid = spawn(process.execPath, [join(root, 'scripts', file)], {
       cwd: root,
-      env: { ...process.env, TMPDIR: TMP_ROOT, TEMP: TMP_ROOT, TMP: TMP_ROOT },
+      env: { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp },
       // Captured rather than inherited: 34 passing tests printing their own output is a
       // wall nobody reads, and the gate keeps only the tail. A failure prints in full.
       stdio: ['ignore', 'pipe', 'pipe']
@@ -560,9 +591,9 @@ function runChild(file) {
   })
 }
 
-async function runOne([name, file]) {
+async function runOne([name, file], tmp = TMP_ROOT) {
   const at = Date.now()
-  const r = await runChild(file)
+  const r = await runChild(file, tmp)
   const secs = ((Date.now() - at) / 1000).toFixed(1)
   const ok = r.status === 0
   // The evidence, not a summary of it. Whatever reads this - a person or the agent
@@ -571,9 +602,15 @@ async function runOne([name, file]) {
   return { name, ok, secs, out, status: r.status }
 }
 
+// The verdict is the suites'; a record that cannot be written only means a rerun next time.
+function notePass(name) {
+  if (!plan.fps.has(name)) return
+  try { recordPass(PASSES, name, plan.fps.get(name)) } catch {}
+}
+
 function report(res) {
   console.log(`${res.ok ? 'ok  ' : 'FAIL'}  ${res.name.padEnd(12)} ${res.secs.padStart(5)}s`)
-  if (res.ok) return
+  if (res.ok) return notePass(res.name)
   failed.push(res.name)
   console.log(res.out ? `\n${res.out}\n` : `\n  (no output; exit ${res.status})\n`)
 }
@@ -598,15 +635,35 @@ async function pool(list, width) {
   flush()
 }
 
-const alone = run.filter(([n]) => SERIAL.has(n))
-const together = run.filter(([n]) => !SERIAL.has(n))
+const alone = plan.run.filter(([n]) => SERIAL.has(n))
+const together = plan.run.filter(([n]) => !SERIAL.has(n))
 
 await pool(together, JOBS)
 await pool(alone, 1)
 
-const total = ((Date.now() - started) / 1000).toFixed(1)
-if (failed.length) {
-  console.log(`\n${failed.length} of ${run.length} failed in ${total}s: ${failed.join(', ')}`)
-  process.exit(1)
+/*
+ * A red suite runs once more, alone, in a fresh temp root. Measured on the PC 30 Sep-3 Oct
+ * 2026: 56 of 208 full runs were red on exactly one suite, and promptsubmit - red in 57 runs -
+ * failed in 4% of runs with at most two other PC jobs beside it and 33-43% with three or more,
+ * a different check each time. Each of those cost a whole new run to find out. More than
+ * RETRY_MAX red is a broken change, not a busy machine, and is reported as it stands.
+ */
+const RETRY_MAX = 6
+let verdict = { flaky: [], real: failed.map((name) => ({ name })) }
+if (failed.length && failed.length <= RETRY_MAX) {
+  console.log(`\n${failed.length} red - each runs once more on its own: a pass there is a flake, a second failure is real`)
+  const again = mkdtempSync(join(TMP_ROOT, 'again-'))
+  verdict = await retryAlone(failed.map((name) => ({ name, file: fileOf.get(name) })), async ({ name, file }) => {
+    const res = await runOne([name, file], again)
+    console.log(`${res.ok ? 'flaky' : 'FAIL '}  ${name.padEnd(12)} ${res.secs.padStart(5)}s  ${res.ok ? 'passed on its own' : 'failed again on its own'}`)
+    // A pass here is NOT recorded: a lane suite that is red now and then may be catching a
+    // real race in lane.mjs, and a recorded pass would skip it until the lane scripts change.
+    if (!res.ok) console.log(res.out ? `\n${res.out}\n` : `\n  (no output; exit ${res.status})\n`)
+    return res
+  })
 }
-console.log(`\n${run.length} tests passed in ${total}s`)
+
+const total = ((Date.now() - started) / 1000).toFixed(1)
+const real = verdict.real.map((r) => r.name)
+console.log(`\n${summary({ total: run.length, secs: total, real, flaky: verdict.flaky, skipped: plan.skipped }).join('\n')}`)
+process.exit(real.length ? 1 : 0)
