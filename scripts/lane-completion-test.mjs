@@ -238,6 +238,65 @@ for (const kind of ['shipped', 'unshipped', 'shipped-chat-ends', 'uncommitted-on
   else check(`${kind}: a new chat's ready still refuses and the item stays owned`, r.code !== 0 && /recovered work requires a current verification receipt/.test(r.err) && item().status === 'owned' && (kind !== 'uncommitted-on-trunk' || item().dirty === true), r.out + r.err + JSON.stringify(item()))
 }
 
+// A /clear in the recovery owner's pane: claim carries the ended hold to the pane's new chat
+// and must carry the owner's unfinished recovery item with it. assistant lane a, 2026-10-04:
+// owner 42113999 committed on lane a (16c8332 -> c1c4c30), the pane cleared, lanes.a went to
+// 21c80996, the item stayed on 42113999 - `recover` refused the new chat ("another recovery
+// owner holds this key"), `begin` refused the moved HEAD, `ready` refused the foreign item,
+// and the old session no longer held the lane. A live owner, or one in another pane, keeps
+// its item; so does another chat's item, the owner's item on another lane, and one trunk
+// already holds. A held recovery lock leaves the item as it was and the next claim retries.
+// SessionEnd's detached release running before the next claim keeps the owner's hold.
+for (const kind of ['carried', 'release-first', 'release-shipped', 'locked', 'live-owner', 'other-pane']) {
+  const o = fixture(`cleared-owner-${kind}`)
+  writeFileSync(join(o.dir, 'intent.txt'), 'recovered intent'); git(o.dir, 'add', 'intent.txt'); git(o.dir, 'commit', '-qm', 'recovered intent')
+  o.patch((s) => { delete s.lanes.a }); o.run('retry')
+  const k = o.state().recovery.active
+  writeFileSync(o.panes, `lane-pane\ttitle\tclaude\tworking\t${o.dir}\n`)
+  o.env.PF_PANE = 'owner-pane'
+  o.run('claim', '--prefer', 'a', '--cwd', o.dir, '--session', 'cleared-owner')
+  const began = o.run('recover', '--key', k, '--session', 'cleared-owner', '--disposition', 'begin')
+  writeFileSync(join(o.dir, 'intent.txt'), 'owner kept working'); git(o.dir, 'commit', '-qam', 'owner kept working')
+  if (kind !== 'live-owner') o.run('park', '--session', 'cleared-owner', '--ended')
+  if (kind === 'release-first') {
+    const released = o.run('release', '--session', 'cleared-owner')
+    check(`${kind}: the ended owner's hold stays for its pane`, released.code === 0 && o.state().lanes.a?.session === 'cleared-owner' && Number.isFinite(o.state().lanes.a?.ended), released.out + released.err)
+  }
+  if (kind === 'release-shipped') {
+    const shipped = git(o.repo, 'rev-parse', 'master')
+    o.patch((s) => { s.recovery.items[k].commit = shipped })
+    const released = o.run('release', '--session', 'cleared-owner')
+    check(`${kind}: an item trunk already holds keeps no hold for the next chat`, began.code === 0 && released.code === 0 && o.state().lanes.a?.session !== 'cleared-owner', released.out + released.err + JSON.stringify(o.state().lanes.a))
+    continue
+  }
+  const head = git(o.dir, 'rev-parse', 'HEAD'), base = git(o.repo, 'rev-parse', 'master')
+  const others = { 'lane:a:bystander': { lane: 'a', commit: head, status: 'owned', owner: 'bystander' }, 'lane:b:owner': { lane: 'b', commit: head, status: 'owned', owner: 'cleared-owner' }, 'lane:a:shipped': { lane: 'a', commit: base, status: 'owned', owner: 'cleared-owner' } }
+  if (kind === 'carried') o.patch((s) => { Object.assign(s.recovery.items, others) })
+  if (kind === 'other-pane') o.env.PF_PANE = 'next-pane'
+  const lock = join(o.repo, '.git', 'paneforge-recovery.lock')
+  if (kind === 'locked') { mkdirSync(lock); writeFileSync(join(lock, 'owner'), `${process.pid}:live-fixture`) }
+  const next = o.run('claim', '--prefer', 'a', '--cwd', o.dir, '--session', 'next-chat')
+  const item = () => o.state().recovery.items[k]
+  const setup = began.code === 0 && next.code === 0
+  if (kind === 'live-owner' || kind === 'other-pane') {
+    check(`${kind}: the item stays with its owner`, setup && item()?.owner === 'cleared-owner' && item()?.status === 'owned' && o.state().lanes.a?.session === 'cleared-owner', began.err + next.err + JSON.stringify(item()))
+    continue
+  }
+  if (kind === 'locked') {
+    check(`${kind}: a held recovery lock still lets the claim carry the lane, item untouched`, setup && o.state().lanes.a?.session === 'next-chat' && item()?.owner === 'cleared-owner', began.err + next.err + JSON.stringify(item()))
+    rmSync(lock, { recursive: true, force: true })
+    const again = o.run('claim', '--prefer', 'a', '--cwd', o.dir, '--session', 'next-chat')
+    check(`${kind}: the next claim carries the item`, again.code === 0 && item()?.owner === 'next-chat', again.err + JSON.stringify(item()))
+  } else check(`${kind}: the pane's new chat owns the item, status and pane kept`, setup && o.state().lanes.a?.session === 'next-chat' && item()?.owner === 'next-chat' && item()?.status === 'owned' && item()?.pane === 'logged', began.err + next.err + JSON.stringify(item()))
+  if (kind === 'carried') check(`${kind}: another chat's item, another lane's and a shipped one stay with their owners`, Object.entries(others).every(([key, r]) => o.state().recovery.items[key]?.owner === r.owner), JSON.stringify(o.state().recovery.items))
+  const receipt = join(o.repo, '.git', 'proof.json')
+  writeFileSync(receipt, JSON.stringify({ commit: git(o.dir, 'rev-parse', 'HEAD'), checks: [{ command: 'fixture assertions', exitCode: 0 }], review: { reviewer: 'independent fixture', result: 'accepted' } }))
+  const verified = o.run('recover', '--key', k, '--session', 'next-chat', '--disposition', 'verified', '--receipt', receipt)
+  check(`${kind}: the new chat records verification`, verified.code === 0 && item()?.status === 'verified', verified.err)
+  const ready = o.run('ready', '--session', 'next-chat')
+  check(`${kind}: the new chat's ready ships the recovered work`, ready.code === 0, ready.out + ready.err)
+}
+
 // Event barriers live only in the fixture copy, never in the production engine.
 const eventFile = (path) => new Promise((resolve, reject) => {
   if (existsSync(path)) { resolve(); return }

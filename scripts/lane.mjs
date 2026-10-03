@@ -980,6 +980,12 @@ function preservedRecovery(state, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => !r.ref && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
+// Trunk holds the item's pinned commit and, when it has one, its receipt commit.
+function inTrunkRecovery(r) {
+  const inTrunk = (c) => typeof c === 'string' && /^[a-f0-9]{40,64}$/.test(c) && gitSafe(MAIN, 'merge-base', '--is-ancestor', c, MB).ok
+  return inTrunk(r.commit) && (r.receipt?.commit == null ? !r.dirty : inTrunk(r.receipt.commit))
+}
+
 // A lane item whose pinned commit (and recorded receipt commit, if any) trunk already
 // contains has nothing left to preserve. An owner that ended mid-recovery at `owned` left
 // it unfinished forever otherwise: only that owner may `recover` the key and the clock
@@ -991,9 +997,7 @@ function preservedRecovery(state, lane) {
 // Ancestry proves nothing about uncommitted changes: an item pinned for them (`dirty`)
 // needs its receipt commit in trunk, and a checkout holding hand edits is never closed.
 function closeShippedRecovery(state, session, lane) {
-  const inTrunk = (c) => typeof c === 'string' && /^[a-f0-9]{40,64}$/.test(c) && gitSafe(MAIN, 'merge-base', '--is-ancestor', c, MB).ok
-  const shipped = (r) => !r.ref && r.lane === lane && r.owner !== session && !['complete', 'reviewed'].includes(r.status) &&
-    inTrunk(r.commit) && (r.receipt?.commit == null ? !r.dirty : inTrunk(r.receipt.commit))
+  const shipped = (r) => !r.ref && r.lane === lane && r.owner !== session && !['complete', 'reviewed'].includes(r.status) && inTrunkRecovery(r)
   if (state.recoveryError || !Object.values(state.recovery?.items ?? {}).some(shipped)) return
   const status = gitSafe(laneDir(lane), ...WORK_STATUS)
   if (!status.ok || (status.out && !machineWrittenPaths(laneDir(lane)))) return
@@ -1010,6 +1014,38 @@ function closeShippedRecovery(state, session, lane) {
     if (closed.length) writeRecovery(fresh)
     state.recovery = fresh.recovery
   } finally { unlock() }
+}
+
+// An item a cleared owner's next chat can still finish: this lane's, not closed or blocked,
+// and not one trunk already holds (closeShippedRecovery closes those).
+function carryableRecovery(r, lane) {
+  return r.lane === lane && !['complete', 'reviewed', 'blocked'].includes(r.status) && !inTrunkRecovery(r)
+}
+
+// A recovery owner's pane cleared: claim carried its ended hold to the pane's new chat, and
+// that chat must own the hold's unfinished recovery items too, or nobody can finish them -
+// `recover` refuses another owner, `begin` refuses the HEAD the owner already moved, `ready`
+// refuses the foreign item, and the old session holds no lane to verify from. Measured on
+// assistant lane a 2026-10-04: the item stayed on 42113999 after the hold went to 21c80996.
+// Only sessions this hold was carried from (`carriedFrom`: ended, same pane, by claim's
+// filter), only this lane's items. A busy lock keeps `carriedFrom` so the next claim retries.
+// An item trunk already holds stays put: carried, it would be the caller's own and `ready`
+// would refuse it instead of closing it (closeShippedRecovery).
+function carryRecovery(state, session, lane, hold) {
+  const earlier = (r) => hold.carriedFrom.includes(r.owner) && carryableRecovery(r, lane)
+  if (Object.values(state.recovery?.items ?? {}).some(earlier)) {
+    const unlock = recoveryLock()
+    if (!unlock) return
+    try {
+      const fresh = readRecovery({})
+      if (fresh.recoveryError) return
+      const carried = Object.values(fresh.recovery.items).filter(earlier)
+      for (const r of carried) { r.owner = session; r.at = now() }
+      if (carried.length) writeRecovery(fresh)
+      state.recovery = fresh.recovery
+    } finally { unlock() }
+  }
+  delete hold.carriedFrom
 }
 
 function preservedCheckout(state, lane) {
@@ -2386,7 +2422,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (carry && (!held || (carry.work && !hasWork(held)))) {
       if (held) delete state.lanes[held]
       // The same-session branch below does the rest of what a live claim does: parked,
-      // asleep, ended and (for a real claim) tentative cleared, pane recorded.
+      // asleep, ended and (for a real claim) tentative cleared, pane recorded - and the
+      // earlier chat's unfinished recovery items follow it (carryRecovery).
+      carry.c.carriedFrom = [...new Set([...(carry.c.carriedFrom ?? []), carry.c.session])]
       carry.c.session = session
       if (cwd) carry.c.cwd = cwd
     }
@@ -2419,6 +2457,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // toolstash chat sent to copy 4.
       delete c.asleep
       if (!visitor) delete c.visitor
+      if (c.carriedFrom) carryRecovery(state, session, id, c)
       // A lane can stop being a checkout while its own chat is sitting in it - a pruned
       // worktree, an interrupted install, a folder deleted from underneath, a node_modules
       // link removed by a cleanup. The chat is then told, every prompt, to work in a folder
@@ -4637,6 +4676,15 @@ function releaseClaim(session, { gone = false } = {}) {
       // never said so. Uncommitted work is the opposite: nobody released half an edit.
       const w = laneWork(id)
       const own = recoveryFor(state, session, id)
+      // A recovery owner's /clear: SessionEnd stamped the hold ended, and this detached
+      // release often beats the pane's next claim. Dropped, the hold leaves the item on a
+      // dead session with no lane to finish it from; kept, the next chat in the same pane
+      // carries both (claim, carryRecovery). A pane nobody types in again is swept by the
+      // app's `--gone` release, or STALE_MS. Its test copy still closes with the chat.
+      if (c.ended && c.pane && !gone && Object.values(state.recovery?.items ?? {}).some((r) => r.owner === session && carryableRecovery(r, id))) {
+        closeLaneApps(laneDir(id))
+        continue
+      }
       if (!gone && !own) closeShippedRecovery(state, session, id)
       if (!gone && !own && !preservedRecovery(state, id) && !state.ready[id] && !w.dirty && w.ahead > 0) {
         // Same catch-up as `ready`, minus anyone to resolve a conflict: if it does not merge
