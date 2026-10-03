@@ -268,6 +268,18 @@ const variant = (p) => (caseBlind ? lower(p) : p)
   ok('D: the lane\'s own chat may still write there in that spelling', !/"deny"/.test(own), own.trim())
 }
 
+{
+  // The same heads-up (`overlap`) for a write through a differently spelled path: the lane
+  // folder is found by folded prefix and the part below it is cut from the ORIGINAL path.
+  const f = fixture('Overlap')
+  const a = f.claim('pane-p', 'owner', '--cwd', f.repo, '--prefer', 'a')
+  f.claim('pane-q', 'other', '--cwd', f.repo, '--prefer', 'main')
+  writeFileSync(join(a.dir, 'app.js'), 'console.log(2)\n')
+  git(a.dir, 'commit', '-qam', 'lane a edits app.js')
+  const warn = f.lane('pane-q', 'guard', '--session', 'other', '--path', variant(join(f.repo, 'app.js')))
+  ok('D: a write through another spelling still gets the other-lane heads-up', warn.ok && /lane a/.test(warn.out), warn.out || warn.err || '(no output)')
+}
+
 // ------------------------------------------- F. a lane kept for a recovery nobody can start
 
 {
@@ -284,7 +296,7 @@ const variant = (p) => (caseBlind ? lower(p) : p)
   const next = f.claim('pane-2', 'second', '--cwd', f.repo)
   ok('F: a new chat is given a working lane, not the recovery\'s broken one', next.lane === 'a', JSON.stringify(next))
   const asked = f.claim('pane-3', 'third', '--cwd', f.repo, '--prefer', 'c')
-  ok('F: asking for that lane by name is still refused (no automatic repair)', asked.lane !== 'c' && !existsSync(`${f.repo}-c`), JSON.stringify(asked))
+  ok('F: asking for that lane by name is still refused (no automatic repair)', asked.lane !== 'c' && !existsSync(`${f.repo}-c`) && /preserved recovery checkout/.test(String(asked.error)), JSON.stringify(asked))
 }
 
 // ------------------------------------------- E. what the hook asks the engine

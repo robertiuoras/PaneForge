@@ -1057,6 +1057,9 @@ export interface LaneBoardEntry {
    * nothing on this screen is that chat: it ended without saying so, or it runs elsewhere.
    */
   ownerPane: string | null
+  /** The pane the holding chat ran in, and when the hold was kept after /clear (lane.mjs). */
+  pane?: string
+  ended?: number
   /**
    * What the chat holding it is CALLED - the name on its card, after any rename.
    *

@@ -111,6 +111,9 @@ interface RawLane {
   claimed?: number
   seen?: number
   asleep?: number
+  /** The pane the chat ran in, and when /clear or the chat's end stamped the hold kept. */
+  pane?: string
+  ended?: number
   /** Reserved by a chat that only mentioned PaneForge and has not written in the lane. */
   tentative?: boolean
   /** The desk that claimed it, written since lane.mjs started stamping claims. */
@@ -584,6 +587,15 @@ function ownerOf(lane: LaneBoardEntry, panes: LanePane[], taken: Set<string>): s
       taken.add(exact.id)
       return exact.id
     }
+    // A hold kept for the pane after /clear: the app has moved that pane onto the new
+    // chat, so the old chat id matches nothing. The pane being open is what owns it.
+    if (lane.ended && lane.pane) {
+      const kept = panes.find((p) => p.id === lane.pane && !taken.has(p.id))
+      if (kept) {
+        taken.add(kept.id)
+        return kept.id
+      }
+    }
   }
   const from = lane.from ? samePath(lane.from) : null
   if (!from) return null
@@ -954,6 +966,8 @@ function readRepo(main: string): LaneBoard | null {
       session: held?.session ?? null,
       // Filled in by attachLaneOwners, which is the only place that knows what panes exist.
       ownerPane: null,
+      pane: held?.pane,
+      ended: held?.ended,
       held: Boolean(held),
       asleep: held?.asleep,
       seen,

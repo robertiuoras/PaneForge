@@ -2328,6 +2328,16 @@ const inside = (at, dir) => Boolean(dir) && (at === dir || at.startsWith(dir + '
  * matched no lane and the guard let it through (2026-10-04).
  */
 const foldCase = (p) => (process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p)
+/**
+ * What follows `dir` at the start of `target` (`''` = the folder itself, else `<sep>...`), or
+ * null when `target` is not inside it. A case-folded prefix of the same ORIGINAL length is
+ * compared: lowercasing can change a string's length, so a folded copy is never sliced.
+ */
+function restUnder(target, dir) {
+  if (target.length < dir.length || foldCase(target.slice(0, dir.length)) !== foldCase(dir)) return null
+  const rest = target.slice(dir.length)
+  return rest === '' || rest.startsWith(sep) ? rest : null
+}
 
 /**
  * The lanes some OTHER chat is physically standing in, whichever lane that chat was given.
@@ -2810,8 +2820,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
 function guard(session, path) {
   if (!session || !path) return null
   const target = resolve(path)
-  const key = foldCase(target)
-  const inside = (dir) => key === foldCase(dir) || key.startsWith(foldCase(dir) + sep)
+  const inside = (dir) => restUnder(target, dir) !== null
 
   const owned = POOL.map((id) => ({ id, dir: laneDir(id) })).filter((l) => inside(l.dir))
   if (!owned.length) return null
@@ -2969,15 +2978,14 @@ function remoteLaneHunks(rel, cache, t) {
 function overlap(session, path) {
   if (!session || !path) return null
   const target = resolve(path)
-  const folded = foldCase(target)
-  const inside = (dir) => folded === foldCase(dir) || folded.startsWith(foldCase(dir) + sep)
+  const inside = (dir) => restUnder(target, dir) !== null
   const mine = POOL.map((id) => ({ id, dir: laneDir(id) }))
     .filter((l) => inside(l.dir))
     .sort((x, y) => y.dir.length - x.dir.length)[0]
   if (!mine) return null
   // Same length either spelling, so the part below the lane folder is cut, not `relative`d
   // (which compares case and would answer `../../paneforge-a/...`).
-  const rel = target.slice(mine.dir.length + 1)
+  const rel = restUnder(target, mine.dir).slice(1)
   if (!rel || rel.startsWith('..')) return null
 
   const cachePath = join(dirname(STATE), 'paneforge-overlap.json')
@@ -4724,6 +4732,7 @@ function releaseClaim(session, { gone = false, cleared = false } = {}) {
       // only - its commits are not a lane's to finish). An empty or ready lane, a hold no
       // pane wore, and a pane the app says is gone are given up exactly as before; claim
       // carries a kept hold only to the SAME pane, so nobody else can take it.
+      // On `--gone` markReady is skipped on purpose: marking clean-ahead work ready at /clear is the recorded bug (memory bug_clear_mid_recovery_marks_lane_ready_2026-10-02); unready orphan work belongs to the completion dispatcher.
       if (cleared && c.pane && !gone && (w.dirty || (id !== 'main' && w.ahead > 0 && !state.ready[id]))) {
         c.ended ??= now()
         closeLaneApps(laneDir(id))

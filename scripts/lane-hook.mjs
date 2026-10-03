@@ -102,6 +102,16 @@ const NEVER = ['claude-memory']
  * in no lane folder and called a visitor, and its writes through that spelling skipped the
  * guard. Compare folded; keep the original for anything shown or passed on.
  */
+/**
+ * What follows `root` at the start of `orig`, or null when `orig` does not start with it.
+ * Compares a case-folded prefix of the SAME original length: lowercasing can change a
+ * string's length for some letters, so a folded copy must never be sliced by an offset.
+ */
+const restUnder = (orig, root) => {
+  const o = String(orig)
+  const r = String(root)
+  return o.length >= r.length && fold(o.slice(0, r.length)) === fold(r) ? o.slice(r.length) : null
+}
 const fold = (p) => (process.platform === 'darwin' || process.platform === 'win32' ? String(p).toLowerCase() : String(p))
 
 // ------------------------------------------------------------------ registry
@@ -258,10 +268,9 @@ if (!session) process.exit(0)
  */
 function copyLetterOf(repo, dir) {
   if (!repo || !NEVER.includes(basename(repo))) return null
-  const t = fold(resolve(dir))
-  const r = fold(repo)
-  if (t === r || t.startsWith(r + sep) || !t.startsWith(r + '-')) return null
-  const letter = t.slice(r.length + 1).split(sep)[0]
+  const rest = restUnder(resolve(dir), repo)
+  if (rest === null || rest === '' || rest.startsWith(sep) || !rest.startsWith('-')) return null
+  const letter = fold(rest.slice(1).split(sep)[0])
   return letter && existsSync(`${repo}-${letter}`) ? letter : null
 }
 
@@ -374,13 +383,12 @@ if (event === 'prompt') {
 
   // A chat started inside a checkout keeps that one: it may already have uncommitted work
   // there, and sending it to an empty lane would hide that work from it.
-  const t = fold(resolve(cwd))
-  const r0 = fold(repo)
+  const rest0 = restUnder(resolve(cwd), repo)
   const prefer =
-    t === r0 || t.startsWith(r0 + sep)
+    rest0 === '' || rest0?.startsWith(sep)
       ? 'main'
-      : t.startsWith(r0 + '-')
-        ? t.slice(r0.length + 1).split(sep)[0]
+      : rest0?.startsWith('-')
+        ? fold(rest0.slice(1).split(sep)[0])
         : null
 
   // A VISITOR is a chat whose own project is a different repository - it is only here
