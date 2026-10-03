@@ -36,6 +36,7 @@ import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
 import { machineOf } from '../../shared/paneLabel'
 import type { ReviewRecord } from '../../shared/reviews'
+import { TELL_WAIT_MS, type TellOutcome } from '../../shared/tell'
 
 /** Same cap the local session manager keeps, for the same reason. */
 const BUFFER_LIMIT = 400_000
@@ -76,6 +77,29 @@ export function splitId(id: string): { peer: string; local: string } | null {
 
 export function joinId(peer: string, local: string): string {
   return `@${peer}/${local}`
+}
+
+/** What `pf tell` says about an owner that has no tell answer yet - wording fixed by the brief. */
+export const OLDER_TELL_REASON =
+  'the other computer runs an older PaneForge that sends no receipt; it types the prompt when that chat is ready'
+
+/**
+ * An owner's tell answer, checked where it lands and put back under the device's name.
+ * Anything this side cannot read is a failure that says so - never a delivery.
+ */
+export function outcomeFrom(raw: unknown, peer: string, id: string, title: string): TellOutcome {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const { kind, at, how, receipt, reason, busySince, title: said, id: local, ref } = o
+  const theirTitle = typeof said === 'string' ? said : title
+  const theirId = typeof local === 'string' && local ? joinId(peer, local) : id
+  const theirRef = typeof ref === 'string' && ref ? joinId(peer, ref) : id
+  if (kind === 'missing') return { kind: 'missing', ref: theirRef }
+  if (kind === 'delivered' && typeof at === 'number' && (how === 'typed' || how === 'steered') && typeof receipt === 'string')
+    return { kind: 'delivered', id: theirId, title: theirTitle, at, how, receipt }
+  if (kind === 'queued' && typeof reason === 'string')
+    return { kind: 'queued', id: theirId, title: theirTitle, ...(typeof busySince === 'number' ? { busySince } : {}), reason }
+  if (kind === 'failed' && typeof reason === 'string') return { kind: 'failed', id: theirId, title: theirTitle, reason }
+  return { kind: 'failed', id, title, reason: 'the other computer answered, but its answer could not be read, so whether the prompt was sent is not known' }
 }
 
 export class RemoteClient extends EventEmitter {
@@ -438,6 +462,39 @@ export class RemoteClient extends EventEmitter {
     })
   }
 
+  /**
+   * `pf tell` to one of that machine's panes, answered with what happened to the prompt.
+   *
+   * The owner runs its own `tellPane` and replies with the outcome, so the line printed here
+   * is the owner's knowledge, not a guess: s42-mus4a344 (2026-10-03) printed "told" for a
+   * prompt that never left this desk. An owner from before this answer exists gets the one
+   * `prompt` intent it understands, and the outcome says that no receipt is coming.
+   * Ids cross bare; the outcome comes back under `@<device>/`.
+   */
+  tellPane(localId: string, text: string): Promise<TellOutcome> {
+    const id = joinId(this.peer.id, localId)
+    const title = this.available.find((s) => s.id === localId)?.title ?? ''
+    if (!this.conn?.ready) return Promise.resolve<TellOutcome>({ kind: 'failed', id, title, reason: `${this.peer.name} is not connected right now` })
+    if (this.conn.peer.tellReceipt !== true) {
+      if (!this.sendPrompt(localId, text)) return Promise.resolve<TellOutcome>({ kind: 'failed', id, title, reason: `${this.peer.name} is not connected right now` })
+      return Promise.resolve<TellOutcome>({ kind: 'queued', id, title, reason: OLDER_TELL_REASON })
+    }
+    // The owner waits up to TELL_WAIT_MS for its own receipt; the extra 15 s is the link.
+    return this.ask<unknown>({ t: 'tell', ref: localId, id: localId, text }, TELL_WAIT_MS + 15_000).then(
+      (raw) => outcomeFrom(raw, this.peer.id, id, title),
+      (err: Error) => ({
+        kind: 'failed' as const,
+        id,
+        title,
+        // A timeout or a dropped link leaves the prompt's fate over there unknown, and
+        // "failed" must not read as "safe to send again".
+        reason: /did not answer|Connection lost/.test(err.message)
+          ? `${err.message} - the prompt may still be waiting there, so check that chat before sending it again`
+          : err.message
+      })
+    )
+  }
+
   /** Save Keep open on the machine that actually owns the pane. */
   setKeepOpen(localId: string, keep: boolean): Promise<boolean> {
     return this.ask<boolean>({ t: 'keep', id: localId, keep }, 10_000).catch((err: Error) => {
@@ -705,6 +762,9 @@ export class RemoteClient extends EventEmitter {
       }
       case 'kept':
         this.settle(m, m.keep === true)
+        return
+      case 'told':
+        this.settle(m, m.outcome)
         return
       case 'filesdone':
         this.settle(m, m.result)

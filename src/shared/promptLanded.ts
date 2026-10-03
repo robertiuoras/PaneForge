@@ -85,3 +85,32 @@ export function promptStillInBox(painted: string, prompt: string): boolean | nul
  * logged as gone. The placeholder IS the prompt still waiting there.
  */
 const PASTED = /\[Pasted (?:text #\d+(?: \+\d+ lines?)?|Content \d+ chars)\]/
+
+/**
+ * Codex 0.160's placeholder for a paste over 1000 characters, with the suffix it adds when
+ * a second paste of the same size is in the box. N is the paste's character count
+ * (`chars().count()` in Codex: code points, not UTF-16 units).
+ */
+const CODEX_PASTED = /^\[Pasted Content (\d+) chars\](?: #\d+)?$/
+
+/**
+ * Is what Codex's box shows, read back off the screen, exactly this prompt?
+ *
+ * The retry Enter is only safe on a box still holding OUR prompt, and the screen draws it
+ * differently from the bytes typed: a soft wrap moves a word to the next row and does not
+ * draw the space it broke at, so a 497-char prompt read back as 495 and every retry was held
+ * back (s40-mus3teu4, 2026-10-03); a long paste is drawn as `[Pasted Content N chars]`.
+ * Whitespace is ignored, everything else must match; the placeholder counts when N is the
+ * prompt's own length. The native receipt that settles the prompt still needs exact bytes.
+ */
+export function codexBoxHolds(box: string, prompt: string): boolean {
+  const shown = String(box ?? '').trim()
+  const placeholder = CODEX_PASTED.exec(shown)
+  if (placeholder) {
+    const n = Number(placeholder[1])
+    const normal = prompt.replace(/\r\n?/g, '\n')
+    return n === [...prompt].length || n === [...normal].length || n === prompt.length
+  }
+  const bare = (text: string): string => text.replace(/\s+/g, '')
+  return bare(shown) !== '' && bare(shown) === bare(prompt)
+}

@@ -56,3 +56,22 @@ export async function composerOf(
     term.dispose()
   }
 }
+
+/**
+ * The rows on the pane's screen right now, trailing blanks trimmed: what a person looking at
+ * it sees, not everything it printed. A line a CLI drew and then wrote over is still in the
+ * raw bytes, so only a replay can say it is gone.
+ */
+export async function screenOf(raw: string, cols: number, rows: number): Promise<string[]> {
+  if (!raw) return []
+  const term = new Terminal({ cols: Math.max(20, cols), rows: Math.max(4, rows), scrollback: 0, allowProposedApi: true })
+  try {
+    await new Promise<void>((resolve) => term.write(raw, resolve))
+    const buf = term.buffer.active
+    const out: string[] = []
+    for (let i = 0; i < term.rows; i++) out.push(buf.getLine(buf.baseY + i)?.translateToString(true) ?? '')
+    return out
+  } finally {
+    term.dispose()
+  }
+}

@@ -91,6 +91,10 @@ function backend() {
   const returned = []
   const started = []
   const submitted = []
+  // What `pf tell` asked this desk to hand a pane, and what the desk's own tellPane answers.
+  // s1 settles delivered; any id this desk does not have answers `missing`, as the real
+  // SessionManager does.
+  const told = []
   const kept = new Set()
   const closeDone = []
   const reviews = Array.from({ length: 21 }, (_, index) => ({
@@ -115,6 +119,7 @@ function backend() {
     returned,
     started,
     submitted,
+    told,
     kept,
     closeDone,
     setHistory(id, data) {
@@ -151,6 +156,12 @@ function backend() {
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
       sendPrompt: (id, text) => submitted.push([id, text]),
+      tellPane: async (ref, text) => {
+        told.push([ref, text])
+        const s = sessions.find((x) => x.id === ref)
+        if (!s) return { kind: 'missing', ref }
+        return { kind: 'delivered', id: s.id, title: s.title, at: 1_700_000_000_000, how: 'typed', receipt: 'the turn started' }
+      },
       resize: (id, cols, rows, borrowed, viewer, _mirror, person) =>
         resized.push([id, cols, rows, borrowed === true, viewer, person]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
@@ -294,6 +305,74 @@ async function main() {
     )
   }
 
+  // ------------------------------------------------------- pf tell to another computer
+  // `pf tell @<device>/<id>` used to look only at this desk's own panes, find nothing, and
+  // print "told" anyway (s42-mus4a344, 2026-10-03). A tell now crosses as one request with
+  // an answer, and an owner too old to answer says so instead of a made-up success.
+  {
+    const guestOf = () =>
+      new RemoteClient(
+        { id: 'OWNER', name: 'Desk PC', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+        () => ({ id: 'NEW', name: 'New desk', platform: 'darwin', version: 'test' })
+      )
+    const has = (c) => typeof c.tellPane === 'function'
+    // An owner that answers tells: one `tell` frame with the id stripped of its device, and
+    // the owner's outcome comes back with the device put back on.
+    {
+      const c = guestOf()
+      const sent = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new', promptSubmit: true, tellReceipt: true }, send: (m) => sent.push(m) }
+      const pending = has(c) ? c.tellPane('s7-abc', 'check the build') : Promise.resolve(null)
+      const frame = sent[0] ?? {}
+      ok(
+        'a tell to an owner that answers goes out as one tell request with the bare id',
+        frame.t === 'tell' && frame.ref === 's7-abc' && frame.id === 's7-abc' && frame.text === 'check the build' && typeof frame.rid === 'number',
+        JSON.stringify(sent)
+      )
+      ok('and nothing is typed into that pane by this side', !sent.some((m) => m.t === 'write' || m.t === 'prompt'), JSON.stringify(sent))
+      c.receive({ t: 'told', rid: frame.rid, ref: 's7-abc', outcome: { kind: 'queued', id: 's7-abc', title: 'Blender film', busySince: 1_700_000_000_000, reason: 'pane is busy; it will be typed when the turn ends' } })
+      const out = await pending
+      ok(
+        "the owner's answer comes back with the device put back on the id",
+        JSON.stringify(out) === JSON.stringify({ kind: 'queued', id: '@OWNER/s7-abc', title: 'Blender film', busySince: 1_700_000_000_000, reason: 'pane is busy; it will be typed when the turn ends' }),
+        JSON.stringify(out)
+      )
+      const garbled = has(c) ? c.tellPane('s7-abc', 'again') : Promise.resolve(null)
+      c.receive({ t: 'told', rid: sent[1]?.rid, ref: 's7-abc', outcome: { kind: 'delivered', id: 's7-abc' } })
+      const bad = await garbled
+      ok(
+        'an answer this side cannot read is a failure that says so, never a delivery',
+        bad?.kind === 'failed' && bad.id === '@OWNER/s7-abc' && /could not be read/.test(bad.reason),
+        JSON.stringify(bad)
+      )
+    }
+    // An owner from before tells had answers: it still gets the one `prompt` intent it knows,
+    // and this side says plainly that no receipt is coming.
+    {
+      const c = guestOf()
+      const sent = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'old', promptSubmit: true }, send: (m) => sent.push(m) }
+      const out = has(c) ? await c.tellPane('s7-abc', 'check the build') : null
+      ok(
+        'an older owner gets the prompt frame it understands',
+        sent.length === 1 && sent[0].t === 'prompt' && sent[0].id === 's7-abc' && sent[0].text === 'check the build',
+        JSON.stringify(sent)
+      )
+      ok(
+        'and the tell answers queued, saying the other computer sends no receipt',
+        out?.kind === 'queued' && out.id === '@OWNER/s7-abc' &&
+          out.reason === 'the other computer runs an older PaneForge that sends no receipt; it types the prompt when that chat is ready',
+        JSON.stringify(out)
+      )
+    }
+    // Not connected: nothing went anywhere, and the line says which computer.
+    {
+      const c = guestOf()
+      const out = has(c) ? await c.tellPane('s7-abc', 'check the build') : null
+      ok('a tell while that computer is not connected fails and names it', out?.kind === 'failed' && out.id === '@OWNER/s7-abc' && /Desk PC/.test(out.reason), JSON.stringify(out))
+    }
+  }
+
   // ------------------------------------------------------------------- invites
   // The one line that replaced three typed fields. Everything here is about the round
   // trip surviving the way a person actually moves it: selected with a stray quote, sent
@@ -342,7 +421,7 @@ async function main() {
   const code = newCode()
   const port = await freePort()
   const be = backend()
-  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true }
+  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true, tellReceipt: true }
   const host = new RemoteHost(be.api, () => identity, () => code)
   host.start(port)
   ok('listener comes up', await until(() => host.listening))
@@ -613,6 +692,46 @@ async function main() {
     !be.typed.some(([id, data]) => id === 's1' && (data === 'run the queued job' || data === '\r')),
     JSON.stringify(be.typed)
   )
+
+  // `pf tell` over the real link: the host's own tellPane answers, and that answer is what
+  // the guest prints - delivered, missing, or the host's failure - never a guess made here.
+  {
+    const tell = (id, text) => (typeof client.tellPane === 'function' ? client.tellPane(id, text) : Promise.resolve(null))
+    ok('the host advertises that it answers tells', client.identity()?.tellReceipt === true, JSON.stringify(client.identity()))
+    const out = await tell('s1', 'run the tests')
+    ok('a guest tell reaches the host as the bare id', be.told.some(([id, text]) => id === 's1' && text === 'run the tests'), JSON.stringify(be.told))
+    ok(
+      "a guest tell returns the host's outcome, id put back under the device",
+      JSON.stringify(out) === JSON.stringify({ kind: 'delivered', id: '@HOSTID/s1', title: 'assistant', at: 1_700_000_000_000, how: 'typed', receipt: 'the turn started' }),
+      JSON.stringify(out)
+    )
+    ok('a tell is not also sent as a prompt frame', !be.submitted.some(([, text]) => text === 'run the tests'), JSON.stringify(be.submitted))
+    const gone = await tell('s99-gone', 'anyone there')
+    ok('a pane the host does not have comes back missing, under its full name', JSON.stringify(gone) === JSON.stringify({ kind: 'missing', ref: '@HOSTID/s99-gone' }), JSON.stringify(gone))
+    const saved = be.api.tellPane
+    be.api.tellPane = async () => {
+      throw new Error('the pane closed while the prompt was waiting')
+    }
+    const broke = await tell('s1', 'run the tests')
+    ok(
+      "a host whose tell throws answers failed with its reason, not the guest's timeout",
+      broke?.kind === 'failed' && broke.id === '@HOSTID/s1' && /pane closed while the prompt was waiting/.test(broke.reason),
+      JSON.stringify(broke)
+    )
+    be.api.tellPane = saved
+    // A chat `pf list` shows from over there but this desk does not mirror: the tell still
+    // reaches its owner. The link, not the mirror, is what carries it.
+    client.setWatch(['s1'])
+    ok('s2 is no longer mirrored here', await until(() => client.list().length === 1 && !client.list().some((s) => s.id === '@HOSTID/s2')))
+    const unmirrored = await tell('s2', 'pick this up')
+    ok(
+      'a tell to a chat over there that is not mirrored here reaches its owner and comes back delivered',
+      be.told.some(([id, text]) => id === 's2' && text === 'pick this up') && unmirrored?.kind === 'delivered' && unmirrored.id === '@HOSTID/s2',
+      JSON.stringify(unmirrored)
+    )
+    client.setWatch(['s1', 's2'])
+    ok('both are mirrored again', await until(() => client.list().length === 2))
+  }
 
   // A finished turn over there raises a hand here.
   let raised = null

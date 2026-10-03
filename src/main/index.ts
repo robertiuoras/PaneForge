@@ -26,6 +26,7 @@ import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { onReviewChanged, onReviewRecorded, reviewForPeer, reviewsForPeer, storeRemoteReview, acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, thisMachine, type DoneCloseDeps } from './doneClose'
+import { watchUnsentPrompts } from './unsentCards'
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { closeByOf, type CloseBy } from '../shared/closeWhenDone'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
@@ -73,6 +74,7 @@ import { Tunnel } from './tunnel'
 import { TailnetIdentity } from './tailnetIdentity'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
+import { tellLine, type TellOutcome } from '../shared/tell'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
@@ -1282,6 +1284,8 @@ const remote = new Remote({
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
+  // `pf tell` from the paired machine: queued here, answered with what happened to it.
+  tellPane: (id, text) => manager.tellPane(id, text),
   startSession: async (req) => {
     // Give unpinned new Codex work a task-sized model and effort before applying defaults.
     return startComputeAware(withDefaultModel(routeCodexStart(await laneFor(req)), getConfig().defaultModels))
@@ -1412,6 +1416,8 @@ function allSessions(): Session[] {
 }
 // A finished chat's report carries the number on its card, counted from this same list.
 setReviewDesk(allSessions)
+// A prompt left in a chat's input box (`Session.promptUnsent`) is a GuardDeck card until it goes in.
+watchUnsentPrompts(allSessions, () => remote.state().peers)
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
 // The link came back and the whole scrollback arrived again: the pane has to start
@@ -1544,9 +1550,24 @@ ipcMain.handle('owner:stats', (e) => {
 // has never had it. Every FACT is read here: the folder off the pane's own record and the
 // pty's pid off the manager, so a caller cannot point this at a folder it does not own.
 // Anything that can reach the app can hand a pane one line, queued for the gap between
-// its turns - `pf tell`.
+// its turns - `pf tell`. A pane on another computer is told THERE, and that computer
+// answers with what happened (`remote.tellPane`): before this, an `@device/` id was looked
+// up among this desk's own panes, found nothing, and `pf tell` printed "told" anyway
+// (s42-mus4a344, 2026-10-03). An `@` id with no link to its computer is not a local pane.
+function tellAnyPane(ref: string, text: string): Promise<TellOutcome> {
+  if (remote.owns(ref)) return remote.tellPane(ref, text)
+  if (ref.startsWith('@'))
+    return Promise.resolve<TellOutcome>({ kind: 'failed', id: ref, title: '', reason: 'that chat is on another computer, and this one is not connected to it' })
+  return manager.tellPane(ref, text)
+}
+// Fire-and-forget, for a caller with no use for the answer (a pf from before the answer).
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
-  manager.tellPane(String(ref), String(text))
+  void tellAnyPane(String(ref), String(text))
+})
+// The answered half: `pf tell` prints `line`, computed here so its wording has one source.
+ipcMain.handle('pane:tell', async (_e, ref: unknown, text: unknown) => {
+  const outcome = await tellAnyPane(String(ref ?? ''), String(text ?? ''))
+  return { ...outcome, line: tellLine(outcome) }
 })
 ipcMain.handle('pane:answer', (_e, req) => manager.answerPane(req))
 ipcMain.handle('pane:answerStatus', (_e, req) => manager.answerStatus(req))
@@ -1884,8 +1905,13 @@ setInterval(() => measureMainTask('done-close', () => {
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
-  for (const opener of finishedDigest.flush((o) => manager.workingChildrenOf(o), (o, text) => manager.tellPane(o, text), Date.now(), (o) => manager.openChildrenOf(o)))
-    console.info(`done-close: told ${opener} what the panes it opened did`)
+  for (const opener of finishedDigest.flush((o) => manager.workingChildrenOf(o), (o, text) => {
+    // Told only if the opener is still open; what happened to the line goes to the log.
+    if (!manager.list().some((s) => s.id === o || s.title === o)) return false
+    void manager.tellPane(o, text).then((outcome) => console.info(`done-close: ${tellLine(outcome)}`))
+    return true
+  }, Date.now(), (o) => manager.openChildrenOf(o)))
+    console.info(`done-close: queued for ${opener} what the panes it opened did`)
 }), 15_000).unref()
 /**
  * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above

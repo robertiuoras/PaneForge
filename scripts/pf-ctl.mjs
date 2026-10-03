@@ -18,10 +18,10 @@
  *   node scripts/pf-ctl.mjs tidy [--dupes] [--dry-run]   clear finished panes; list (or close) idle duplicates
  *   node scripts/pf-ctl.mjs move <pane> --to <agent> [--model M]   reopen a pane's work on another agent
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
- *                                       [--close-when-done] [--report-to <pane>]
+ *                                       [--close-when-done] [--report-to <pane-id>]
  *   Queue-backed observer: open <cwd> --agent shell --compute-job <submitted-id> --compute-owner <native-id>
  *   Its terminal worker receipt is retained as a review before safe closure; no idle timeout.
- *   pf-ctl close-when-done [<title-or-id>] [--report-to <pane>]
+ *   pf-ctl close-when-done [<title-or-id>] [--report-to <pane-id>]
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
@@ -82,7 +82,10 @@ import {
   laneLedger,
   movePrompt,
   moveRefusal,
-  numberCloseRefusal,
+  cardRefRefusal,
+  redoLine,
+  listNote,
+  owedSince,
   paneByRef,
   rowLabel,
   readTail,
@@ -182,8 +185,46 @@ async function send(channel, args) {
   await post('/pf/send', { calls: [{ channel, args }] })
 }
 
+/**
+ * Hand a pane one prompt and say what happened to it: `{ kind, line }`.
+ *
+ * The app answers `pane:tell` with the outcome AND the line to print (`shared/tell.ts`
+ * `tellLine`), so the words have one source and pf never says "told" for a prompt that was
+ * not sent - it did, for a pane on the other computer that was never even looked up
+ * (s42-mus4a344, 2026-10-03). A pane on another computer goes under its full `@device/` id;
+ * the app routes it. An app from before the answer only has the silent send: the prompt
+ * still goes, and the line says nothing confirms it. Exit 1 is the caller's for
+ * `failed`/`missing`.
+ */
+async function tellWithReceipt(pane, text) {
+  const out = await tryCall('pane:tell', [pane.id, text])
+  if (out.error && /^(unknown channel|no handler for) pane:tell$/.test(out.error)) {
+    await send('pane:tell', [pane.id, text])
+    return { kind: 'unconfirmed', line: `handed to ${pane.id} (${pane.title}) with no receipt: this PaneForge is too old to say whether the prompt was sent` }
+  }
+  if (out.error) return { kind: 'failed', line: `not sent to ${pane.id} (${pane.title}): ${out.error}` }
+  if (!out.value?.line) return { kind: 'failed', line: `the app answered without saying what happened to the prompt for ${pane.id}` }
+  return out.value
+}
+
 async function sessions() {
   return (await call('sessions:list', [])) ?? []
+}
+
+/**
+ * The chat `pf tell` / `pf type` hands text to. Its `@device/` id from column 2 of `pf list`
+ * finds a chat on another computer that is not mirrored on this desk too: the app sends a
+ * tell for any `@` id over the link to that computer (`remote.owns`), mirrored or not. Only
+ * the desk's own list was read, so the very id pf printed answered "no pane named"
+ * (2026-10-03).
+ */
+async function chatToTell(ref) {
+  const list = await sessions()
+  const s = await resolve(list, ref)
+  if (s) return s
+  const listed = ref.startsWith('@') ? (await listedRows(list)).find((row) => row.id === ref) : undefined
+  if (!listed) fail(1, `no pane named "${ref}"`)
+  return listed
 }
 
 /**
@@ -200,6 +241,7 @@ async function resolve(list, ref) {
   if (parseLabel(ref)) {
     const rows = [...list, ...(await listedRows(list))]
     const at = paneByRef(rows, ref, localMachine())
+    if (CHANGES_A_CHAT.has(cmd)) refuseCardRef(list, at, ref)
     if (at?.listed) {
       const where = at.machine ? MACHINE_NAME[at.machine] : 'another computer'
       fail(1, `${at.label ?? where} runs on the ${where} and is not open on this desk - open it here first, or use pf on the ${where}`)
@@ -211,6 +253,41 @@ async function resolve(list, ref) {
   if (byTitle.length > 1)
     fail(1, `"${ref}" names ${byTitle.length} panes - use an id: ${byTitle.map((s) => s.id).join(', ')}`)
   return byTitle[0]
+}
+
+/**
+ * The commands that change a chat take its id (or exact name), never a card number or label.
+ *
+ * 2026-10-03: `pf close 9` closed a chat that had become card 9 13 s earlier, and `pf type 13`
+ * typed into the wrong chat - a card number is a place on the desk, and places shift when a
+ * chat above closes. The refusal says what the number names right now and prints the same
+ * command with that id, so the caller checks it is the chat it meant and reruns. Reading
+ * commands (list, screen, composer, transcript, ...) still take numbers: reading the wrong
+ * chat costs a second look, typing into one costs somebody's work.
+ */
+const CHANGES_A_CHAT = new Set(['tell', 'type', 'close', 'close-when-done', 'move'])
+
+function refuseCardRef(list, pane, ref, flagName) {
+  const why = cardRefRefusal(ref, pane, {
+    cards: listRows(list).map(([l]) => l),
+    redo: (id) => redoLine(process.argv.slice(2), ref, id, flagName),
+    now: Date.now()
+  })
+  if (why) fail(1, why)
+}
+
+/**
+ * `--report-to` names another chat too, so it takes an id as well: `--report-to 3` reported to
+ * whichever chat was card 3 when the pane finished (the app looks it up by id or title only,
+ * so before this it silently reported to nobody). Returns the value unchanged when it is fine.
+ */
+async function checkReportTo(value) {
+  if (value === undefined || !parseLabel(value)) return value
+  const list = await sessions()
+  if (list.some((s) => s.id === value)) return value
+  const rows = [...list, ...(await listedRows(list))]
+  refuseCardRef(list, paneByRef(rows, value, localMachine()), value, '--report-to')
+  return value
 }
 
 /**
@@ -236,16 +313,26 @@ async function listedRows(list) {
         number: pane.number,
         machine: pane.machine,
         listed: true,
-        label: labelFor(pane.machine, pane.number)
+        label: labelFor(pane.machine, pane.number),
+        agent: pane.agent,
+        owedPrompt: pane.owedPrompt,
+        promptUnsent: pane.promptUnsent
       })
     }
   }
   return rows
 }
 
+/** `--name value` or `--name=value`, taken out of argv. */
 function flag(argv, name) {
   const i = argv.indexOf(name)
-  if (i < 0) return undefined
+  if (i < 0) {
+    const j = argv.findIndex((w) => typeof w === 'string' && w.startsWith(`${name}=`))
+    if (j < 0) return undefined
+    const v = argv[j].slice(name.length + 1)
+    argv.splice(j, 1)
+    return v
+  }
   const v = argv[i + 1]
   argv.splice(i, 2)
   return v
@@ -520,8 +607,19 @@ if (cmd === 'list') {
   // The label leads, because it is the name on the card. See `resolve`.
   // Column 1 is parsed by other scripts: only `3`, `PC 3`, `Mac 3`; see `listRows`.
   // Column 3 starts with the plain word; `idle, still running: ...` is an idle chat with work left.
-  for (const [label, s] of listRows(list, await listedRows(list)))
-    console.log([label, s.id, listStatusWord(s), s.title, s.cwd].join('\t'))
+  // A sixth column only when a prompt is owed or sat unsent: the queued store says since when
+  // (the oldest prompt it holds for the pane). Scripts read columns 1-5 by position, so a row
+  // with nothing to say keeps exactly five.
+  let since = new Map()
+  try {
+    since = owedSince(JSON.parse(readFileSync(join(USER_DATA, 'queued-prompts.json'), 'utf8')))
+  } catch {
+    // no store yet, or a half-written one: "prompt waiting" without the time
+  }
+  for (const [label, s] of listRows(list, await listedRows(list))) {
+    const note = listNote(s, since)
+    console.log([label, s.id, listStatusWord(s), s.title, s.cwd, ...(note ? [note] : [])].join('\t'))
+  }
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.
@@ -617,6 +715,10 @@ if (cmd === 'list') {
   // (`moveRefusal`), write the brief BEFORE closing, and reopen the old conversation if the
   // new pane does not start.
   const { ref, to, model } = moveArgs
+  // The pane first: a card number is refused (`resolve`) before anything is asked of the app.
+  const list = await sessions()
+  const pane = await resolve(list, ref)
+  if (!pane) fail(1, `no pane named "${ref}"`)
   const agents = (await call('agents:list', [])) ?? []
   const target = agents.find((a) => a.id === to)
   const usable = agents.filter((a) => a.id !== 'shell' && a.available !== false).map((a) => a.id)
@@ -629,9 +731,6 @@ if (cmd === 'list') {
   const models = (target.models ?? []).map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean)
   if (model && models.length && !models.includes(model))
     fail(1, `${to} has no model "${model}" - it lists: ${models.join(', ')}`)
-  const list = await sessions()
-  const pane = await resolve(list, ref)
-  if (!pane) fail(1, `no pane named "${ref}"`)
   const number = cardNumber(list, pane.id)
   const refused = moveRefusal(pane, { now: Date.now(), self: process.env.PF_PANE })
   if (refused) fail(1, `will not move pane ${number} "${pane.title}" (${pane.id}): ${refused}`)
@@ -761,7 +860,7 @@ if (cmd === 'list') {
   }
   const now = await sessions()
   console.log(
-    `moved pane ${number} ${pane.id} (${pane.agent}) -> pane ${cardNumber(now, fresh.id)} ${fresh.id} (${to}${model ? ` ${model}` : ''}) in ${fresh.cwd ?? pane.cwd}`
+    `moved pane ${number} ${pane.id} "${pane.title}" (${pane.agent}) -> pane ${cardNumber(now, fresh.id)} ${fresh.id} (${to}${model ? ` ${model}` : ''}) in ${fresh.cwd ?? pane.cwd}`
   )
   if (!transcript) console.log(`note: no conversation file found for ${pane.id}; the brief carries its last screen instead`)
   if (state === 'starting') console.log(`note: ${fresh.id} has drawn nothing yet after 40s - check it with pf list`)
@@ -788,7 +887,7 @@ if (cmd === 'list') {
   // `--report-to` defaults to PF_PANE, which every pane's own agent is spawned with, so a
   // session opening a helper pane needs to name nothing.
   const closeWhenDone = rest.includes('--close-when-done')
-  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  const reportTo = (await checkReportTo(flag(rest, '--report-to'))) ?? process.env.PF_PANE
   // Reopening a conversation rather than starting one. `--resume <id>` names the chat -
   // the transcript's filename, which `pf-ctl list` and the history file both carry -
   // and `--continue` takes whichever is newest in the folder.
@@ -896,10 +995,9 @@ if (cmd === 'list') {
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
+  // A card number or label is refused in `resolve`, with the id to close instead.
   const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
-  const why = numberCloseRefusal(ref, s, Date.now())
-  if (why) fail(1, why)
   await call('sessions:kill', [s.id, 'pf'])
   // kill() deletes the session and re-emits the list, so absence IS the verification.
   const still = (await sessions()).some((x) => x.id === s.id)
@@ -927,7 +1025,8 @@ if (cmd === 'list') {
   if (!ref) fail(1, 'close-when-done needs a pane: pf-ctl close-when-done [title-or-id]')
   const s = await resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
-  const armed = await call('sessions:closeWhenDone', [s.id, flag(rest, '--report-to')])
+  const reportTo = await checkReportTo(flag(rest, '--report-to'))
+  const armed = await call('sessions:closeWhenDone', [s.id, reportTo])
   if (!armed) fail(1, `the app would not arm ${s.id}`)
   console.log(`${s.id} (${s.title}) will close itself once it is done`)
 } else if (cmd === 'rename') {
@@ -986,18 +1085,19 @@ if (cmd === 'list') {
     console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
   console.log(draft.text)
 } else if (cmd === 'tell') {
-  // One line into a pane, queued for the gap between its turns rather than typed into
-  // the middle of one.
+  // One line into a pane. A Codex chat mid-answer takes it at once as more input for the
+  // turn it is running; any other chat gets it in the gap between its turns, never typed
+  // into the middle of one.
   const ref = rest.shift()
   const text = rest.join(' ')
   if (!ref || !text) fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
   // Resolved HERE, not by the app: `tellPane` matches an id or a title and nothing else,
   // and a send channel has no reply - so `pf tell 3 ...` printed `told 3` and delivered
   // nothing, to the one name for a pane everybody uses (2026-09-24).
-  const s = await resolve(await sessions(), ref)
-  if (!s) fail(1, `no pane named "${ref}"`)
-  await send('pane:tell', [s.id, text])
-  console.log(`told ${s.id} (${s.title})`)
+  const s = await chatToTell(ref)
+  const told = await tellWithReceipt(s, text)
+  if (told.kind === 'failed' || told.kind === 'missing') fail(1, told.line)
+  console.log(told.line)
 } else if (cmd === 'continue') {
   // GuardDeck's "next prompt" box (Robert, 2026-09-26): a finished chat closes itself, its
   // result shows in GuardDeck, and what he types there has to reach THAT conversation -
@@ -1042,28 +1142,39 @@ if (cmd === 'list') {
     if (h.agent === 'claude' && placeTranscript(landed, resumeId)) await call('sessions:restart', [pane.id])
     paneId = pane.id
   }
-  await send('pane:tell', [paneId, prompt])
+  // The answered tell: GuardDeck's "Sent" must not be printed for a prompt the pane refused.
+  const told = await tellWithReceipt({ id: paneId, title: target.pane?.title ?? target.entry?.title ?? '' }, prompt)
+  if (told.kind === 'failed' || told.kind === 'missing') fail(1, told.line)
   const list = await sessions()
   const number = cardNumber(list, paneId)
   if (!number) fail(1, `pane ${paneId} disappeared before the prompt could be handed to it`)
-  if (json) console.log(JSON.stringify({ paneId, number, reopened }))
-  else console.log(`sent to pane ${number} (${paneId})${reopened ? ' - reopened from History' : target.action === 'wake' ? ' - woken first' : ''}`)
+  if (json) console.log(JSON.stringify({ paneId, number, reopened, outcome: told.kind, line: told.line }))
+  else console.log(`${told.line} (card ${number}${reopened ? ', reopened from History first' : target.action === 'wake' ? ', woken first' : ''})`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')
   if (!ref || !text) fail(1, 'type needs a pane and text: pf-ctl type <title-or-id> <text...>')
-  const s = await resolve(await sessions(), ref)
-  if (!s) fail(1, `no pane named "${ref}"`)
-  // The submit RETURN has to arrive as its OWN pty read. Claude Code treats a chunk
-  // that lands in one read as a PASTE, and a CR inside a paste is a newline, not a
-  // submit - so `${text}\r` in a single write leaves anything long sitting unsent in
-  // the target composer. Measured 2026-08-28: a 470-character FYI typed from the
-  // assistant pane into the clients pane was still in the composer an hour later,
-  // while short lines had always worked, which is why this went unnoticed.
-  await send('pty:write', [s.id, text])
-  await new Promise((r) => setTimeout(r, 800))
-  await send('pty:write', [s.id, '\r'])
-  console.log(`typed into ${s.id} (${s.title})`)
+  const s = await chatToTell(ref)
+  // Codex, here or on the other computer, goes through the tell path: raw text and a
+  // Return 800 ms later typed a 1463-character prompt that Codex never submitted - the
+  // Return was swallowed, and nothing said so (2026-10-03). The tell path types it as a
+  // paste, presses Enter on its own, retries, and answers only once Codex logged it.
+  if (s.agent === 'codex') {
+    const told = await tellWithReceipt(s, text)
+    if (told.kind === 'failed' || told.kind === 'missing') fail(1, told.line)
+    console.log(told.line)
+  } else {
+    // The submit RETURN has to arrive as its OWN pty read. Claude Code treats a chunk
+    // that lands in one read as a PASTE, and a CR inside a paste is a newline, not a
+    // submit - so `${text}\r` in a single write leaves anything long sitting unsent in
+    // the target composer. Measured 2026-08-28: a 470-character FYI typed from the
+    // assistant pane into the clients pane was still in the composer an hour later,
+    // while short lines had always worked, which is why this went unnoticed.
+    await send('pty:write', [s.id, text])
+    await new Promise((r) => setTimeout(r, 800))
+    await send('pty:write', [s.id, '\r'])
+    console.log(`typed into ${s.id} (${s.title}) and pressed Enter; this kind of chat gives no receipt, so nothing confirms it was sent`)
+  }
 } else if (cmd === 'call') {
   // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
   // is already published, so a setting that only has a switch in the dialog can still be

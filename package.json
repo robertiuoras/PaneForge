@@ -87,6 +87,7 @@
     "test:pfrename": "node scripts/pf-rename-test.mjs",
     "test:pfclose": "node scripts/pf-close-test.mjs",
     "test:pflabel": "node scripts/pf-label-test.mjs",
+    "test:unsentcard": "node scripts/unsent-card-test.mjs",
     "test:panenumbers": "node scripts/pane-numbers-test.mjs",
     "test:peerchrome": "node scripts/peer-chrome-test.mjs",
     "test:projectname": "node scripts/project-name-test.mjs",

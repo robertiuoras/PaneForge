@@ -37,6 +37,7 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
   tellPane: 'pf tell <pane> "..." - one line handed to a pane from outside the window',
+  tellPaneReceipt: 'pf tell / pf type / pf continue - the same line, answered with what happened to it',
   answerPane: 'GuardDeck codex-question-answer.mjs - conversation-bound async answers through pf call',
   answerStatus: 'GuardDeck codex-question-answer.mjs - durable exact transcript delivery receipts',
   // A pane says of ITSELF that it should go once it is done. The person who would press a

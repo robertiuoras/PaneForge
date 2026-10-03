@@ -136,14 +136,25 @@ export function carryOver(
 }
 
 /** Why a queued prompt left the store without being typed. */
-export type QueueDrop = 'unsent' | 'abandoned' | 'gone' | 'expired' | 'replaced'
+export type QueueDrop = 'unsent' | 'abandoned' | 'gone' | 'expired' | 'replaced' | 'untaken'
 
 const DROP_WORDS: Record<QueueDrop, string> = {
   unsent: 'the returns were never proven',
   abandoned: 'somebody else was using the pane',
   gone: 'the pane closed before it was typed',
   expired: 'the wait ran out',
-  replaced: 'it was superseded'
+  replaced: 'it was superseded',
+  untaken: 'typed into the box but the agent never took it before the pane closed'
+}
+
+/**
+ * The reason a row is written down with. A pane closing on a prompt that was already TYPED
+ * (its `typed` marker is on disk) is not "closed before it was typed": s40-mus3teu4,
+ * 2026-10-03, had its prompt in Codex's box for minutes with every Enter retry held back, and
+ * the ledger then blamed the typing. Every closer passes 'gone'; the row knows which it was.
+ */
+export function dropReason(row: QueuedPrompt, why: QueueDrop): QueueDrop {
+  return why === 'gone' && row.typed ? 'untaken' : why
 }
 
 /**
@@ -154,6 +165,7 @@ const DROP_WORDS: Record<QueueDrop, string> = {
  * `PREVIEW_CHARS` characters, which is what makes it findable at all.
  */
 export function dropLine(row: QueuedPrompt, why: QueueDrop): string {
+  why = dropReason(row, why)
   return `${row.id} queued prompt LOST (${why}: ${DROP_WORDS[why]}) - ${preview(row.text)}`
 }
 

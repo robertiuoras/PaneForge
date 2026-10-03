@@ -16,6 +16,10 @@ import { spawnSync } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
+/** Why a command that changes a chat takes its id, said once in every such command's help. */
+export const WHY_ID =
+  'Name the chat by its id (column 2 of `pf list`), never its card number: card numbers shift when a chat above closes, so a number can hit a different chat.'
+
 /*
  * Every command pf answers to, in the order `pf help` prints them. `pf-ctl-help-test.mjs`
  * reads the dispatcher in pf-ctl.mjs and fails when a command there has no row here (or a
@@ -41,7 +45,11 @@ export const COMMANDS = [
       'States: starting (just opened), working (busy), idle (waiting for a person or a prompt), exited (finished or asleep).',
       '"idle, still running: <words>" is a chat whose turn ended but whose background agent or command is still going: it is not',
       '  free yet, so do not call it idle. The state always starts with the plain word.',
-      'An id starting with @ is a pane on another paired computer.'
+      'An id starting with @ is a pane on another paired computer.',
+      'A sixth column is there only when a prompt is held up: "prompt waiting since 4:10am Fri" (the app is holding a prompt',
+      '  for that chat and types it in when the chat is ready; no time when another computer holds it) or "prompt not sent',
+      '  - still in its input box" (it was typed in and the agent never took it).',
+      'Use the id (column 2) for any command that changes a chat: the number in column 1 shifts when a chat above closes.'
     ]
   },
   {
@@ -63,6 +71,7 @@ export const COMMANDS = [
       '--here keeps the pane on this computer. Use it from automation: without it the app may start the pane on a paired computer.',
       '--on DEVICE starts it on a paired computer instead (a name or id from `pf devices`).',
       '--close-when-done: the pane closes itself once its work is finished and tells the pane that opened it (--report-to, default: the pane running pf).',
+      '--report-to takes the id of the chat to tell, e.g. --report-to s12-abc123, never a card number: card numbers shift when a chat above closes.',
       '--resume CHAT_ID reopens an earlier conversation; --continue reopens the newest one in that folder.',
       'Prints `opened <id> in <folder>`. The folder can differ from the one asked for: a folder another pane is using gets its own copy.',
       'Check the result with `pf list`.'
@@ -86,10 +95,15 @@ export const COMMANDS = [
   },
   {
     name: 'tell',
-    summary: 'Hand a pane one line of text, delivered between its turns (never typed into the middle of one).',
-    usage: 'pf tell <pane> <text...>',
-    example: 'pf tell 3 "When this step is done, commit and stop"',
-    detail: ['<pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), an exact pane name, or an id. Panes on another computer cannot be told.']
+    summary: 'Hand a pane one line of text. A Codex chat takes it at once, added to the turn it is working on; other chats get it when the current turn ends.',
+    usage: 'pf tell <pane-id> <text...>',
+    example: 'pf tell s12-abc123 "When this step is done, commit and stop"',
+    detail: [
+      '<pane-id> is column 2 of `pf list` (or the pane\'s exact name). A chat on another computer keeps the @ in front:',
+      '  pf tell @<device>/s12-abc123 "When this step is done, commit and stop"',
+      WHY_ID,
+      'A card number or label ("3", "PC 3") is refused, and the refusal prints the id it names right now.'
+    ]
   },
   {
     name: 'continue',
@@ -98,7 +112,7 @@ export const COMMANDS = [
     example: 'pf continue 6f1c2a4e-0b3d-4c5e-9f70-1a2b3c4d5e6f --prompt-file /tmp/next.txt --json',
     detail: [
       '<chat-id> is the conversation id (`resumeId` in a GuardDeck review notice), never a pane number or a folder.',
-      'Its pane is open: the prompt is delivered between its turns, like `pf tell`. A sleeping pane is woken first.',
+      'Its pane is open: the prompt is delivered like `pf tell` (a Codex chat takes it at once, other chats when the current turn ends). A sleeping pane is woken first.',
       'Its pane has closed: the conversation is reopened on this computer from History with its earlier messages, then the prompt is sent.',
       'An id this computer has no record of is refused; nothing is ever sent to the newest chat instead.',
       '--json prints {"paneId","number","reopened"}; errors are one line on stderr with exit 1.'
@@ -107,8 +121,9 @@ export const COMMANDS = [
   {
     name: 'type',
     summary: 'Type text into a pane\'s prompt box and press Enter right now (even mid-turn). Prefer `tell`.',
-    usage: 'pf type <pane> <text...>',
-    example: 'pf type 3 "yes"'
+    usage: 'pf type <pane-id> <text...>',
+    example: 'pf type s12-abc123 "yes"',
+    detail: ['<pane-id> is column 2 of `pf list`; a chat on another computer: pf type @<device>/s12-abc123 "yes"', WHY_ID]
   },
   {
     name: 'composer',
@@ -119,20 +134,24 @@ export const COMMANDS = [
   {
     name: 'close',
     summary: 'Close one pane and check it is gone.',
-    usage: 'pf close <pane>',
-    example: 'pf close 3',
+    usage: 'pf close <pane-id>',
+    example: 'pf close s12-abc123',
     detail: [
-      'It does not ask first: closed by id, a working pane is stopped mid-turn. Look at its state in `pf list` before closing.',
-      '<pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), an exact pane name, or an id.',
-      'By label or number it refuses a pane that is working or came onto the desk in the last 2 minutes, since a closed',
-      '  pane\'s number can go to a new pane after 15 minutes. It prints the pane\'s id; close it by that id if it is the one.'
+      'It does not ask first: a working pane is stopped mid-turn. Look at its state in `pf list` before closing.',
+      '<pane-id> is column 2 of `pf list` (or the pane\'s exact name); a chat on another computer: pf close @<device>/s12-abc123',
+      WHY_ID,
+      'A card number or label ("3", "PC 3") is refused, and the refusal prints the id it names right now. Prints the id and name it closed.'
     ]
   },
   {
     name: 'close-when-done',
     summary: 'Make a pane close itself once its work is finished (default: the pane running pf).',
-    usage: 'pf close-when-done [<pane>] [--report-to PANE]',
-    example: 'pf close-when-done 3'
+    usage: 'pf close-when-done [<pane-id>] [--report-to PANE-ID]',
+    example: 'pf close-when-done s12-abc123 --report-to s7-def456',
+    detail: [
+      'With no <pane-id> it is the pane running pf. --report-to names the chat told when it closes, also by id.',
+      WHY_ID
+    ]
   },
   {
     name: 'tidy',
@@ -158,8 +177,8 @@ export const COMMANDS = [
   {
     name: 'move',
     summary: 'Move a pane\'s work to another agent (e.g. Claude -> Codex when a usage limit runs out). No copy-paste.',
-    usage: 'pf move <pane> --to <agent> [--model M]',
-    example: 'pf move 3 --to codex',
+    usage: 'pf move <pane-id> --to <agent> [--model M]',
+    example: 'pf move s12-abc123 --to codex',
     detail: [
       'Writes a handoff brief to a file (folder, previous agent, path to its full conversation, the last ask and',
       '  the last reply), closes the old pane, and opens <agent> in the SAME folder with the prompt:',
@@ -171,14 +190,16 @@ export const COMMANDS = [
       'Refuses (exit 1, says why, changes nothing) while the pane is working, asking a question, mid-handoff, has',
       '  text typed and not sent, or runs a background job - wait for it to go idle. Also refuses when another pane',
       '  is open in the same folder, when its conversation has no id yet, shell panes, and panes on another computer.',
-      '--to takes an id from `pf agents`. Prints the old and new pane ids.'
+      '--to takes an id from `pf agents`. Prints the old and new pane ids.',
+      WHY_ID
     ]
   },
   {
     name: 'rename',
     summary: 'Rename a pane.',
-    usage: 'pf rename <pane> <name...>',
-    example: 'pf rename 3 Client site fixes'
+    usage: 'pf rename <pane-id> <name...>',
+    example: 'pf rename s12-abc123 Client site fixes',
+    detail: [WHY_ID]
   },
   {
     name: 'review',
@@ -230,10 +251,10 @@ export const COMMANDS = [
 const RECIPES = [
   ['See every pane (number, id, state, name, folder)', 'pf list'],
   ['Open a pane in a folder on a given agent, with a first message', 'pf open ~/Projects/site --agent codex --here --prompt "Fix the failing build"'],
-  ['Tell a pane something (delivered between its turns)', 'pf tell 3 "When this step is done, commit and stop"'],
-  ['Close a pane', 'pf close 3'],
+  ['Tell a pane something (Codex takes it at once, other chats when the current turn ends), by its id from pf list', 'pf tell s12-abc123 "When this step is done, commit and stop"'],
+  ['Close a pane, by its id', 'pf close s12-abc123'],
   ['Tidy the desk: clear finished panes, list duplicate idle ones (add --dupes to close them)', 'pf tidy --dry-run'],
-  ['Move a pane\'s work to another agent (e.g. when Claude\'s usage runs out)', 'pf move 3 --to codex']
+  ['Move a pane\'s work to another agent (e.g. when Claude\'s usage runs out)', 'pf move s12-abc123 --to codex']
 ]
 
 export const COMMAND_NAMES = COMMANDS.map((c) => c.name)
@@ -257,7 +278,10 @@ export function helpText() {
   }
   out.push(
     '',
-    'A <pane> is a label from `pf list` ("PC 3", "pc3", "Mac 3"), a bare number (this computer\'s pane), its exact name, or its id.',
+    'A <pane-id> is column 2 of `pf list` (s12-abc123; a chat on another computer: @<device>/s12-abc123), or the exact name.',
+    'Commands that only read (list, composer) also take the card label in column 1 ("3", "PC 3"). Commands that change a chat',
+    '(tell, type, close, close-when-done, move, --report-to) refuse it: card numbers shift when a chat above closes, so a',
+    'number can hit a different chat.',
     'Agents: `pf agents` lists the ids installed here (claude, codex, grok, antigravity, shell, ...).',
     'More on one command: pf help <command>',
     'Exit codes: 0 ok, 1 refused / not found / call failed, 2 PaneForge not running or its phone server is off.'
@@ -441,23 +465,112 @@ export function paneAt(list, n) {
 }
 
 /**
- * Why `pf close <number>` must not close `s`, the pane that number names right now, or null.
+ * Why a command that CHANGES a chat (`tell`, `type`, `close`, `close-when-done`, `move`, and
+ * `--report-to`) must not take `ref`, or null when `ref` is not a card number or label.
  *
- * A card number is the pane's place on the desk NOW. 2026-10-03 10:28am: chat 7's own test
+ * A card number is the chat's place on the desk NOW. 2026-10-03 10:28am: chat 7's own test
  * pane had closed itself into Review, a chat moved back from the PC landed as the new card 9,
- * and chat 7's `pf close 9` closed that one mid-turn, 13 s after it arrived. So a number is
- * refused on a pane that is working or arrived under 2 minutes ago - the two shapes of "not
- * the pane you read". An id never moves, so `pf close <id>` still closes anything.
+ * and chat 7's `pf close 9` closed that one mid-turn, 13 s after it arrived; the same day
+ * `pf type 13` typed into the wrong chat. The first rule refused only a pane that was working
+ * or had just arrived - but a number that moved onto an old quiet chat is just as wrong, and
+ * nothing can tell it apart from the one meant. An id never moves, so the refusal names what
+ * the number points at right now and the same command with the id in its place.
+ *
+ * `pane` is what `ref` names now (`paneByRef`), or null; `cards` the labels on the desk;
+ * `redo(id)` the caller's own command line with `id` where `ref` was (`redoLine`).
  */
-export function numberCloseRefusal(ref, s, now) {
-  if (!parseLabel(ref) || ref === s.id) return null
-  const age = now - s.createdAt
-  const what =
-    s.status === 'working' ? 'is working right now'
-    : age < 120_000 ? `came onto the desk ${Math.floor(age / 1000)} s ago`
-    : null
-  if (!what) return null
-  return `card ${ref} is "${s.title}" (${s.id}), which ${what} - it may not be the pane you read as ${ref}. If it is the one, close it by id: pf close ${s.id}`
+export function cardRefRefusal(ref, pane, { cards = [], redo, now = Date.now() } = {}) {
+  const want = parseLabel(ref)
+  if (!want || (pane && pane.id === ref)) return null
+  const head = `refused: "${ref}" is a card ${want.machine ? 'label' : 'number'}, and card numbers shift when a chat above closes.`
+  const name = want.machine ? labelFor(want.machine, want.number) : `card ${want.number}`
+  if (!pane)
+    return `${head} There is no ${name} right now (the cards are ${cards.join(', ') || 'none'}); run pf list and use the id in column 2.`
+  const Name = name[0].toUpperCase() + name.slice(1)
+  const age = now - pane.createdAt
+  const where = MACHINE_NAME[pane.machine ?? pane.remote?.machine] ?? 'other computer'
+  const state = [
+    (pane.status === 'working' || pane.runSince) && 'is working',
+    age >= 0 && age < 120_000 && `came onto the desk ${Math.floor(age / 1000)} s ago`,
+    pane.listed && `runs on the ${where} and is not open on this desk`
+  ].filter(Boolean)
+  const what = `${Name} is ${pane.id}${pane.title ? ` (${pane.title})` : ''} right now${state.length ? ` - it ${state.join(' and ')}` : ''}`
+  // A chat only listed here cannot be reached by its @ id from this desk; on its own
+  // computer its id is the part after the slash.
+  if (pane.listed) return `${head} ${what}; open it here first, or on the ${where} run: ${redo(String(pane.id).replace(/^@[^/]+\//, ''))}`
+  return `${head} ${what}; run: ${redo(pane.id)}`
+}
+
+/** One argument, safe to paste into a shell as a single word (pf-ctl.mjs `shellQuote`). */
+function quoteWord(word) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
+  return `'${String(word).replace(/'/g, `'"'"'`)}'`
+}
+
+/** Longer than this, a word of the command is printed as "..." - a 1,500-character prompt is not a line to read. */
+const REDO_WORD_MAX = 80
+
+/**
+ * `pf <argv>` with `id` in place of `ref`, ready to paste: the command the person just ran,
+ * naming the chat the way it cannot shift. `flagName` says which mention of `ref` is meant
+ * (`--report-to` in `pf close-when-done s1 --report-to 3`); otherwise the first word that is
+ * `ref`, or a `--flag=ref`, is.
+ */
+export function redoLine(argv, ref, id, flagName) {
+  const out = [...argv]
+  let at = -1
+  if (flagName) {
+    const i = out.indexOf(flagName)
+    if (i >= 0 && out[i + 1] === ref) out[(at = i + 1)] = id
+    else {
+      const j = out.indexOf(`${flagName}=${ref}`)
+      if (j >= 0) out[(at = j)] = `${flagName}=${id}`
+    }
+  } else {
+    at = out.findIndex((w, i) => i > 0 && (w === ref || /^--[a-z-]+=/.test(w) && w.slice(w.indexOf('=') + 1) === ref))
+    if (at >= 0) out[at] = out[at] === ref ? id : `${out[at].slice(0, out[at].indexOf('=') + 1)}${id}`
+  }
+  return ['pf', ...out.map((w, i) => (i !== at && String(w).length > REDO_WORD_MAX ? '"..."' : quoteWord(w)))].join(' ')
+}
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** `4:10am Fri` in this computer's local time - `clockDay` in src/shared/tell.ts, restated (see the top of this file). */
+export function clockDay(at) {
+  const d = new Date(at)
+  const h = d.getHours()
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, '0')}${h < 12 ? 'am' : 'pm'} ${DAYS[d.getDay()]}`
+}
+
+/**
+ * Pane id -> when the oldest prompt the app still owes it was accepted, read off the app's
+ * `queued-prompts.json` (`src/main/queuedPrompts.ts`; rows are `QueuedPrompt`). A row
+ * without a pane or a time is skipped; anything that is not a store is an empty map.
+ */
+export function owedSince(store) {
+  const out = new Map()
+  if (!store || typeof store !== 'object') return out
+  for (const q of Object.values(store)) {
+    if (!q || typeof q.id !== 'string' || !Number.isFinite(q.at)) continue
+    if (!out.has(q.id) || q.at < out.get(q.id)) out.set(q.id, q.at)
+  }
+  return out
+}
+
+/**
+ * What `pf list` adds as a sixth column for one row, or '' (no column). A prompt the app
+ * owes the pane (`Session.owedPrompt`), since when when this computer's queue knows; and a
+ * prompt that was typed but never taken (`Session.promptUnsent`), which otherwise reads as a
+ * working chat (s40-mus3teu4, 2026-10-03).
+ */
+export function listNote(row, since = new Map()) {
+  const notes = []
+  if (row.promptUnsent) notes.push('prompt not sent - still in its input box')
+  if (row.owedPrompt) {
+    const at = since.get(row.id)
+    notes.push(at ? `prompt waiting since ${clockDay(at)}` : 'prompt waiting')
+  }
+  return notes.join('; ')
 }
 
 /**

@@ -37,6 +37,7 @@ import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 import type { ReviewRecord } from '../../shared/reviews'
+import type { TellOutcome } from '../../shared/tell'
 import { machineOf } from '../../shared/paneLabel'
 
 export { joinId, splitId }
@@ -90,7 +91,7 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, screenView: true, person: this.person }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, tellReceipt: true, screenView: true, person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
@@ -349,6 +350,17 @@ export class Remote extends EventEmitter {
     return this.clients.get(cut.peer)?.sendPrompt(cut.local, text) === true
   }
 
+  /**
+   * `pf tell` to a pane on another computer: the owner types it and answers with what
+   * happened (`shared/tell.ts`). An id whose computer this desk has no link to is missing.
+   */
+  tellPane(id: string, text: string): Promise<TellOutcome> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.resolve<TellOutcome>({ kind: 'missing', ref: id })
+    return client.tellPane(cut.local, text)
+  }
+
   /** Start a pane on another device - the "new session over there" path. */
   startOn(device: string, req: StartSessionRequest): Promise<Session> {
     const client = this.clients.get(device)
@@ -544,7 +556,12 @@ export class Remote extends EventEmitter {
             keepOpen: s.keepOpen,
             // The owner's card number and machine, so a listed row reads "Mac 3" here too.
             number: s.number,
-            machine
+            machine,
+            // A prompt that desk still owes the pane, or one that never left its input box:
+            // the listed row's tag and `pf list` say so here too (a mirrored row already has
+            // them, the whole Session rides the mirror).
+            owedPrompt: s.owedPrompt,
+            promptUnsent: s.promptUnsent
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,
