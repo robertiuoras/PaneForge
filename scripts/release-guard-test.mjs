@@ -10,8 +10,10 @@ import { readFileSync } from 'node:fs'
 import {
   expectedAssets,
   feedMismatches,
+  holdsThisBuild,
   publishPlan,
   readFeed,
+  servedMismatches,
   sizeMismatches
 } from './release.mjs'
 
@@ -147,6 +149,83 @@ is(
   ),
   ['the feed names a file this build did not produce'],
   'a feed naming a file no build produced is a mismatch'
+)
+
+// 6b. No dist/ on this machine (the tag's workflow built the release, the normal path):
+//     `verify` used to print "nothing in dist/ to check against" and PASS, so
+//     "release:verify passes" proved nothing for every CI-built release. With no bytes of
+//     our own, the release is held to its own feeds: each row's file is on the release at
+//     the size the feed says, hashes to the feed's sha512, and no asset stops on a whole
+//     MiB (22,020,096 = 21 MiB was v0.8.183's partial zip). Both platforms, both feeds.
+{
+  const v = '0.8.236'
+  const macFeed = `files:\n  - url: PaneForge-${v}-arm64.zip\n    sha512: ZIPHASH==\n    size: 167357224\n  - url: PaneForge-${v}-arm64.dmg\n    sha512: DMGHASH==\n    size: 170000001\n`
+  const winFeed = `files:\n  - url: PaneForge-Setup-${v}.exe\n    sha512: EXEHASH==\n    size: 98765433\n`
+  const assets = {
+    'latest-mac.yml': 400,
+    [`PaneForge-${v}-arm64.zip`]: 167357224,
+    [`PaneForge-${v}-arm64.zip.blockmap`]: 180001,
+    [`PaneForge-${v}-arm64.dmg`]: 170000001,
+    [`PaneForge-${v}-arm64.dmg.blockmap`]: 180003,
+    'latest.yml': 350,
+    [`PaneForge-Setup-${v}.exe`]: 98765433,
+    [`PaneForge-Setup-${v}.exe.blockmap`]: 100005
+  }
+  const feeds = { 'latest-mac.yml': macFeed, 'latest.yml': winFeed }
+  const digests = {
+    [`PaneForge-${v}-arm64.zip`]: 'ZIPHASH==',
+    [`PaneForge-${v}-arm64.dmg`]: 'DMGHASH==',
+    [`PaneForge-Setup-${v}.exe`]: 'EXEHASH=='
+  }
+  const why = (o) => servedMismatches({ version: v, assets, feeds, digests, ...o }).map((b) => [b.name, b.why])
+  is(why({}), [], 'a CI-built release that matches its own feeds passes')
+  const { 'latest.yml': _gone, ...macOnly } = assets
+  is(
+    why({ assets: macOnly, feeds: { ...feeds, 'latest.yml': null } }).map((b) => b[0]),
+    ['latest.yml', 'latest.yml'],
+    'a missing Windows feed fails (every Windows copy would sit on the old version)'
+  )
+  is(
+    why({ assets: { ...assets, [`PaneForge-${v}-arm64.zip`]: 22020096 } }).map((b) => b[0]),
+    [`PaneForge-${v}-arm64.zip`],
+    'a served size the feed does not say fails'
+  )
+  is(
+    why({
+      assets: { ...assets, [`PaneForge-${v}-arm64.zip`]: 22020096 },
+      feeds: { ...feeds, 'latest-mac.yml': macFeed.replace('167357224', '22020096') }
+    }).map((b) => b[0]),
+    [`PaneForge-${v}-arm64.zip`],
+    'a feed that agrees with a whole-MiB partial upload still fails'
+  )
+  is(
+    why({ digests: { ...digests, [`PaneForge-Setup-${v}.exe`]: 'OTHER==' } }).map((b) => b[0]),
+    [`PaneForge-Setup-${v}.exe`],
+    'bytes that do not hash to the feed fail'
+  )
+  is(
+    why({ feeds: { ...feeds, 'latest.yml': winFeed.replace(`Setup-${v}.exe`, 'Setup-ghost.exe') } }).map(
+      (b) => b[0]
+    ),
+    ['PaneForge-Setup-ghost.exe'],
+    'a feed naming a file the release does not carry fails'
+  )
+  is(
+    why({ feeds: { ...feeds, 'latest-mac.yml': 'version: 0.8.236\n' } }).map((b) => b[0]),
+    ['latest-mac.yml'],
+    'a feed naming no file fails'
+  )
+}
+
+is(
+  holdsThisBuild({ 'latest-mac.yml': { size: 510, sha512: 'x' } }),
+  false,
+  "a stale feed left in dist/ by another version's build is not this build"
+)
+is(
+  holdsThisBuild({ 'latest-mac.yml': { size: 510, sha512: 'x' }, [`PaneForge-${V}-arm64.zip`]: { size: 1, sha512: 'y' } }),
+  true,
+  'an installer named for the version is'
 )
 
 // 7. The script must not publish as a side effect of being imported - this file is proof,

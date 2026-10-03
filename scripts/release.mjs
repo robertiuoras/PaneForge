@@ -23,7 +23,17 @@
 
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -116,9 +126,69 @@ export function feedMismatches(text, local) {
   return bad
 }
 
-/** electron-builder's own digest: base64 of the raw sha512, not hex. */
+/**
+ * A release this machine did not build (the tag's workflow builds every one now) held to
+ * what it says about itself, since there is no dist/ here to hold it to.
+ *
+ * `verify` used to print "nothing in dist/ to check against" and pass, so a green
+ * release:verify proved nothing for any CI-built release. A feed that agrees with a corpse
+ * is the gap this cannot close alone, so a size on a whole MiB fails too: that is where an
+ * upload stops (v0.8.183's zip: 22,020,096 bytes = 21 MiB), and a real build lands there
+ * one time in a million. Both platforms: one leg shipping alone strands the other's copies.
+ *
+ * `assets` {name: served bytes}, `feeds` {latest*.yml: text, null = not downloadable},
+ * `digests` {name: sha512 of the downloaded file}.
+ */
+export function servedMismatches({ version, assets, feeds, digests }) {
+  const bad = []
+  for (const platform of ['darwin', 'win32'])
+    for (const n of expectedAssets(version, platform))
+      if (!(n in assets)) bad.push({ name: n, why: 'not on the release' })
+  for (const [feed, text] of Object.entries(feeds)) {
+    if (text == null) {
+      bad.push({ name: feed, why: 'could not be downloaded' })
+      continue
+    }
+    const rows = readFeed(text)
+    if (rows.length === 0) bad.push({ name: feed, why: 'names no file' })
+    for (const row of rows) {
+      const served = assets[row.url]
+      if (served == null) bad.push({ name: row.url, why: `${feed} names it, the release does not carry it` })
+      else if (served !== row.size)
+        bad.push({ name: row.url, why: `served ${served} bytes, ${feed} says ${row.size}` })
+      else if (digests[row.url] !== row.sha512)
+        bad.push({ name: row.url, why: `does not hash to the sha512 in ${feed}` })
+    }
+  }
+  for (const [name, size] of Object.entries(assets))
+    if (size > 0 && size % 1048576 === 0 && !bad.some((b) => b.name === name))
+      bad.push({ name, why: `${size} bytes is a whole MiB, where a partial upload stops` })
+  return bad
+}
+
+/**
+ * Is dist/ this version's build, to judge the release against? Only an installer named for
+ * the version says so. The unversioned latest-mac.yml alone is whatever build last ran here
+ * (this Mac's dist/ held 0.8.183's on 2026-10-03), and judging v0.8.236 by it failed every
+ * feed row as "a file this build did not produce" - a false alarm on a good release.
+ */
+export function holdsThisBuild(local) {
+  return Object.keys(local).some((n) => !n.endsWith('.yml'))
+}
+
+/** electron-builder's own digest: base64 of the raw sha512, not hex. Read in chunks, so
+ *  hashing a 170 MB installer does not hold it in memory. */
 export function sha512Of(file) {
-  return createHash('sha512').update(readFileSync(file)).digest('base64')
+  const hash = createHash('sha512')
+  const buf = Buffer.alloc(1 << 20)
+  const fd = openSync(file, 'r')
+  try {
+    let n
+    while ((n = readSync(fd, buf, 0, buf.length, null)) > 0) hash.update(buf.subarray(0, n))
+  } finally {
+    closeSync(fd)
+  }
+  return hash.digest('base64')
 }
 
 const gh = (args, opts = {}) =>
@@ -197,10 +267,7 @@ export function verify({ tag, version, dist, repair = false }) {
     const f = join(dist, n)
     if (existsSync(f)) local[n] = { size: statSync(f).size, sha512: sha512Of(f) }
   }
-  if (Object.keys(local).length === 0) {
-    console.log(`${tag}: nothing in dist/ to check against - not judging the release.`)
-    return true
-  }
+  if (!holdsThisBuild(local)) return verifyServed({ tag, version })
 
   const listed = ghSafe(['release', 'view', tag, '--json', 'assets'])
   if (!listed.ok) {
@@ -248,6 +315,50 @@ export function verify({ tag, version, dist, repair = false }) {
     return false
   }
   return verify({ tag, version, dist, repair: false })
+}
+
+/** No dist/ here: download every file the feeds name and hold the release to its feeds. */
+function verifyServed({ tag, version }) {
+  const listed = ghSafe(['release', 'view', tag, '--json', 'assets'])
+  if (!listed.ok) {
+    console.error(`${tag}: cannot read the release: ${listed.out}`)
+    process.exitCode = 1
+    return false
+  }
+  const assets = Object.fromEntries(JSON.parse(listed.out).assets.map((a) => [a.name, a.size]))
+  const dir = mkdtempSync(join(tmpdir(), 'pf-release-verify-'))
+  try {
+    const feeds = {}
+    for (const feed of ['latest-mac.yml', 'latest.yml']) {
+      const got = ghSafe(['release', 'download', tag, '-p', feed, '-O', '-'])
+      feeds[feed] = got.ok ? got.out : null
+    }
+    const digests = {}
+    for (const text of Object.values(feeds)) {
+      for (const row of readFeed(text ?? '')) {
+        if (!(row.url in assets) || row.url in digests) continue
+        const got = ghSafe(['release', 'download', tag, '-p', row.url, '-D', dir, '--clobber'], {
+          timeout: 900_000
+        })
+        digests[row.url] = got.ok ? sha512Of(join(dir, row.url)) : null
+        if (got.ok) rmSync(join(dir, row.url), { force: true })
+      }
+    }
+    const bad = servedMismatches({ version, assets, feeds, digests })
+    if (bad.length === 0) {
+      const files = Object.keys(digests).length
+      console.log(
+        `${tag}: no dist/ here, so held to its own feeds - all ${Object.keys(assets).length} ` +
+          `assets present, ${files} feed files downloaded and match size + sha512, none on a whole MiB.`
+      )
+      return true
+    }
+    for (const b of bad) console.error(`${tag}: ${b.name} ${b.why}`)
+    process.exitCode = 1
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 if (process.argv[1] && /[\\/]release\.mjs$/.test(process.argv[1])) {
