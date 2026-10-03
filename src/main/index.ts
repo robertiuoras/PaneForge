@@ -3811,6 +3811,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       snapshot: () => manager.snapshot(),
       // Only after the far end has confirmed the resume - the close IS the move's result.
       kill: (id) => manager.kill(id, 'handoff'),
+      rememberMove: (id, to) => history.recordMoved(id, to),
       sleep: (id) => {
         manager.sleep(id, 'handoff', { source: 'handoff' })
       },

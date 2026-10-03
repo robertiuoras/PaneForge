@@ -350,6 +350,7 @@ const TESTS = [
   ['pipe', 'pipe-test.mjs'],
   ['diff', 'diff-test.mjs'],
   ['history', 'history-prune-test.mjs'],
+  ['historymoved', 'history-moved-test.mjs'],
   ['buffer', 'outbuffer-test.mjs'],
   ['notes', 'release-notes-test.mjs'],
   ['trydiff', 'try-diff-test.mjs'],

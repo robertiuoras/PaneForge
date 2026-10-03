@@ -4388,6 +4388,13 @@ Every row carries one line: the first thing typed at the agent, plus how many as
   minute clock for the whole list, exact moment on the hover.
 - **A row says whether it is still OPEN** — green rail plus a green `open since` chip, red rail plus a red
   `closed …` chip, so the answer is never carried by hue alone.
+- **A chat sent to another computer is not CLOSED** - the move closes the copy here, and the row read red `closed`
+  while the chat sat open on the PC (2026-10-03, s37: "i thought it was closed"). `recordMoved` stamps
+  `movedTo {device, name, pane}` once the far end proved the resume; `movedView` reads the peer's pane list the
+  app already holds: connected and listed = green `open on <PC>`; not connected, or its list not yet arrived (an
+  empty list is not an answer) = green `moved to <PC>`; connected and gone from its list = ordinary `closed`.
+  Later end stamps keep it (the killed process exits after the move and `onExit` stamps again); `recordStart`
+  drops it if the id opens here again. Rows written before this carry no mark.
 - **`View all` prints every chapter on the row** (`summaryFull`), drawn only where there is more than the
   row already shows, and it costs nothing.
 - **The FIRST ask, not the latest.**

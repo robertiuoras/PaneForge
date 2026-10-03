@@ -6969,6 +6969,7 @@ export default function App(): JSX.Element {
           // starts over with them, rather than being ignored by a box that already has text.
           key={historyQuery}
           agents={agents}
+          peers={remote?.peers}
           initialQuery={historyQuery}
           onResume={(e: HistoryEntry) => {
             setHistory(false)
