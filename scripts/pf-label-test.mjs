@@ -88,4 +88,24 @@ check('every row pf list prints has a column 1 other scripts can parse; numberle
   assert.deepEqual(lib.listRows(older).map(([l]) => l), ['1', '2'])
 })
 
+check('pf list status word says what a finished chat is still running', () => {
+  const w = lib.listStatusWord
+  assert.equal(w({ status: 'idle', subagent: 'builder: compile GuardDeck' }), 'idle, still running: builder: compile GuardDeck')
+  assert.equal(w({ status: 'idle', backJob: 'npm run build' }), 'idle, still running: npm run build')
+  assert.equal(w({ status: 'idle', subagent: 'agent words', backJob: 'job label' }), 'idle, still running: agent words')
+  assert.equal(w({ status: 'idle' }), 'idle')
+  assert.equal(w({ status: 'working', subagent: 'x' }), 'working')
+  assert.equal(w({ status: 'starting', backJob: 'x' }), 'starting')
+  assert.equal(w({ status: 'exited', backJob: 'x' }), 'exited')
+  assert.equal(w({ status: 'idle', asleep: true, subagent: 'x' }), 'asleep')
+  const long = w({ status: 'idle', subagent: 'a\tb\nc ' + 'z'.repeat(100) })
+  assert.ok(!/[\t\n]/.test(long))
+  assert.ok(long.length <= 'idle, still running: '.length + 60)
+  assert.match(long, /^idle, still running: a b c z/)
+  assert.ok(long.endsWith('…'))
+  const exact = 'y'.repeat(60)
+  assert.equal(w({ status: 'idle', backJob: exact }), `idle, still running: ${exact}`)
+  assert.equal(w({ status: 'idle', backJob: `${'word '.repeat(12)}tail` }), `idle, still running: ${'word '.repeat(11)}word…`)
+})
+
 console.log(`\n${n} checks passed`)

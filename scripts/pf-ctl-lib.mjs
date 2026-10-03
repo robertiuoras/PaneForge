@@ -39,6 +39,8 @@ export const COMMANDS = [
       '  computer\'s panes are on this desk. A pane keeps its number while it is open; a closed pane\'s number is not given',
       '  to a new pane for 15 minutes. Rows of another computer\'s panes that are not open here follow.',
       'States: starting (just opened), working (busy), idle (waiting for a person or a prompt), exited (finished or asleep).',
+      '"idle, still running: <words>" is a chat whose turn ended but whose background agent or command is still going: it is not',
+      '  free yet, so do not call it idle. The state always starts with the plain word.',
       'An id starting with @ is a pane on another paired computer.'
     ]
   },
@@ -416,6 +418,21 @@ export function listRows(list, listed = []) {
     if (typeof label === 'string' && ok.test(label)) out.push([label, row])
   }
   return out
+}
+
+/**
+ * The status word `pf list` prints for a row. A chat whose turn ended can still have a
+ * background agent or shell running (2026-10-04: s85 read `idle` for 30+ minutes while its
+ * builder subagent compiled and merged GuardDeck, and another chat reported it as sitting
+ * idle). Only `idle` is widened, to `idle, still running: <what>`; `working`, `starting`,
+ * `exited` and `asleep` are printed as they are. The subagent words win over the shell label.
+ */
+export function listStatusWord(s) {
+  if (s.asleep) return 'asleep'
+  if (s.status !== 'idle') return s.status
+  const all = String(s.subagent || s.backJob || '').replace(/\s+/g, ' ').trim()
+  const what = all.length > 60 ? `${all.slice(0, 59).trimEnd()}…` : all
+  return what ? `idle, still running: ${what}` : 'idle'
 }
 
 /** The pane whose card shows `n`, or undefined. See `cardNumber`. */

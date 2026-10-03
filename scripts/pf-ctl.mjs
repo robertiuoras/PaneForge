@@ -67,6 +67,7 @@ import {
   continueTarget,
   labelFor,
   listRows,
+  listStatusWord,
   localMachine,
   MACHINE_NAME,
   parseLabel,
@@ -518,8 +519,9 @@ if (cmd === 'list') {
   const list = await sessions()
   // The label leads, because it is the name on the card. See `resolve`.
   // Column 1 is parsed by other scripts: only `3`, `PC 3`, `Mac 3`; see `listRows`.
+  // Column 3 starts with the plain word; `idle, still running: ...` is an idle chat with work left.
   for (const [label, s] of listRows(list, await listedRows(list)))
-    console.log([label, s.id, s.asleep ? 'asleep' : s.status, s.title, s.cwd].join('\t'))
+    console.log([label, s.id, listStatusWord(s), s.title, s.cwd].join('\t'))
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.
