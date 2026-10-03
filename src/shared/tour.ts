@@ -340,7 +340,8 @@ export function plainWords(text: string, cap = 160): string {
   let s = text
     .replace(/`[^`]*`/g, '')
     .replace(/\([^)]*\)/g, '')
-    .replace(/\b[\w-]+\/[\w./-]+\b/g, '')
+    // A path goes; a pair of capitalised words (`Alt+Left/Right`, `PC/Mac`) is English.
+    .replace(/\b[\w-]+\/[\w./-]+\b/g, (m) => (/^[A-Z][A-Za-z]*\/[A-Z][A-Za-z]*$/.test(m) ? m : ''))
     .replace(/\b\w+\.\w+(?:\.\w+)*\b/g, '')
     .replace(/\b[a-z]+[A-Z]\w*\b/g, '')
     .replace(/\s+([,.;:])/g, '$1')
@@ -511,7 +512,7 @@ export function whatChanged(subject: string): string {
   s = s.replace(/[.!?]+$/, '').trim()
   if (!s) return ''
   // Lower case unless the first word is a name the app itself capitalises.
-  return /^[A-Z][a-z]/.test(s) && !/^(New session|Settings|Devices|History|Stash)/.test(s)
+  return /^[A-Z][a-z]/.test(s) && !/^(New session|Settings|Devices|History|Stash|(?:Alt|Ctrl|Shift|Cmd)\+)/.test(s)
     ? s.charAt(0).toLowerCase() + s.slice(1)
     : s
 }
