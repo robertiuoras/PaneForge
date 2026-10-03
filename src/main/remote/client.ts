@@ -34,6 +34,7 @@ import {
 import type { Project, RemotePeer, Session, StartSessionRequest } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
+import { machineOf } from '../../shared/paneLabel'
 import type { ReviewRecord } from '../../shared/reviews'
 
 /** Same cap the local session manager keeps, for the same reason. */
@@ -751,12 +752,16 @@ export class RemoteClient extends EventEmitter {
     this.conn?.send({ t: 'attach', id: localId })
   }
 
-  /** Stamp the device onto a session and namespace its id. */
+  /**
+   * Stamp the device onto a session and namespace its id. The owner's `number` rides
+   * through untouched; `machine` is read off the handshake, so the card can say "Mac 3".
+   */
   private tag(s: Session): Session {
+    const platform = this.conn?.peer.platform
     return {
       ...s,
       id: joinId(this.peer.id, s.id),
-      remote: { device: this.peer.id, name: this.peer.name }
+      remote: { device: this.peer.id, name: this.peer.name, ...(platform && platform !== 'unknown' ? { machine: machineOf(platform) } : {}) }
     }
   }
 

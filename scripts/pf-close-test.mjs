@@ -18,12 +18,16 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MACHINE_NAME, localMachine } from './pf-ctl-lib.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const HOUR = 3_600_000
 
-/** A stand-in app whose desk is `panes`; `sessions:kill` takes a pane off it. */
-async function app(panes) {
+/**
+ * A stand-in app whose desk is `panes`; `sessions:kill` takes a pane off it. `peers` is
+ * what `remote:state` answers; without it the call answers nothing, like an older app.
+ */
+async function app(panes, peers) {
   const killed = []
   const server = createServer((req, res) => {
     let body = ''
@@ -36,6 +40,7 @@ async function app(panes) {
       const { channel, args } = JSON.parse(body)
       let value
       if (channel === 'sessions:list') value = panes
+      else if (channel === 'remote:state' && peers) value = { peers }
       else if (channel === 'sessions:kill') {
         killed.push(args[0])
         panes = panes.filter((p) => p.id !== args[0])
@@ -97,6 +102,22 @@ await check('a number on a chat that just arrived and is working is refused, wit
     assert.equal(r.code, 1, r.out)
     assert.match(r.out, /card 9 is "Paneforge not showing in agent" \(s35-murnlovm\)/)
     assert.match(r.out, /pf close s35-murnlovm/)
+    assert.match(r.out, /it may not be the pane you read as 9/)
+    assert.deepEqual(a.killed, [])
+  } finally {
+    a.close()
+  }
+})
+
+await check('a "PC 3" style label on a pane that came onto the desk under two minutes ago is refused', async () => {
+  const a = await app(desk())
+  const label = `${MACHINE_NAME[localMachine()]} 10`
+  try {
+    const r = await pf(a.dir, 'close', label)
+    assert.equal(r.code, 1, r.out)
+    assert.ok(r.out.includes(`card ${label} is "Just opened" (s36-fresh)`), r.out)
+    assert.match(r.out, /came onto the desk 20 s ago/)
+    assert.match(r.out, /pf close s36-fresh/)
     assert.deepEqual(a.killed, [])
   } finally {
     a.close()
@@ -145,6 +166,58 @@ await check('an id closes the arrived, working chat - an id never moves', async 
     const r = await pf(a.dir, 'close', 's35-murnlovm')
     assert.equal(r.code, 0, r.out)
     assert.deepEqual(a.killed, ['s35-murnlovm'])
+  } finally {
+    a.close()
+  }
+})
+
+// The Mac's panes on the PC desk: one mirrored (in `sessions:list`), one only listed.
+function pairedDesk() {
+  const now = Date.now()
+  return {
+    panes: [
+      { id: 's1-own', number: 1, label: 'PC 1', title: 'Own chat', status: 'idle', cwd: '/x', createdAt: now - HOUR },
+      { id: '@mac/s3-m', number: 3, label: 'Mac 3', title: 'Mirrored chat', status: 'idle', cwd: '/m', createdAt: now - HOUR, remote: { device: 'mac', name: 'MacBook', machine: 'mac' } }
+    ],
+    peers: [
+      { id: 'mac', name: 'MacBook', status: 'online', panes: [
+        { id: 's3-m', number: 3, machine: 'mac', watched: true, title: 'Mirrored chat', status: 'idle', cwd: '/m' },
+        { id: 's5-m', number: 5, machine: 'mac', watched: false, title: 'Listed chat', status: 'working', cwd: '/m' }
+      ] },
+      { id: 'old', name: 'Old Mac', status: 'online', panes: [{ id: 's2-o', watched: false, title: 'No number', status: 'idle', cwd: '/o' }] }
+    ]
+  }
+}
+
+await check("pf list: column 1 is the card label, and a paired computer's listed pane follows with its own label", async () => {
+  const d = pairedDesk()
+  const a = await app(d.panes, d.peers)
+  try {
+    const r = await pf(a.dir, 'list')
+    assert.equal(r.code, 0, r.out)
+    const rows = r.out.split('\n').map((l) => l.split('\t').slice(0, 2))
+    // An older Mac that sent no number has no label to print, so its row is left out.
+    assert.deepEqual(rows, [['PC 1', 's1-own'], ['Mac 3', '@mac/s3-m'], ['Mac 5', '@mac/s5-m']])
+  } finally {
+    a.close()
+  }
+})
+
+await check('a label names a pane by its computer; a listed-only pane is refused, not closed', async () => {
+  const d = pairedDesk()
+  const a = await app(d.panes, d.peers)
+  try {
+    const listed = await pf(a.dir, 'close', 'mac5')
+    assert.equal(listed.code, 1, listed.out)
+    assert.match(listed.out, /Mac 5 runs on the Mac and is not open on this desk/)
+    const none = await pf(a.dir, 'close', 'PC 9')
+    assert.equal(none.code, 1, none.out)
+    assert.match(none.out, /there is no pane PC 9 - the cards on the desk are PC 1, Mac 3/)
+    // A bare 3 is this computer's pane 3, never the Mac's - and there is none here.
+    assert.equal((await pf(a.dir, 'close', '3')).code, 1)
+    const mirrored = await pf(a.dir, 'close', 'Mac 3')
+    assert.equal(mirrored.code, 0, mirrored.out)
+    assert.deepEqual(a.killed, ['@mac/s3-m'])
   } finally {
     a.close()
   }

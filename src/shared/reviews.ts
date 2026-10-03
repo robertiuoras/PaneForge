@@ -57,6 +57,8 @@ export interface ReviewRecord extends ReviewInput {
    */
   /** The number on the chat's card when the report was recorded (`pf list` column 1). */
   paneNumber?: number;
+  /** The label on that card, always with the machine's name ("PC 3") - see `shared/paneLabel.ts`. */
+  paneLabel?: string;
   /** Which app hosted the chat; absent = "paneforge". */
   app?: "paneforge" | "paneforge-next";
   context?: ReviewContext;

@@ -14,6 +14,7 @@ import { interventionWords } from '@shared/interventions'
 import type { Session, ContextUsage } from '@shared/types'
 import type { PaneUsage } from '@shared/usage'
 import { describePlace } from '@shared/place'
+import { runsOnWords, switchKey } from '@shared/paneLabel'
 import { formatCpu, formatMb } from '@shared/usage'
 import { useEffect, useState, useRef } from 'react'
 import Elapsed, { formatElapsed, useNow } from './Elapsed'
@@ -21,7 +22,8 @@ import Elapsed, { formatElapsed, useNow } from './Elapsed'
 interface Props {
   session: Session
   /** the Ctrl key that switches to it, which is also the only number that is a keystroke */
-  paneNumber: number
+  /** the label on its card ("PC 3", "Mac 3", "3"), null when it has none */
+  label: string | null
   agents: AgentInfo[]
   usage?: PaneUsage
   onRename(): void
@@ -44,9 +46,10 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
   )
 }
 
-export default function SessionInfo({ session: s, paneNumber, agents, usage, onRename, onClose }: Props): JSX.Element {
+export default function SessionInfo({ session: s, label, agents, usage, onRename, onClose }: Props): JSX.Element {
   const now = useNow()
-  const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber })
+  const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: label ?? undefined })
+  const key = switchKey(s)
   const agent = agents.find((a) => a.id === s.agent)
   const [continuation, setContinuation] = useState('')
   const [freshId, setFreshId] = useState<string | null>(null)
@@ -185,7 +188,9 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
                 ? 'measured on the machine that runs it'
                 : 'not measured yet'}
           </Row>
-          <Row label="Switch key">{paneNumber <= 9 ? `Ctrl ${paneNumber}` : 'no key - past the ninth pane'}</Row>
+          <Row label="Switch key">
+            {key ? `Ctrl ${key}` : s.remote ? `none - it ${runsOnWords(s.remote.machine)}` : 'no key - past the ninth pane'}
+          </Row>
           <Row label="Id">
             <code className="si-id">{s.id}</code>
           </Row>

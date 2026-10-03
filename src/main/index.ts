@@ -25,7 +25,7 @@ import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { onReviewChanged, onReviewRecorded, reviewForPeer, reviewsForPeer, storeRemoteReview, acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
-import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
+import { mayNotify, noticesDir, readReply, sweepDoneClose, thisMachine, type DoneCloseDeps } from './doneClose'
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { closeByOf, type CloseBy } from '../shared/closeWhenDone'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
@@ -61,6 +61,8 @@ import { errorMessage } from '../shared/paneError'
 import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
 import { postPush, startLimitWaves } from './limitWaves'
 import { cardNumber } from '../../scripts/pf-ctl-lib.mjs'
+import { cardLabel, othersOnDesk, parseLabel } from '../shared/paneLabel'
+import { paneNumbers } from './paneNumbers'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -1389,9 +1391,23 @@ function localSessions(): Session[] {
   })
 }
 
-/** Local panes and mirrored ones, as one list. */
+/**
+ * Local panes, mirrored ones and screen panes, as one list, each stamped with the label its
+ * card shows (`shared/paneLabel.ts`). Screen panes take their number from the same
+ * allocator here; `prune` gives back any number whose pane is gone without being released.
+ */
 function allSessions(): Session[] {
-  return [...localSessions(), ...remote.sessions(), ...screenViews.sessions()]
+  const local = localSessions()
+  const screens = screenViews.sessions()
+  paneNumbers.prune([...local, ...screens].map((s) => s.id))
+  const rows = [...local, ...remote.sessions(), ...screens.map((s) => ({ ...s, number: paneNumbers.take(s.id) }))]
+  const desk = { machine: thisMachine(), others: othersOnDesk(rows, remote.deskPeers()) }
+  // Only a full label ("3", "PC 3"): `pf list` prints it and scripts parse that column, so a
+  // mirror from an older owner (badge "Mac", no number) carries none.
+  return rows.map((s) => {
+    const label = cardLabel(s, desk)
+    return { ...s, label: label && parseLabel(label) ? label : undefined }
+  })
 }
 // A finished chat's report carries the number on its card, counted from this same list.
 setReviewDesk(allSessions)
@@ -5087,8 +5103,8 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
   if (restoredThisRun && !previous) return
   restoredThisRun = true
   const gap = restoreStaggerMs()
-  // Started in order whatever the gap is: a pane's number is its place in this list, so
-  // starting one out of turn renumbers the desk and every Ctrl+N with it.
+  // Started in order whatever the gap is, so the desk comes back in the order it was saved.
+  // Each pane asks for its old card number back (`req.number`, `shared/paneLabel.ts`).
   const recoverOn = (getConfig().recover ?? DEFAULT_RECOVER).enabled
   // "Keep this pane open" is a promise about a PANE, and a restored pane is a new session
   // with a new id - so the promise has to be carried across, by the one thing that names
@@ -5291,6 +5307,15 @@ function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clea
  * cold boot is often a deliberate fresh start and a desk that reappears whatever you
  * do is a set of panes you cannot get rid of.
  */
+/**
+ * A saved desk's card numbers, held back from new panes from the moment the desk is read.
+ * A pane opened while the restore offer is unanswered would otherwise take 1, and saved 1
+ * would come back as 2, saved 2 as 3. The restored panes still get theirs (`req.number`).
+ */
+function holdSavedNumbers(specs: StartSessionRequest[] = []): void {
+  for (const spec of specs) if (spec.number) paneNumbers.reserve(spec.number)
+}
+
 function offerRestore(): void {
   const cfg = getConfig()
   // One launch only: the first run after updating from a version that wrote the
@@ -5298,6 +5323,7 @@ function offerRestore(): void {
   const legacy = cfg.restoreSessions ?? []
   if (legacy.length) setConfig({ restoreSessions: [] })
   const desk = readDesk() ?? (legacy.length ? { specs: legacy, at: Date.now(), clean: true, reason: 'update' as const } : null)
+  holdSavedNumbers(desk?.specs)
   // Every branch below says what it did with the desk. 2026-09-03: eleven panes were lost
   // across four self-restarts and nothing on the machine could say at which one, because
   // this function wrote no line at all.
@@ -5377,6 +5403,7 @@ ipcMain.handle('restore:previous', () => {
   if (offer) return offer
   const desk = readPreviousDesk()
   if (!desk?.specs.length) return null
+  holdSavedNumbers(desk.specs)
   offer = makeRestoreOffer(desk, true)
   setDeskHold(desk)
   updateLog('desk', `offered previous desk with ${offer.panes.length} pane(s)`)

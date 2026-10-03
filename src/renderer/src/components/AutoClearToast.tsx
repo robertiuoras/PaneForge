@@ -17,12 +17,12 @@ import CardX from './CardX'
  */
 export default function AutoClearToast({
   panes,
-  numberOf,
+  labelOf,
   onKeep
 }: {
   panes: Session[]
-  /** the pane's number in the sidebar - also its Ctrl key */
-  numberOf: (id: string) => number
+  /** the label on the pane's card ("PC 3", "3") - `shared/paneLabel.ts` */
+  labelOf: (id: string) => string | null
   onKeep: (id: string) => void
 }): React.JSX.Element | null {
   const now = useNow()
@@ -49,7 +49,7 @@ export default function AutoClearToast({
       <div className="autoclear-card" role="status">
         <div className="autoclear-top">
           <span className="autoclear-word">
-            <PaneNum n={numberOf(done.id)} />
+            <PaneNum label={labelOf(done.id)} />
             <b>{done.title}</b> {done.autoClearOutcome}
           </span>
         </div>
@@ -62,7 +62,7 @@ export default function AutoClearToast({
         Keep all current sessions
       </button>}
       {counting.map((s) => (
-        <ClearingCard key={s.id} pane={s} now={now} numberOf={numberOf} onKeep={onKeep} />
+        <ClearingCard key={s.id} pane={s} now={now} labelOf={labelOf} onKeep={onKeep} />
       ))}
     </>
   )
@@ -72,12 +72,12 @@ export default function AutoClearToast({
 function ClearingCard({
   pane,
   now,
-  numberOf,
+  labelOf,
   onKeep
 }: {
   pane: Session
   now: number
-  numberOf: (id: string) => number
+  labelOf: (id: string) => string | null
   onKeep: (id: string) => void
 }): React.JSX.Element | null {
   if (!pane.autoClearAt) return null
@@ -97,13 +97,13 @@ function ClearingCard({
         <span className="autoclear-word">
           {pane.autoClearNoResume ? (
             <>
-              Clearing <PaneNum n={numberOf(pane.id)} />
+              Clearing <PaneNum label={labelOf(pane.id)} />
               <b>{pane.title}</b> - nothing open
               {freeing > 0 ? `, freeing about ${freeing}k of context` : ''}
             </>
           ) : (
             <>
-              Clearing <PaneNum n={numberOf(pane.id)} />
+              Clearing <PaneNum label={labelOf(pane.id)} />
               <b>{pane.title}</b> and carrying on from its handoff
             </>
           )}
@@ -125,11 +125,11 @@ function ClearingCard({
  * (reported 2026-08-28); the number is also the Ctrl key that reaches the pane, so it is
  * the one label that is never ambiguous.
  */
-function PaneNum({ n }: { n: number }): React.JSX.Element | null {
-  if (n < 1) return null
+function PaneNum({ label }: { label: string | null }): React.JSX.Element | null {
+  if (!label) return null
   return (
-    <span className="autoclear-num" title={`Ctrl ${n} reaches this pane`}>
-      {n}
+    <span className="autoclear-num" title={`The pane whose card reads ${label}`}>
+      {label}
     </span>
   )
 }

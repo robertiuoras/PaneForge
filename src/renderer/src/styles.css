@@ -1168,7 +1168,7 @@ button.row-lane:hover { color: var(--text); }
    the state changes. */
 .num {
   display: inline-block; position: relative; z-index: 1; overflow: hidden; min-width: 16px; text-align: center;
-  flex: none; line-height: 14px;
+  flex: none; line-height: 14px; white-space: nowrap; /* "PC 12" is one label, never two lines */
   color: var(--muted); font-size: 10px;
   border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px;
   font-variant-numeric: tabular-nums;
@@ -1211,8 +1211,10 @@ button.row-lane:hover { color: var(--text); }
    right edge, a green smear beside the digit instead of a lit key. Measured over CDP:
    wrap.width 22, num.width 16. Anything that must line up with the pill has to hang off
    the wrapper only while the two boxes are the same box. */
-/* A number past 9 is a label, not a key: same pill, no key sheen, two digits fit. */
-.num.far { min-width: 22px; letter-spacing: -0.02em; opacity: 0.8; }
+/* No Ctrl key (past 9, or another machine's pane): same pill, no key sheen, two digits fit.
+   Full opacity: every mirrored pane wears this now, and at 0.8 "Mac 12" measured 2.86:1 in
+   the light theme, under the 3:1 floor (2026-10-03). */
+.num.far { min-width: 22px; letter-spacing: -0.02em; }
 .num-wrap { position: relative; display: inline-flex; flex: none; margin-right: 6px; }
 /* The halo is LIGHT, not a second pill.
 
@@ -3097,7 +3099,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 }
 .review-row:hover { background: color-mix(in oklab, var(--text) 4%, transparent); }
 .review-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.review-num { flex: none; min-width: 28px; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
+.review-num { flex: none; min-width: 28px; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
 .review-project { flex: none; max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-ask { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-result { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
@@ -4875,6 +4877,7 @@ button.chip:hover {
 .autoclear-num {
   display: inline-block;
   min-width: 17px;
+  white-space: nowrap;
   margin-right: 5px;
   padding: 0 4px;
   border-radius: 4px;

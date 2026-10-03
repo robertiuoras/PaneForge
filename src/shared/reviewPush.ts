@@ -45,7 +45,9 @@ export function reviewPush(
   if (!steps.length) return null
   const project = base(r.cwd)
   const title = r.kind === 'blocked' ? `Stuck, needs you: ${steps[0]}` : r.kind === 'decision' ? `Your call: ${steps[0]}` : `For you: ${steps[0]}`
-  const chat = `${r.paneNumber ? `Chat ${r.paneNumber}` : 'A chat'} on the ${machine === 'pc' ? 'PC' : 'Mac'} (${project}, "${r.title}")`
+  const chat = r.paneLabel
+    ? `${r.paneLabel} (${project}, "${r.title}")`
+    : `${r.paneNumber ? `Chat ${r.paneNumber}` : 'A chat'} on the ${machine === 'pc' ? 'PC' : 'Mac'} (${project}, "${r.title}")`
   const more = steps.slice(1)
   const body = `${chat} finished.${more.length ? ` Also for you: ${more.join('; ')}.` : ''}`
   return {

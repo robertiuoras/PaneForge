@@ -56,7 +56,8 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
 import { finishedTurn, fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
-import { deskGroups, deskRows as buildDeskRows, listedByNumber, type DeskRow } from '@shared/desk'
+import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
+import { cardLabel, othersOnDesk, runsOnWords, switchKey, type Machine } from '@shared/paneLabel'
 import {
   ToolsIcon,
   UsersIcon,
@@ -173,7 +174,7 @@ import { stepsWord } from '../../shared/handoffSteps'
 import { describePlace, placeOf } from '@shared/place'
 import { whenWords } from '@shared/elapsed'
 import { applyTheme, terminalTheme } from './theme'
-import { keyLabel, modKey, isMac } from './platform'
+import { keyLabel, modKey, isMac, isWindows } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
 import RestoreDialog from './components/RestoreDialog'
@@ -670,12 +671,6 @@ export default function App(): JSX.Element {
 
   const [activeId, setActiveId] = useState<string | null>(null)
   /**
-   * Ctrl+N for a number past this desk's own panes: the pane on the other machine that
-   * `deskRows` gave that number. A ref because the key handler above is wired before
-   * `openListed` exists, and the answer must be the same numbering the list draws.
-   */
-  const listedKeyRef = useRef<(n: number) => boolean>(() => false)
-  /**
    * What the desk draws: every pane but a shell sitting at its prompt (`idleShell`), which
    * still exists - its number switches to it, and then it is the active pane and drawn.
    */
@@ -926,6 +921,19 @@ export default function App(): JSX.Element {
   // Null until the main process has answered once. The dialog draws a placeholder
   // rather than an empty machine, which reads as "you have no devices".
   const [remote, setRemote] = useState<RemoteState | null>(null)
+  /**
+   * The label each card shows (`shared/paneLabel.ts`), worked out here rather than read off
+   * main's stamp so it changes the moment a paired machine comes or goes. The desk's machine
+   * comes from main: a phone looking at this desk cannot read it off its own browser.
+   */
+  const deskMachine: Machine = remote?.self.machine ?? (isWindows ? 'pc' : 'mac')
+  const deskOthers = useMemo(() => othersOnDesk(sessions, remote?.peers ?? []), [sessions, remote])
+  const labelOf = (s: Session): string | null => cardLabel(s, { machine: deskMachine, others: deskOthers })
+  const keyTip = (s: Session, label: string | null): string => {
+    const n = switchKey(s)
+    if (n) return keyLabel(`Ctrl ${n}`)
+    return s.remote ? `${label} - ${runsOnWords(s.remote.machine)}` : `${label} - no switch key past the ninth pane`
+  }
   const deviceChoices = useMemo(() => {
     const seen = new Map<string, string>()
     for (const session of sessions) {
@@ -1054,7 +1062,10 @@ export default function App(): JSX.Element {
       // recognised in a hurry. `s.title` IS the project name until somebody renames it, so
       // this changes nothing on a pane nobody has named.
       name: s.title || projectNameOf(s.cwd),
-      pane: i + 1,
+      // This desk's own number; another machine's pane is named by its label alone. Main's
+      // stamp, because this ref is never rebuilt and a label worked out here would go stale.
+      pane: s.remote ? 0 : s.number ?? 0,
+      label: s.label,
       // Only a lane earns the extra words: `place.ts`'s rule is that a trunk checkout is
       // what a bare project name already means.
       where: place.kind === 'lane' ? place.role : ''
@@ -1728,8 +1739,9 @@ export default function App(): JSX.Element {
     const i = sessions.findIndex((s) => s.id === id)
     if (i < 0) return 'Dictating'
     const s = sessions[i]
-    return `Into ${describePlace({ cwd: s.cwd, lane: s.lane, pane: i + 1 }).full}`
-  }, [voice.target, activeId, sessions])
+    return `Into ${describePlace({ cwd: s.cwd, lane: s.lane, pane: labelOf(s) ?? undefined }).full}`
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- labelOf is read off these two
+  }, [voice.target, activeId, sessions, deskMachine, deskOthers])
 
   // Declared up here rather than beside the trim effect that also reads it: the launch
   // path below has to know whether this machine is full BEFORE it starts anything.
@@ -3500,12 +3512,12 @@ export default function App(): JSX.Element {
         e.preventDefault()
         cyclePane(e.shiftKey ? -1 : 1)
       } else if (/^[1-9]$/.test(k)) {
-        const target = sessions[Number(k) - 1]
+        // This desk's own pane with that number, nothing else: a "Mac 3" and a "PC 3" cannot
+        // share Ctrl+3, so another machine's pane is reached by its row (`shared/paneLabel.ts`).
+        const target = sessions.find((s) => switchKey(s) === Number(k))
         if (target) {
           e.preventDefault()
           setActiveId(target.id)
-        } else if (listedKeyRef.current(Number(k))) {
-          e.preventDefault()
         }
       }
     }
@@ -5136,9 +5148,12 @@ export default function App(): JSX.Element {
 
   const mascotPanes: MascotPane[] = useMemo(
     () =>
-      sessions.map((s, i) => ({
+      sessions.map((s) => ({
         id: s.id,
-        pane: i + 1,
+        // This desk's own number, which "close pane 3" and the dev-server list match on;
+        // another machine's pane has none here, its label says whose it is.
+        pane: s.remote ? 0 : s.number ?? 0,
+        label: labelOf(s) ?? undefined,
         name: projectNameOf(s.cwd) || s.title,
         // Which COPY of that project. Three lanes of one repo were three panes with the
         // same name, so every sentence about one of them named the other two as well.
@@ -5155,7 +5170,8 @@ export default function App(): JSX.Element {
         // conversation it is rather than only which key reaches it.
         doing: s.gist
       })),
-    [sessions, usage]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- labelOf is read off the last two
+    [sessions, usage, deskMachine, deskOthers]
   )
 
   const refreshDevs = useCallback(() => {
@@ -5192,11 +5208,13 @@ export default function App(): JSX.Element {
    * on this laptop (5-7 MB per pane, measured 2026-09-23). A paired device's panes are all
    * mirrored by default (`RemoteClient.mirrorsAll`), so a listed row is the beat before a
    * mirror attaches, or a device somebody turned down to a hand-picked few. It wears the
-   * next pane NUMBER after this desk's own (`listedByNumber` gives Ctrl+N the same one).
+   * label its OWN machine gave it ("Mac 3"), and has no Ctrl key here.
    */
   const deskRows = useMemo(
-    () => buildDeskRows(deskSessions, shownSessions, remote?.peers ?? [], deviceFilter),
-    [deskSessions, shownSessions, remote, deviceFilter]
+    // `sessions`, not `deskSessions`: an idle shell mirrored from the other machine is still
+    // that machine's pane on this desk, and every other label here counts it.
+    () => buildDeskRows(sessions, shownSessions, remote?.peers ?? [], deviceFilter, deskMachine),
+    [sessions, shownSessions, remote, deviceFilter, deskMachine]
   )
 
   const groups = useMemo(() => deskGroups(deskRows, byState), [deskRows, byState])
@@ -5210,8 +5228,8 @@ export default function App(): JSX.Element {
    * so counting it is the same call over a longer list.
    */
   const needsYou = fleetWaiting(deskRows)
-  const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all')
-    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row)) && !finishedTurn(row)), [sessions, remote])
+  const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all', deskMachine)
+    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row)) && !finishedTurn(row)), [sessions, remote, deskMachine])
 
   /**
    * Open a pane that is running on another machine: mirror it, then switch to it.
@@ -5232,12 +5250,6 @@ export default function App(): JSX.Element {
     },
     [remote]
   )
-  listedKeyRef.current = (n) => {
-    const hit = listedByNumber(deskSessions.length, remote?.peers ?? [], n)
-    if (!hit) return false
-    openListed(hit.device, hit.pane)
-    return true
-  }
   useEffect(() => {
     const want = pendingOpen.current
     if (!want) return
@@ -5297,14 +5309,14 @@ export default function App(): JSX.Element {
                   pty and cannot call the close off. */}
               {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
             </span>
-            {/* The same number a local card wears, so Ctrl+N reaches it too (`listedByNumber`). */}
-            {row.number > 0 && (
+            {/* The label its own machine gave it ("Mac 3"). No Ctrl key: that is this desk's panes'. */}
+            {row.label && (
               <span className="num-wrap">
                 <span
-                  className={'num' + (pane.status === 'working' ? ' live' : '') + (row.number > 9 ? ' far' : '')}
-                  title={row.number <= 9 ? keyLabel(`Ctrl ${row.number}`) : `Pane ${row.number}`}
+                  className={'num far' + (pane.status === 'working' ? ' live' : '')}
+                  title={`${row.label} - ${runsOnWords(pane.machine)}; click to open`}
                 >
-                  {row.number}
+                  {row.label}
                 </span>
               </span>
             )}
@@ -5342,7 +5354,7 @@ export default function App(): JSX.Element {
     )
   }
 
-  const sessionRow = (s: Session, paneNumber: number): JSX.Element => (
+  const sessionRow = (s: Session, label: string | null): JSX.Element => (
             <div
               key={s.id}
               data-id={s.id}
@@ -5617,9 +5629,9 @@ export default function App(): JSX.Element {
                         while you were looking somewhere else. */}
                     {/* Every pane wears its number - the tenth pane onward used to wear
                         none, so a desk of fourteen read as numbered 1-9 and then nothing
-                        (Robert 2026-09-10: "we lost numbering on sessions"). Only 1-9
-                        are Ctrl keys; past that the number is a plain label. */}
-                    {paneNumber > 0 && (
+                        (Robert 2026-09-10: "we lost numbering on sessions"). Only this
+                        desk's own 1-9 are Ctrl keys; the rest are plain labels. */}
+                    {label && (
                       /* The wrapper exists only to carry the breathing halo. The key
                          itself is `overflow: hidden` so its sheen stays inside the
                          pill, and that clips a pseudo-element halo too - so the halo
@@ -5632,11 +5644,11 @@ export default function App(): JSX.Element {
                           className={
                             'num' +
                             (s.status === 'working' ? ' live' : s.attention ? ' attn' : '') +
-                            (paneNumber > 9 ? ' far' : '')
+                            (switchKey(s) ? '' : ' far')
                           }
-                          title={paneNumber <= 9 ? keyLabel(`Ctrl ${paneNumber}`) : `Pane ${paneNumber}`}
+                          title={keyTip(s, label)}
                         >
-                          {paneNumber}
+                          {label}
                         </span>
                       </span>
                     )}
@@ -5672,7 +5684,7 @@ export default function App(): JSX.Element {
                     <wbr />
                     <span
                       className="row-name"
-                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber }).full}
+                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: label ?? undefined }).full}
                     >
                       {s.title}
                     </span>
@@ -6058,7 +6070,7 @@ export default function App(): JSX.Element {
                   )}
                 </div>
               )}
-              {g.rows.map((row) => (row.session ? sessionRow(row.session, row.number) : listedRow(row)))}
+              {g.rows.map((row) => (row.session ? sessionRow(row.session, row.label) : listedRow(row)))}
             </Fragment>
           ))}
           {deskRows.length === 0 && (
@@ -6415,12 +6427,12 @@ export default function App(): JSX.Element {
                   cwd={s.cwd}
                   active={visibleIds.has(s.id)}
                   lane={s.lane}
-                  pane={sessions.findIndex((x) => x.id === s.id) + 1 || undefined}
+                  pane={s.number}
                   onOpen={() =>
                     setDiff({
                       cwd: s.cwd,
                       lane: s.lane,
-                      pane: sessions.findIndex((x) => x.id === s.id) + 1 || undefined,
+                      pane: s.number,
                       // A lane is a whole piece of work and is read as one; a pane on the
                       // main checkout is being asked the narrower question, "what has this
                       // agent done that I have not committed".
@@ -7280,7 +7292,6 @@ export default function App(): JSX.Element {
       {(() => {
         const s = cardMenu ? sessions.find((x) => x.id === cardMenu.id) : null
         if (!s || !cardMenu) return null
-        const paneNumber = sessions.indexOf(s) + 1
         const shut = (): void => setCardMenu(null)
         const local = !s.remote
         // What `shared/sleep.ts` needs to answer "may this one sleep", off the card's own
@@ -7503,7 +7514,7 @@ export default function App(): JSX.Element {
         return (
           <SessionInfo
             session={s}
-            paneNumber={sessions.indexOf(s) + 1}
+            label={labelOf(s)}
             agents={agents}
             usage={usage?.panes[s.id]}
             onRename={() => {
@@ -7643,7 +7654,10 @@ export default function App(): JSX.Element {
           `sessions:keepOpen` (Robert, 2026-10-03). */}
       <AutoClearToast
         panes={sessions}
-        numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}
+        labelOf={(id) => {
+          const s = sessions.find((x) => x.id === id)
+          return s ? labelOf(s) : null
+        }}
         onKeep={(id) => void api.cancelAutoClear(id)}
       />
       {/* A dev server that is running and serving nothing - shared/deadDev.ts. It sits

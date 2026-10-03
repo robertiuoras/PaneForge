@@ -177,6 +177,16 @@ export interface CodexWorkerReading {
 
 export interface Session {
   id: string
+  /**
+   * The card number on the machine that RUNS this pane (`shared/paneLabel.ts`), stable while
+   * it lives. A mirrored row carries the owner's number, absent from an older owner.
+   */
+  number?: number
+  /**
+   * Its card label, exactly "3" or "PC 3" / "Mac 3", stamped by main's `allSessions()`.
+   * Absent on a mirror whose owner sent no number (its badge says "Mac" alone).
+   */
+  label?: string
   title: string
   cwd: string
   agent: Agent
@@ -527,6 +537,8 @@ export interface Session {
     device: string
     /** what that device calls itself, for the pane badge */
     name: string
+    /** which kind of machine it is, from its handshake - the name in front of its card number */
+    machine?: 'mac' | 'pc'
   }
   /**
    * How many times a person has had to step in on this pane - answered a question the app
@@ -871,6 +883,8 @@ export interface StartSessionRequest {
    * restored pane is issued a new one. Only the desk sets it.
    */
   scrollbackId?: string
+  /** The card number this pane had before a restart, asked for back. Only the desk sets it. */
+  number?: number
   /**
    * Open this pane with no process behind it: the card, its place and its screen, and
    * nothing running. A press wakes it in the conversation `resumeId` names - the same
@@ -1636,6 +1650,10 @@ export interface RemotePaneInfo {
   doneClosingAt?: number
   /** Persistent Keep open preference, read and changed on the device that owns the pane. */
   keepOpen?: boolean
+  /** its card number on that device - see `Session.number` */
+  number?: number
+  /** which kind of machine that device is, from its handshake */
+  machine?: 'mac' | 'pc'
 }
 
 /** Live state of one paired device. */
@@ -1699,6 +1717,8 @@ export interface RemoteState {
     pairByAsking: boolean
     /** this app's own version - so the renderer never needs to import Electron to read it */
     version: string
+    /** which kind of machine this desk is - the renderer on a phone cannot read it off its own browser */
+    machine?: 'mac' | 'pc'
   }
   peers: RemotePeerState[]
   found: RemoteFound[]

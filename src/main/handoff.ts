@@ -410,7 +410,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // This comes before git add/commit/push. A handoff that cannot carry the
   // conversation is not a useful handoff, and may not leave an auto-sync
   // commit behind while it refuses.
-  const handoffSpec: StartSessionRequest = { ...spec, resume: spec.agent === 'claude' || spec.agent === 'codex' ? true : undefined }
+  // `number` stays behind: a card number belongs to the machine the pane runs on.
+  const handoffSpec: StartSessionRequest = { ...spec, number: undefined, resume: spec.agent === 'claude' || spec.agent === 'codex' ? true : undefined }
   let file: Buffer | null = null
   let transcript: HandoffPayload['transcript']
   if ((handoffSpec.agent === 'claude' || handoffSpec.agent === 'codex') && handoffSpec.resumeId) {

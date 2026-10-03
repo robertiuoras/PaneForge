@@ -64,6 +64,7 @@ function Card({
   const name = paneWord({
     name: session.title,
     pane,
+    label: session.label,
     where: place.kind === 'lane' ? place.role : ''
   })
   const answer = (doSwitch: boolean): void => {
@@ -111,8 +112,7 @@ export default function ModelAdvice({ sessions, agents }: ModelAdviceProps): Rea
   return (
     <>
       {live.map((ask) => {
-        const i = sessions.findIndex((x) => x.id === ask.id)
-        const session = i < 0 ? undefined : sessions[i]
+        const session = sessions.find((x) => x.id === ask.id)
         if (!session) return null
         return (
           <Card
@@ -120,7 +120,7 @@ export default function ModelAdvice({ sessions, agents }: ModelAdviceProps): Rea
             ask={ask}
             session={session}
             agents={agents}
-            pane={i + 1}
+            pane={session.remote ? 0 : session.number ?? 0}
           />
         )
       })}

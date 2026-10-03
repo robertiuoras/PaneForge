@@ -23,6 +23,7 @@ import { reviewPush } from "../shared/reviewPush";
 import { codexTranscriptPath, transcriptPath } from "./transcripts";
 import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
+import { labelFor, machineOf, parseLabel } from "../shared/paneLabel";
 import { renderReviewMarkdown, reviewMarkdownLinks } from "../shared/reviewMarkdown";
 import {
   FULL_ADVICE,
@@ -277,6 +278,7 @@ export function storeRemoteReview(
     reviewedAt: remoteTime(v.reviewedAt, "reviewed time"),
     attention: kind === "result" && !remoteTime(v.reviewedAt, "reviewed time"),
     paneNumber: typeof v.paneNumber === "number" && Number.isInteger(v.paneNumber) && v.paneNumber > 0 ? v.paneNumber : undefined,
+    paneLabel: typeof v.paneLabel === "string" && v.paneLabel.length <= 20 && parseLabel(v.paneLabel)?.machine ? v.paneLabel.trim() : undefined,
     app: v.app === "paneforge-next" ? "paneforge-next" : "paneforge",
     origin: { id: source, name: remoteText(peer.name, 200, "device name"), platform: remoteText(peer.platform, 50, "platform") },
   };
@@ -334,10 +336,11 @@ function contextLine(r: ReviewRecord) {
   return `<p class="ctx" style="color:${LEVEL_COLOUR[level]}"><b>${esc(words)}</b>${level === "danger" ? ` - ${FULL_ADVICE}` : ""}</p>`;
 }
 function page(r: ReviewRecord) {
-  const num = r.paneNumber ? `<span class="num">${esc(String(r.paneNumber))}</span> ` : "";
+  const tag = r.paneLabel ?? (r.paneNumber ? String(r.paneNumber) : "");
+  const num = tag ? `<span class="num">${esc(tag)}</span> ` : "";
   const list = (title: string, items: string[]) =>
     items.length ? `<h2>${title}</h2><ul>${items.join("")}</ul>` : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report :is(h1,h2,h3,h4,h5,h6){font-size:1.15em;text-transform:none;letter-spacing:normal;color:#f0a868;margin:24px 0 10px}.report p{margin:0 0 14px}.report>:first-child{margin-top:0}.report>:last-child{margin-bottom:0}.report blockquote{margin:14px 0;padding-left:16px;border-left:3px solid #f0a868;color:#adb0ac}.report pre{white-space:pre;overflow-x:auto;padding:14px}.report pre code{padding:0;background:none}.report table{border-collapse:collapse;display:block;overflow-x:auto}.report :is(th,td){padding:6px 10px;border:1px solid #303437;text-align:left}body>pre{white-space:pre-wrap}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${renderReviewMarkdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${tag ? `${esc(tag)} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report :is(h1,h2,h3,h4,h5,h6){font-size:1.15em;text-transform:none;letter-spacing:normal;color:#f0a868;margin:24px 0 10px}.report p{margin:0 0 14px}.report>:first-child{margin-top:0}.report>:last-child{margin-bottom:0}.report blockquote{margin:14px 0;padding-left:16px;border-left:3px solid #f0a868;color:#adb0ac}.report pre{white-space:pre;overflow-x:auto;padding:14px}.report pre code{padding:0;background:none}.report table{border-collapse:collapse;display:block;overflow-x:auto}.report :is(th,td){padding:6px 10px;border:1px solid #303437;text-align:left}body>pre{white-space:pre-wrap}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${renderReviewMarkdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
 }
 function immutable(r: ReviewRecord) {
   const {
@@ -353,6 +356,7 @@ function immutable(r: ReviewRecord) {
     // Read off the desk and the transcript at the moment of recording: a retry of the same
     // report is the same report even when the card has moved or the chat has said more.
     paneNumber,
+    paneLabel,
     app,
     origin,
     context,
@@ -466,6 +470,7 @@ function spoolNotice(record: ReviewRecord, looked = false, opener?: string): Rev
             machine: record.origin?.platform === "win32" ? "pc" : "mac",
             // Finished-chat report contract v1: optional, absent when unknown.
             paneNumber: record.paneNumber,
+            paneLabel: record.paneLabel,
             app: record.app,
             context: record.context,
             sessionTokens: record.sessionTokens,
@@ -556,13 +561,16 @@ const CODEX_TOKEN_TAIL = 2 * 1024 * 1024;
 function sessionFacts(
   sessionId: string,
   r: Pick<ReviewRecord, "provider" | "cwd" | "nativeSessionId">,
-): Pick<ReviewRecord, "paneNumber" | "app" | "context" | "sessionTokens"> {
-  const out: Pick<ReviewRecord, "paneNumber" | "app" | "context" | "sessionTokens"> = {
+): Pick<ReviewRecord, "paneNumber" | "paneLabel" | "app" | "context" | "sessionTokens"> {
+  const out: Pick<ReviewRecord, "paneNumber" | "paneLabel" | "app" | "context" | "sessionTokens"> = {
     app: "paneforge",
   };
   try {
     const n = cardNumber(desk(), sessionId);
-    if (n > 0) out.paneNumber = n;
+    if (n > 0) {
+      out.paneNumber = n;
+      out.paneLabel = labelFor(machineOf(process.platform), n) ?? undefined;
+    }
   } catch {
     /* no desk to count on */
   }

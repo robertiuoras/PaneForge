@@ -187,10 +187,10 @@ export interface PlaceInput {
    */
   lane?: string
   /**
-   * The pane's switch number, 1-9, when it has one. Ctrl+N focuses it, so this is the
-   * one label in the app that is also a keystroke.
+   * The label on the pane's card ("PC 3", "3") - see `shared/paneLabel.ts`. A number 1-9
+   * on this desk's own pane is also its Ctrl key.
    */
-  pane?: number
+  pane?: number | string
 }
 
 export interface Place {
