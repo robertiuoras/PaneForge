@@ -12,7 +12,7 @@ import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { PaneAnswers } from './paneAnswers'
-import { composerOf } from './composerRead'
+import { composerOf, screenOf } from './composerRead'
 import { isTerminalReply } from '../shared/terminalProtocol'
 import type { PaneAnswerIdentity, PaneAnswerRequest, PaneAnswerReceipt } from '../shared/paneAnswer'
 import * as pty from '@lydell/node-pty'
@@ -72,6 +72,7 @@ import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS,
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
+import { TELL_WAIT_MS, clockDay, type TellOutcome } from '../shared/tell'
 import { logReclaim } from './activationLog'
 import { guardPtyPipes } from './closedPipe'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -149,7 +150,7 @@ import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelV
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, ASK_PROMPT, type BusyReason } from '../shared/busy'
-import { promptStillInBox } from '../shared/promptLanded'
+import { codexBoxHolds, promptStillInBox } from '../shared/promptLanded'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
 import { holdAfterFinish, cloudHeld } from '../shared/cloudWork'
@@ -324,6 +325,48 @@ const PERSON_WAIT_MAX_MS = ms('PF_PERSON_WAIT_MAX_MS', 45 * 60_000)
 // `PROMPT_QUIET_MS`: a laggy desk stalls a CLI past a second mid-turn (s21-muczy2r3,
 // 2026-09-22), and typing into their running turn is the one thing this wait is for.
 const PERSON_QUIET_MS = ms('PF_PERSON_QUIET_MS', 5_000)
+/**
+ * Codex's own sub-agent view: its input box reads `Viewing sub-agent — direct input is
+ * disabled` (codex-cli 0.160, 2026-10-03). An Enter there goes to the sub-agent, not the chat.
+ */
+const CODEX_SUBAGENT_VIEW = /Viewing sub-agent/i
+/**
+ * What Codex paints while it is still starting. Its composer is drawn under it before Codex
+ * takes keys, and a start that pauses longer than `PROMPT_STALE_BUSY_MS` reads as a stale
+ * footer to `idle()` - the likely way s40-mus3teu4's first Enter went in 7.8s after spawn
+ * (2026-10-03). A young Codex is held while this line is on its screen (`queuePrompt`'s
+ * `codexBooting`), read off the screen as drawn and never off the raw text, where it stays
+ * after Codex has written over it.
+ */
+const CODEX_BOOTING = /Starting MCP servers?|Booting MCP server/i
+/** How many of the last rows with anything on them hold Codex's start line: it is drawn just
+ *  above the input box, so an older line further up (a message quoting it) does not count. */
+const CODEX_BOOT_ROWS = 10
+/** What a queued prompt is waiting on, in the words `pf tell` prints. */
+const WAIT_TURN = 'pane is busy; it will be typed when the turn ends'
+const WAIT_PERSON = 'the person is typing in that pane'
+const WAIT_SUBAGENT = 'that chat is showing a sub-agent; it will be typed when its main view is back'
+const WAIT_QUESTION = 'a question or a setting is open on that chat\'s screen; it will be typed once that is done'
+const WAIT_STARTING = 'the chat is still starting'
+// Waits `tellPane` answers 'queued' on at once: none of them ends within its window. A
+// start is one of them: it can take a minute (`PROMPT_STARTUP_MS`), and a `pf continue` that
+// reopened a chat was held that long - past the 45 s GuardDeck gives it.
+const TELL_EARLY = new Set([WAIT_TURN, WAIT_PERSON, WAIT_SUBAGENT, WAIT_QUESTION, WAIT_STARTING])
+const TELL_EARLY_MS = 2000
+
+/** Why a told prompt did not go in, for somebody who has never read this file. */
+function tellFailure(end: QueueDrop | 'withheld', agent?: string): string {
+  const who = agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude Code' : 'the chat'
+  switch (end) {
+    case 'unsent': return `it was typed into the input box, but ${who} never took it; it is still in the box`
+    case 'withheld': return 'a question came up on that chat\'s screen, so it was not sent; answer the question first'
+    case 'abandoned': return 'somebody else was using that chat, so it was not typed'
+    case 'gone': return 'the chat closed before it was typed'
+    case 'untaken': return `it was typed into the input box, but ${who} never took it before the chat closed`
+    case 'expired': return 'the chat never became ready to take it'
+    case 'replaced': return 'the chat restarted; the restarted chat gets it instead'
+  }
+}
 /**
  * The hard ceiling on the handover curtain.
  *
@@ -2416,6 +2459,9 @@ export class SessionManager extends EventEmitter {
       live.repaintUntil = Date.now() + REPAINT_GRACE_MS
       return
     }
+    // The person has the box now: whatever this app left unsent in it is theirs to send or
+    // clear, so the card stops saying so. Focus reports are not the person writing.
+    if (origin !== 'app' && live.meta.promptUnsent && data && data !== '\x1b[I' && data !== '\x1b[O') this.setPromptUnsent(id, false)
     const queued = this.codexQueued.get(id)
     if (queued && queued.live === live && queued.proc === live.proc && !queued.writing &&
       !(origin === 'app' && this.answering.has(id)) && !live.effortPassThrough && data &&
@@ -2769,18 +2815,75 @@ export class SessionManager extends EventEmitter {
    * kill: `kill()` deletes this session, and with it the request that names who to tell.
    */
   /**
-   * Say one line to a pane, between its own turns.
+   * Say one line to a pane, and say what happened to it.
    *
    * `queuePrompt` is the difference between this and a raw write: it waits for an idle
    * composer, so a line that arrives while the agent is mid-answer is not typed into the
-   * middle of it. `false` means no such pane.
+   * middle of it. A Codex pane mid-turn with a clear box is the exception: Codex takes an
+   * Enter there as a steer into the running turn (measured 0.160, 2026-10-03), so the line
+   * goes in now rather than after a turn that ran for hours (s42-mus4a344).
+   *
+   * Answers when the prompt is proven sent or given up on, or after `waitMs` with 'queued'
+   * and what it is waiting for - it stays owed, and the wait goes on after this answers.
    */
-  tellPane(ref: string, text: string): boolean {
+  tellPane(ref: string, text: string, waitMs = TELL_WAIT_MS): Promise<TellOutcome> {
     const live =
       this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
-    if (!live) return false
-    this.queuePrompt(live.meta.id, text)
-    return true
+    if (!live) return Promise.resolve({ kind: 'missing', ref })
+    const id = live.meta.id
+    const title = live.meta.title
+    return new Promise((resolve) => {
+      let answered = false
+      // Started only once `queuePrompt` has returned the wait it reads: started first, a
+      // `queuePrompt` that threw left it ticking for ever on a wait that was never made.
+      let timer: ReturnType<typeof setInterval> | undefined
+      let wait: { waiting: () => string } = { waiting: () => '' }
+      const answer = (o: TellOutcome): void => {
+        if (answered) return
+        answered = true
+        if (timer) clearInterval(timer)
+        resolve(o)
+      }
+      const queued = (): void => {
+        const now = this.sessions.get(id)
+        answer({ kind: 'queued', id, title, busySince: now?.meta.runSince, reason: wait.waiting() || 'waiting for that chat to be ready' })
+      }
+      // A wait that is only for the turn, the person, a sub-agent view or a chat still
+      // starting will not end within `waitMs`, so it is answered as soon as that is what it
+      // is - a pf tell to a busy Claude pane says so in seconds rather than holding its
+      // caller for the whole window. A prompt being typed gets the whole window for its
+      // receipt.
+      const started = Date.now()
+      // The same reason for TELL_EARLY_MS, not one reading: a Codex box reads unclear for
+      // a moment while it repaints, and a steer can follow a second later.
+      let reason = ''
+      let reasonSince = 0
+      const heldFor = (why: string): number => {
+        if (why !== reason) {
+          reason = why
+          reasonSince = Date.now()
+        }
+        return Date.now() - reasonSince
+      }
+      try {
+        wait = this.queuePrompt(id, text, 0, PROMPT_START_MS, (end, sent) => {
+          if (end === 'sent') answer({ kind: 'delivered', id, title, at: sent?.at ?? Date.now(), how: sent?.how ?? 'typed', receipt: sent?.receipt ?? 'the turn started' })
+          // Handed to the pane's new process, whose own wait types it.
+          else if (end === 'replaced') answer({ kind: 'queued', id, title, busySince: this.sessions.get(id)?.meta.runSince, reason: 'the chat restarted; it will be typed into the restarted chat' })
+          else answer({ kind: 'failed', id, title, reason: tellFailure(end, this.sessions.get(id)?.meta.agent) })
+        }, PROMPT_WAIT_MAX_MS, 'turn', undefined, PERSON_WAIT_MAX_MS, true)
+      } catch (err) {
+        console.error(`tell: ${id} prompt could not be queued:`, err)
+        answer({ kind: 'failed', id, title, reason: `this app could not take the prompt (${err instanceof Error ? err.message : String(err)})` })
+        return
+      }
+      // Settled while it was being queued (no prompt, a pane gone): nothing left to watch.
+      if (answered) return
+      timer = setInterval(() => {
+        const why = wait.waiting()
+        if (Date.now() - started >= waitMs || (why && TELL_EARLY.has(why) && heldFor(why) >= TELL_EARLY_MS)) queued()
+      }, 250)
+    })
   }
 
   /**
@@ -3713,8 +3816,9 @@ export class SessionManager extends EventEmitter {
         // which stops the collision but still costs the handoff. So the pane says out
         // loud that it is mid-handover and swallows keys until it is not, with a way out.
         this.setHandover(id, Date.now() + handoverMaxMs(CLEAR_RESUME_BUDGET_MS))
-        const typeResume = (): void =>
+        const typeResume = (): void => {
           this.queuePrompt(id, resume, 0, switchCmd ? SUBMIT_GAP_MS : CLEAR_PROMPT_START_MS, () => this.setHandover(id, 0), CLEAR_RESUME_BUDGET_MS)
+        }
         if (!switchCmd) return typeResume()
         // The model switch first, through the same idle-composer wait, then a bare CR a
         // beat later: leaving Fable opens a confirm dialog that the Enter accepts, and on
@@ -4386,6 +4490,15 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  /** `Session.promptUnsent`: stamped when a typed prompt is given up on, cleared by the
+   *  person writing into the pane or a later prompt proven sent. */
+  private setPromptUnsent(id: string, unsent: boolean): void {
+    const live = this.sessions.get(id)
+    if (!live || Boolean(live.meta.promptUnsent) === unsent) return
+    live.meta.promptUnsent = unsent ? Date.now() : undefined
+    this.emitSessions()
+  }
+
   /**
    * A person taking the pane back mid-handover.
    *
@@ -4470,13 +4583,25 @@ export class SessionManager extends EventEmitter {
     prompt?: string,
     extraDelay = 0,
     startMs = PROMPT_START_MS,
-    onSettled?: (end: QueueDrop | 'sent' | 'withheld') => void,
+    onSettled?: (end: QueueDrop | 'sent' | 'withheld', sent?: { at: number; how: 'typed' | 'steered'; receipt: string }) => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
     proof: PromptProof = 'turn',
     known?: string,
-    personWaitMs = PERSON_WAIT_MAX_MS
-  ): void {
-    if (!prompt) return onSettled?.('withheld')
+    personWaitMs = PERSON_WAIT_MAX_MS,
+    // Codex only: a running turn with a clear box takes this prompt as a steer instead of
+    // making it wait for the turn to end. `tellPane` asks for it, and it steers even when it
+    // was queued behind another prompt of this app's - a second tell goes into the turn the
+    // first one started, on purpose: each tell is its own message, and Codex takes several
+    // steers into one turn. Only a prompt queued without it waits for that turn (see `tick`).
+    steer = false
+  ): { waiting: () => string } {
+    // What this wait is waiting on, in words `pf tell` prints when it answers before the end.
+    let waitingFor = ''
+    const status = { waiting: () => waitingFor }
+    if (!prompt) {
+      onSettled?.('withheld')
+      return status
+    }
     // The app owes this pane a prompt from here until `settle` below runs, whatever the
     // caller is - autoclear's resume, a restore, `pf open --prompt`, a split brief. See
     // `Session.owedPrompt`.
@@ -4516,9 +4641,12 @@ export class SessionManager extends EventEmitter {
       // from finishing this wait: onSettled also sequences model switches and resumes.
       if (this.sessions.get(id)?.meta.handoverUntil) this.setHandover(id, 0)
     }
+    // Set when the prompt went into a running Codex turn rather than an idle box.
+    let steered = false
     const settle = (end: QueueDrop | 'sent' | 'withheld'): void => {
       if (settled) return
       settled = true
+      waitingFor = ''
       this.promptWaits.delete(key)
       // A failed confirmation is not an empty composer. Keep both the full durable
       // prompt and its owner; a subsequent queue must never paste onto that draft.
@@ -4535,9 +4663,20 @@ export class SessionManager extends EventEmitter {
         // behind it holds the reference, and this proof may come before that one looks.
         if (owner) owner.accepted = true
         this.releaseDraftHold(this.sessions.get(id), ownHold)
+        this.setPromptUnsent(id, false)
+      } else if (end === 'unsent' && owner?.since && owner.proof === 'receipt') {
+        // Typed, every Enter tried, no rollout line: the text is still in Codex's box while
+        // the card reads working (s40-mus3teu4, 2026-10-03). The card says so instead.
+        this.setPromptUnsent(id, true)
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
-      onSettled?.(end)
+      if (end !== 'sent') return onSettled?.(end)
+      const agent = this.sessions.get(id)?.meta.agent ?? original?.meta.agent
+      const receipt = owner?.proof === 'receipt' ? `Codex wrote it to its log at ${clockDay(Date.now())}` :
+        owner || proof === 'idle' ? 'the command ran' :
+        agent === 'claude' && receiptOnly(this.sessions.get(id) ?? original!) ? `Claude Code wrote it to its chat log at ${clockDay(Date.now())}` :
+        'the turn started'
+      onSettled?.(end, { at: typedTextAt || Date.now(), how: steered ? 'steered' : 'typed', receipt })
     }
     let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
@@ -4607,13 +4746,42 @@ export class SessionManager extends EventEmitter {
           Date.now() - live.contentAt < PERSON_QUIET_MS
       })
       if (decision === 'abandon') return decision
+      // A STEER, NOT A WAIT. Codex 0.160 takes an Enter mid-turn as more input for the turn
+      // it is running and writes it to its rollout within seconds (measured twice by hand,
+      // 2026-10-03); waiting for that turn to end is what lost s42-mus4a344's tell after a
+      // turn that ran for hours. Only into a box nobody else is using: the same clear-box
+      // reading `answerPane` types an answer into a busy turn on, never after a person's own
+      // keystroke since this was queued, and never into a sub-agent's view.
+      const turnOn = Boolean(live.meta.runSince) || live.busyUntil > Date.now()
+      steering = false
+      if (steer && turnOn && owner?.proof === 'receipt' && live.meta.agent === 'codex' && !personExpired) {
+        const why = steerBlock(live)
+        if (!why) {
+          steering = true
+          return 'type'
+        }
+        waitingFor = why
+        return 'wait'
+      }
       if (waitingForTurn) {
         if (live.meta.runSince || live.busyUntil > Date.now()) {
+          if (!personExpired) waitingFor = WAIT_TURN
           return personExpired ? 'abandon' : 'wait'
         }
         waitingForTurn = false
       }
+      if (decision === 'wait') waitingFor = (live.meta.lastKeyboard ?? 0) > mark || live.meta.drafting || live.typed?.trim() ? WAIT_PERSON : WAIT_TURN
       return decision
+    }
+    // Why this box is not clear to steer into, or '' when it is.
+    let steering = false
+    const steerBlock = (live: Live): string => {
+      const screen = strip(live.buffer.read()).split('\n').slice(-30).join('\n').slice(-PROMPT_TAIL_CHARS)
+      if (CODEX_SUBAGENT_VIEW.test(screen)) return WAIT_SUBAGENT
+      if ((live.meta.lastKeyboard ?? 0) > mark || !live.draft.certain || live.draft.text || live.typed?.trim() || live.meta.drafting) return WAIT_PERSON
+      if (live.effortHold || live.meta.ask || this.pendingAnswers.has(id) || ASK_PROMPT.test(screen) || composerHeld(screen))
+        return WAIT_QUESTION
+      return ''
     }
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
@@ -4680,6 +4848,8 @@ export class SessionManager extends EventEmitter {
     // Claude answered it.
     let firstReturnAt = 0
     let typedTextAt = 0
+    // When the text itself was written, for the Enter that has to come after its echo.
+    let pastedAt = 0
     let askedAgain = false
     const claudeTook = (live: Live): boolean =>
       proof !== 'idle' &&
@@ -4797,6 +4967,17 @@ export class SessionManager extends EventEmitter {
           acLog(`${id} prompt left UNSENT: pasted composer could not be verified`)
           return settle('unsent')
         }
+        // THE ENTER COMES AFTER THE PASTE IS ON SCREEN. Codex reads an Enter that arrives in
+        // the same burst as the text before it as part of that text (2026-10-03, `pf type`
+        // into s40-mus3teu4: raw text, 800ms, `\r` - the `\r` was swallowed), and a busy
+        // Windows TUI processes the bytes late. So the Enter waits until Codex has drawn
+        // something since the paste and then gone quiet for a beat, capped so a pane that
+        // never echoes still gets its Enter; a swallowed one is re-sent by the retries.
+        const echoed = live.contentAt >= pastedAt && Date.now() - live.contentAt >= PROMPT_ENTER_MS
+        if (!echoed && Date.now() - pastedAt < PROMPT_ENTER_MS * 4) {
+          setTimeout(() => void codexSubmit(0), PROMPT_POLL_MS)
+          return
+        }
       } else {
         // A cursor-only Working repaint can leave the draft tens of thousands of
         // bytes behind the tail. Reconstruct the actual screen at the pane's size.
@@ -4816,15 +4997,29 @@ export class SessionManager extends EventEmitter {
           acLog(`${id} selector or control on screen, return withheld after composer replay`)
           return settle('withheld')
         }
-        if (owner?.foreign || after.meta.lastKeyboard !== keyboard || (after.meta.lastKeyboard ?? 0) > mark ||
-          after.buffer.read() !== raw || Date.now() >= confirmUntil) return codexConfirm(tries - 1)
-        // Replay adds visual wrap newlines. Ignore only those separators for draft
-        // ownership; the native receipt above still requires byte-exact text.
-        if (!box || box.text.replace(/\n/g, '') !== prompt.replace(/\n/g, '')) return codexConfirm(tries - 1)
+        // EVERY HELD-BACK RETRY SAYS WHY. s40-mus3teu4's retries were all vetoed without a
+        // line, so the log showed one Enter and then UNSENT, and the cause had to be rebuilt
+        // from a screen replay (2026-10-03).
+        const shown = box ? `input box shows ${[...box.text.replace(/\n/g, '')].length} chars, prompt is ${[...prompt].length}` : 'the input box could not be read'
+        const holdBack = (why: string): void => {
+          acLog(`${id} codex retry ${tries + 1}/${PROMPT_ENTER_TRIES} held back: ${why}`)
+          codexConfirm(tries - 1)
+        }
+        if (owner?.foreign || (after.meta.lastKeyboard ?? 0) > mark) return holdBack(`the pane was typed into by hand (${shown})`)
+        if (after.meta.lastKeyboard !== keyboard || after.buffer.read() !== raw) return holdBack(`the screen changed while it was read (${shown})`)
+        if (Date.now() >= confirmUntil) return holdBack(`the time to confirm it is over (${shown})`)
+        // The box as drawn is not the bytes typed: soft wraps drop the space they break at,
+        // and a long paste is a placeholder. `codexBoxHolds` reads both as the prompt; the
+        // native receipt above still requires byte-exact text.
+        if (!box) return holdBack(shown)
+        if (!codexBoxHolds(box.text, prompt)) return holdBack(shown)
       }
       // The first paste and replay are asynchronous boundaries. Nothing may take
       // the composer between their checks and this keystroke.
-      if (!sameCodex(live) || blocked(live) || owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) return codexConfirm(Math.max(0, tries - 1))
+      if (!sameCodex(live) || blocked(live) || owner?.foreign || (live.meta.lastKeyboard ?? 0) > mark) {
+        if (tries > 0) acLog(`${id} codex retry ${tries + 1}/${PROMPT_ENTER_TRIES} held back: the box was taken or a question came up just before the Enter`)
+        return codexConfirm(Math.max(0, tries - 1))
+      }
       ourWrite('\r')
       if (tries === 0) recordPromptReview(live.meta, prompt)
       noteSubmittedPrompt(id, prompt)
@@ -5067,6 +5262,43 @@ export class SessionManager extends EventEmitter {
     // in. Once open it stays open.
     let gateOpen = false
     let startWait: string | null = null
+    // Is Codex's start line on its screen NOW? Read off the screen as drawn, not off the text
+    // printed since the last look: on the first look that text is the whole tail, start line
+    // and all, and it is not refreshed while Codex sits quiet - so a Codex that had finished
+    // starting before anybody looked (a restored or woken chat looked at 8 s after spawn) held
+    // its first prompt until a minute after spawn. Answered at once when nothing was printed
+    // since the last reading or no start line was ever printed; only a replay is waited for,
+    // so every other pane's wait stays synchronous. A replay that fails falls back to the text.
+    let bootRaw: string | undefined
+    let bootShown = false
+    const codexBooting = (live: Live): boolean | Promise<boolean> => {
+      const raw = live.buffer.read()
+      if (raw === bootRaw) return bootShown
+      bootRaw = raw
+      if (!CODEX_BOOTING.test(strip(raw))) return (bootShown = false)
+      return screenOf(raw, live.cols, live.rows).then(
+        (rows) => {
+          const shown = rows.filter((row) => row.trim())
+          return (bootShown = shown.slice(-CODEX_BOOT_ROWS).some((row) => CODEX_BOOTING.test(row)))
+        },
+        () => (bootShown = CODEX_BOOTING.test(painted))
+      )
+    }
+    // A young Codex is held the same way while its own start is on screen (`CODEX_BOOTING`):
+    // the composer under that line takes no keys yet, and the stale-footer rule in `idle()`
+    // would otherwise type into it after PROMPT_STALE_BUSY_MS of quiet.
+    const codexYoung = (live: Live): boolean => {
+      if (gateOpen || live.meta.agent !== 'codex') return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      return born !== undefined && Date.now() - born < PROMPT_STARTUP_MS
+    }
+    const holdForCodex = (): void => {
+      if (!startWait) {
+        startWait = 'codex'
+        acLog(`${id} queued prompt waiting for Codex to finish starting (its MCP servers are still starting)`)
+      }
+      waitingFor = WAIT_STARTING
+    }
     const starting = (live: Live): boolean => {
       if (gateOpen) return false
       const born = live.proc ? procStarted.get(live.proc) : undefined
@@ -5075,6 +5307,7 @@ export class SessionManager extends EventEmitter {
       const now = live.meta.agent === 'claude' && born !== undefined && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
       const hold = now === 'starting' || now === 'awaiting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
       if (hold) {
+        waitingFor = WAIT_STARTING
         if (!startWait) {
           startWait = now
           const why = now === 'unknown' ? 'no pid file or transcript yet' : now === 'awaiting' ? 'its SessionStart hooks have not started yet' : 'SessionStart hooks running'
@@ -5083,7 +5316,10 @@ export class SessionManager extends EventEmitter {
         return true
       }
       gateOpen = true
-      if (startWait) {
+      if (startWait === 'codex') {
+        acLog(`${id} Codex ${age < PROMPT_STARTUP_MS ? 'finished starting' : 'still starting - typing anyway'} after ${(age / 1000).toFixed(1)}s`)
+        deadline = Date.now() + Math.max(0, budgetMs)
+      } else if (startWait) {
         acLog(`${id} Claude Code ${now === 'started' ? 'finished starting' : 'still starting - typing anyway'} after ${(age / 1000).toFixed(1)}s`)
         // The idle-composer wait starts now: its budget was never meant to be spent here.
         deadline = Date.now() + Math.max(0, budgetMs)
@@ -5098,6 +5334,23 @@ export class SessionManager extends EventEmitter {
       if (!stillOwed(key)) {
         acLog(`${id} queued prompt handed to the pane's new process - not typed from here`)
         return settle('replaced')
+      }
+      if (codexYoung(live)) {
+        repaint(live)
+        let booting = codexBooting(live)
+        if (typeof booting !== 'boolean') {
+          booting = await booting
+          if (settled) return
+          if (this.sessions.get(id) !== live) {
+            setTimeout(tick, PROMPT_POLL_MS)
+            return
+          }
+        }
+        if (booting) {
+          holdForCodex()
+          setTimeout(tick, PROMPT_POLL_MS)
+          return
+        }
       }
       if (starting(live)) {
         setTimeout(tick, PROMPT_POLL_MS)
@@ -5155,11 +5408,13 @@ export class SessionManager extends EventEmitter {
         if (previous && previousAccepted) {
           noteSubmitted(previous.key)
           previous.accepted = true
+          this.setPromptUnsent(id, false)
           this.codexQueued.delete(id)
           this.releaseDraftHold(live, previous.hold)
           // It went in, so a turn running now is its answer: this prompt waits for that
-          // turn like any other follow-up rather than steering into it. Not behind a
-          // command, which starts no turn - `runSince` there is our own return's stamp.
+          // turn like any other follow-up. Not behind a command, which starts no turn -
+          // `runSince` there is our own return's stamp. A tell (`steer`) is not held by
+          // this: `verdict` steers it into that turn before it reads `waitingForTurn`.
           if (proof === 'turn' && previous.proof === 'receipt') waitingForTurn = true
         }
         // ...and the same when the held prompt this one queued behind proved ITSELF sent
@@ -5222,6 +5477,9 @@ export class SessionManager extends EventEmitter {
         if (!sameCodex(after)) return settle('replaced')
         if (blocked(after) || after.meta.lastKeyboard !== keyboard || after.draft !== draft || after.buffer.read() !== raw ||
           !box || box.text.trim() !== '') {
+          // The box as drawn says why: Codex's sub-agent view writes its notice there.
+          if (box && CODEX_SUBAGENT_VIEW.test(box.text)) waitingFor = WAIT_SUBAGENT
+          else if (box?.text.trim()) waitingFor = WAIT_PERSON
           if (Date.now() >= deadline) releaseCurtain()
           setTimeout(tick, PROMPT_POLL_MS)
           return
@@ -5266,14 +5524,22 @@ export class SessionManager extends EventEmitter {
       // Bracketed, Codex takes it as ONE paste and the return as a key of its own. A long
       // one shows as `[Pasted Content N chars]`, a placeholder `promptStillInBox` reads as
       // the prompt still sitting there.
+      // Before the write: a CLI can draw the paste before `write` even returns.
+      pastedAt = Date.now()
       if ((live.meta.agent === 'claude' || live.meta.agent === 'codex') && !prompt.trimStart().startsWith('/')) {
         ourWrite(`\x1b[200~${prompt}\x1b[201~`)
         // `typeLine` skips a paste whole, and the words asked - the pane's name is read
         // from them at the return - are the prompt all the same.
         live.typed = typeLine(live.typed, prompt)
       } else ourWrite(prompt)
+      waitingFor = 'typed into its input box; waiting for the agent to take it'
       if (owner) noteSubmittedPrompt(id, prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
+      if (steering) {
+        steered = true
+        const since = live.meta.runSince
+        acLog(`${id} steered into a running Codex turn (busy since ${since ? clockDay(since) : 'an unknown time'})`)
+      }
       setTimeout(() => submit(0), PROMPT_ENTER_MS)
     }
     // A fresh Claude Code's hooks can be over before that first look: watch them from now.
@@ -5281,6 +5547,7 @@ export class SessionManager extends EventEmitter {
     const firstBorn = first?.proc ? procStarted.get(first.proc) : undefined
     if (first?.meta.agent === 'claude' && firstBorn !== undefined && Date.now() - firstBorn < PROMPT_STARTUP_MS) watchClaudeHooks(first.proc?.pid, firstBorn)
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
+    return status
   }
 
   /**
@@ -5644,6 +5911,9 @@ export class SessionManager extends EventEmitter {
       live.draftConfirmation = undefined
       live.meta.drafting = !draft.certain || Boolean(draft.text.trim()) || undefined
       this.emitSessions()
+      // The prompt this hold was for went in after all - Codex took it late, after the queue
+      // had given up and marked it not sent. The card and GuardDeck say so no longer.
+      if (accepted) this.setPromptUnsent(live.meta.id, false)
     } catch {
       // An unreadable composer cannot authorise losing the draft.
     } finally {

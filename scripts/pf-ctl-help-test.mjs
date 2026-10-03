@@ -92,6 +92,35 @@ console.log('1. every command the dispatcher runs has help, and nothing else doe
   check('no help for a command that does not exist', commandHelp('bogus') === null)
 }
 
+// ----------------------------------------------------------------- examples name a chat by id
+// A card number is a place on the desk, and places shift when a chat above closes: `pf close 9`
+// closed the wrong chat on 2026-10-03, and agents copy the help's examples word for word.
+console.log('1b. every example that changes a chat names it by id, and says why')
+{
+  const CHANGES = ['tell', 'type', 'close', 'close-when-done', 'move', 'rename']
+  const all = [helpText(), ...COMMAND_NAMES.map((c) => commandHelp(c))].join('\n')
+  const byNumber = all.match(new RegExp(`pf (${CHANGES.join('|')}) +["']?((PC|Mac) ?)?\\d+\\b[^\\n]*`, 'g')) ?? []
+  check('no example tells, types, closes, moves or renames a chat by its card number', byNumber.length === 0, byNumber.join(' | '))
+  const reportNumber = all.match(/--report-to[ =]+["']?((PC|Mac) ?)?\d+\b/g) ?? []
+  check('no example reports to a card number', reportNumber.length === 0, reportNumber.join(' | '))
+  for (const name of CHANGES) {
+    const c = COMMANDS.find((x) => x.name === name)
+    check(`pf ${name}'s example names the chat by id`, new RegExp(`^pf ${name} s12-abc123\\b`).test(c?.example ?? ''), c?.example)
+    check(`pf help ${name} says why a number is not used`, /card numbers shift when a chat above closes/.test(commandHelp(name) ?? ''), name)
+  }
+  const tell = commandHelp('tell')
+  check('pf help tell shows a chat on another computer by its full id', tell.includes('pf tell @<device>/s12-abc123 "'), tell)
+  check('pf help tell no longer says another computer\'s chats cannot be told', !/cannot be told/.test(tell))
+  // A Codex chat mid-answer takes a tell at once, added to the turn it is working on
+  // (2026-10-03), so "never typed into the middle of one" stopped being true for it.
+  check('pf help tell says a Codex chat takes it at once and others when the turn ends',
+    !/never typed into the middle/.test(helpText() + tell) && /Codex chat takes it at once/.test(tell) && /when the current turn ends/.test(tell), tell)
+  check('pf help open shows --report-to with an id', /--report-to s\d+-[a-z0-9]+/.test(commandHelp('open')))
+  check('pf help close-when-done shows --report-to with an id', /--report-to s\d+-[a-z0-9]+/.test(commandHelp('close-when-done')))
+  check('the recipes tell and close by id', /pf tell s12-abc123 /.test(helpText()) && /pf close s12-abc123/.test(helpText()))
+  check('pf help list says what the sixth column is', /prompt waiting since/.test(commandHelp('list')) && /prompt not sent/.test(commandHelp('list')))
+}
+
 // ----------------------------------------------------------------- the CLI, no app
 console.log('2. help answers with no app; a wrong word points at it')
 {

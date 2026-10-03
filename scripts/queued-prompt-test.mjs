@@ -179,6 +179,20 @@ t('a pane that closes leaves no owed rows behind, and a line for each', () => {
   assert.equal(owedTo(load(), 's9').length, 1, "another pane's prompt is left alone")
 })
 
+// s40-mus3teu4, 2026-10-03: the prompt was typed into Codex's box, every Enter retry was held
+// back, the pane closed, and the ledger said "the pane closed before it was typed" - a lie that
+// sent the reader looking for a typing bug instead of a submit bug.
+t('a prompt typed into the box but never taken says so when its pane closes', () => {
+  const typed = { id: 's40', key: 'k', text: 'the brief', at: 0, typed: { at: 5, proof: 'receipt' } }
+  const line = dropLine(typed, 'gone')
+  assert.match(line, /LOST/)
+  assert.match(line, /typed into the box but the agent never took it before the pane closed/)
+  assert.doesNotMatch(line, /closed before it was typed/)
+  assert.match(line, /the brief/)
+  const untyped = dropLine({ id: 's40', key: 'k', text: 'the brief', at: 0 }, 'gone')
+  assert.match(untyped, /closed before it was typed/, 'a prompt never typed keeps its own words')
+})
+
 // ---------------------------------------------------------------------------
 // 2. A brief never queues behind somebody else's turn.
 

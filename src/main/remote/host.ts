@@ -24,6 +24,7 @@ import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
 import type { ReviewRecord } from '../../shared/reviews'
+import type { TellOutcome } from '../../shared/tell'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Four MiB raw stays comfortably below wire.ts's eight MiB encrypted frame once base64 encoded. */
@@ -37,6 +38,8 @@ export interface HostBackend {
   write(id: string, data: string, terminalReply?: boolean): void
   /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
   sendPrompt(id: string, text: string): void
+  /** `pf tell` from another computer: queue it here and answer with what happened (`shared/tell.ts`). */
+  tellPane(id: string, text: string): Promise<TellOutcome>
   resize(
     id: string,
     cols: number,
@@ -543,6 +546,13 @@ export class RemoteHost extends EventEmitter {
           // network frame to arrive after the pasted text.
           this.backend.sendPrompt(id, String(m.text ?? ''))
           return
+        case 'tell': {
+          // The same intent as `prompt`, answered: the guest prints what this desk knows
+          // about the prompt (typed, waiting, refused, no such chat) instead of "told".
+          const ref = typeof m.ref === 'string' && m.ref ? m.ref : id
+          this.answer(conn, m, this.backend.tellPane(ref, String(m.text ?? '')), 'tell', (outcome) => ({ t: 'told', ref, outcome }))
+          return
+        }
         case 'resize':
           // A mirror asking to BORROW the size, which is what stops the far end drawing
           // this desk's grid at the wrong scale. Borrowed, never owned: this desk keeps

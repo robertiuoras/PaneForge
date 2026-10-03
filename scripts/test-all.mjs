@@ -256,6 +256,7 @@ const TESTS = [
   ['pfrename', 'pf-rename-test.mjs'],
   ['pfclose', 'pf-close-test.mjs'],
   ['pflabel', 'pf-label-test.mjs'],
+  ['unsentcard', 'unsent-card-test.mjs'],
   ['panenumbers', 'pane-numbers-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
