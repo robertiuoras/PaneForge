@@ -76,6 +76,7 @@ import {
   laneLedger,
   movePrompt,
   moveRefusal,
+  numberCloseRefusal,
   paneAt,
   readTail,
   samePath,
@@ -851,6 +852,8 @@ if (cmd === 'list') {
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
   const s = resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
+  const why = numberCloseRefusal(ref, s, Date.now())
+  if (why) fail(1, why)
   await call('sessions:kill', [s.id, 'pf'])
   // kill() deletes the session and re-emits the list, so absence IS the verification.
   const still = (await sessions()).some((x) => x.id === s.id)
