@@ -3520,6 +3520,11 @@ function failLines(all) {
     .join('; ')
 }
 
+/** The check names in a `failLines` string: `FAIL  stickyselect  24.7s; ...` -> { stickyselect, ... }. */
+function failNames(text) {
+  return new Set(text.split('; ').map((p) => p.match(/^(?:fail|FAIL|✗|not ok)\s+(\S+)/)?.[1]).filter(Boolean))
+}
+
 /**
  * The test suite of `dir` on the PC: one job per tree, remembered through `save` (master's
  * in `state.pcSuite`, a lane's in `state.pcLaneSuite[id]`), whose last value is `known`.
@@ -3541,8 +3546,10 @@ function failLines(all) {
  *   - a dependency install or an out-of-memory kill on the PC, which a tree can never fix
  *   and caching would pin until a merge). Dropped, so the next try sends a new one.
  * - `{ red }`: ran and failed checks it names, then failed again on one confirming job (the
- *   confirm-once rule in `suiteFailure`; the confirming job is remembered too). Cached on
- *   the tree.
+ *   confirm-once rule in `suiteFailure`; the confirming job is remembered too), repeating a
+ *   check the first job failed. Two reds on different checks mean every check passed in one
+ *   of the runs (lane d, 2026-10-02: `promptsubmit`, then `stickyselect`, a PC-load flake,
+ *   pinned it red): that passes, with `flaky` on the record. Cached on the tree.
  * - null: passed. Cached on the tree.
  *
  * `known` must be a fresh read, not a `state` loaded before a 15-minute wait: two chats
@@ -3555,6 +3562,8 @@ function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {})
   if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
   let id = mine?.id
   let confirming = Boolean(mine?.confirming)
+  // The first job's FAIL lines, kept across tries: the confirming job is judged against them.
+  let firstRed = mine?.firstRed
   for (;;) {
     if (!id) {
       // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
@@ -3564,7 +3573,7 @@ function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {})
       // the next try reads its answer again rather than running it again.
       if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
       id = sent.id
-      if (tree) save({ tree, id, at: now(), ...(confirming && { confirming }) })
+      if (tree) save({ tree, id, at: now(), ...(confirming && { confirming, firstRed }) })
     }
     if (sendOnly) return { pending: id }
     const r = waitPcJob(id, waitS)
@@ -3579,10 +3588,20 @@ function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {})
       return { cannot: 'run on', why: r.why }
     }
     if (confirming) {
+      // No record of the first red (an older lane.mjs wrote it), a shared check, or a list
+      // `failLines` may have cut at 4 (the shared one could be past the cut): as before.
+      const first = failNames(firstRed ?? '')
+      const again = failNames(failed)
+      const whole = (names) => names.size > 0 && names.size < 4
+      if (whole(first) && whole(again) && ![...again].some((n) => first.has(n))) {
+        if (tree) save({ tree, ok: true, at: now(), flaky: `${firstRed} / ${failed}` })
+        return null
+      }
       if (tree) save({ tree, ok: false, at: now(), reason: failed })
       return { red: failed }
     }
     confirming = true
+    firstRed = failed
     id = null
   }
 }

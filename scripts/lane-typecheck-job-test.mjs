@@ -126,6 +126,7 @@ if (mode === 'queued') process.exit(75)
 if (mode === 'pass') process.exit(0)
 if (mode === 'ts') { console.log('src/x.ts(1,1): error TS2322: nope'); process.exit(2) }
 if (mode === 'red') { console.log('ok   fine'); console.log('FAIL broken - it broke'); console.error('rbuild: failed - exit 1'); process.exit(1) }
+if (mode === 'red2') { console.log('ok   fine'); console.log('FAIL other - it broke'); console.error('rbuild: failed - exit 1'); process.exit(1) }
 if (mode === 'killed') process.kill(process.pid, 'SIGKILL')
 if (mode === 'oom') { console.error('rbuild: failed while installing'); console.log('npm error network ETIMEDOUT'); console.error('rbuild: failed - exit 1'); process.exit(1) }
 console.error('rbuild: cancelled')
@@ -242,6 +243,20 @@ process.exit(1)
   const kOut = lane(sk.dir, 'ready', '--session', 'chat-k')
   ok('k: flaky red, green confirm: lane lands', contains(sk.remote, kTip, 'main'), said(kOut))
   ok('k: two suite jobs, both on the PC', suiteSubmits(sk.dir).length === 2 && !existsSync(macSuiteRan), JSON.stringify(suiteSubmits(sk.dir)))
+
+  // k2: two reds on DIFFERENT checks (lane d, 2026-10-02): every check passed in one of the
+  // runs, so the lane is not held red; the record keeps both runs' FAIL lines.
+  suiteMode('red,red2')
+  const sk2 = project('suitediffred')
+  const k2 = work(sk2.dir, 'chat-k2', 'k2.txt')
+  const k2Tip = git(k2.dir, 'rev-parse', 'HEAD')
+  const k2Out = lane(sk2.dir, 'ready', '--session', 'chat-k2')
+  ok('k2: reds on different checks: lane lands', contains(sk2.remote, k2Tip, 'main'), said(k2Out))
+  ok('k2: first job plus one confirm, nothing on the Mac', suiteSubmits(sk2.dir).length === 2 && !existsSync(macSuiteRan),
+    JSON.stringify(suiteSubmits(sk2.dir)))
+  ok('k2: cached as a pass that names both runs', ledger(sk2.dir).pcSuite?.ok === true &&
+    /broken/.test(ledger(sk2.dir).pcSuite?.flaky ?? '') && /other/.test(ledger(sk2.dir).pcSuite?.flaky ?? ''),
+    JSON.stringify(ledger(sk2.dir).pcSuite))
 
   // l: the confirming job is remembered too: a try that runs out of time on it does not
   // queue a third job, and a red waiting for its confirm is not a verdict yet.
