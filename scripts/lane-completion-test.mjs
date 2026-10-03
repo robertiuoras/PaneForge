@@ -198,6 +198,46 @@ const promptClaim = spawnSync(process.execPath, [join(behind.repo, 'scripts', 'l
 check('automatic prompt claim preserves the pinned clean snapshot', promptClaim.status === 0 && behind.state().lanes.a?.session === 'hook-owner' && git(behind.dir, 'rev-parse', 'HEAD') === behindHead && git(behind.dir, 'write-tree') === behindIndex, promptClaim.stdout + promptClaim.stderr)
 check('the prompt owner can bind the unchanged pinned snapshot', behind.run('recover', '--key', behindKey, '--session', 'hook-owner', '--disposition', 'begin').code === 0)
 
+// An owner that ends mid-recovery (status `owned`) after its pinned work reached trunk must
+// not lock the lane for every later chat. research-lab lane b, 2026-10-03: the owner of
+// lane:b:dc8c599 ended 2026-10-02 at `owned`, dc8c599 was already in origin/main, and every
+// later `ready` on lane b threw. Unshipped pinned work keeps blocking, so does the caller's
+// own item, and so does work pinned for its uncommitted changes (ancestry cannot prove those).
+for (const kind of ['shipped', 'unshipped', 'shipped-chat-ends', 'uncommitted-on-trunk']) {
+  const o = fixture(`ended-owner-${kind}`)
+  if (kind === 'uncommitted-on-trunk') writeFileSync(join(o.dir, 'intent.txt'), 'uncommitted recovered intent')
+  else { writeFileSync(join(o.dir, 'intent.txt'), 'recovered intent'); git(o.dir, 'add', 'intent.txt'); git(o.dir, 'commit', '-qm', 'recovered intent') }
+  const pin = git(o.dir, 'rev-parse', 'HEAD')
+  o.patch((s) => { delete s.lanes.a }); o.run('retry')
+  const k = o.state().recovery.active
+  // A pane open in the lane, as in real use: otherwise the sweep `release` starts removes
+  // the folder once its work is in trunk (see the guard-only hook case below).
+  writeFileSync(o.panes, `lane-pane\ttitle\tclaude\tworking\t${o.dir}\n`)
+  o.run('claim', '--prefer', 'a', '--cwd', o.dir, '--session', 'ended-owner')
+  const began = o.run('recover', '--key', k, '--session', 'ended-owner', '--disposition', 'begin')
+  o.run('release', '--session', 'ended-owner', '--gone')
+  if (kind.startsWith('shipped')) { git(o.repo, 'merge', '-q', '--ff-only', pin); git(o.repo, 'push', '-q', 'origin', 'master') }
+  const next = o.run('claim', '--prefer', 'a', '--cwd', o.dir, '--session', 'next-chat')
+  // The new chat commits in the lane; in the last case that includes the preserved changes.
+  writeFileSync(join(o.dir, 'next.txt'), 'next chat work'); git(o.dir, 'add', '-A'); git(o.dir, 'commit', '-qm', 'next chat work')
+  const item = () => o.state().recovery.items[k]
+  check(`${kind}: an ended owner's owned item and the lane held by a new chat`, began.code === 0 && item()?.status === 'owned' && item()?.owner === 'ended-owner' && next.code === 0 && o.state().lanes.a?.session === 'next-chat', began.err + next.err)
+  if (kind === 'shipped-chat-ends') {
+    // A chat ending with clean committed work gets the same finish it gets in any lane.
+    const end = o.run('release', '--session', 'next-chat')
+    check(`${kind}: its committed work is marked done on the way out`, end.code === 0 && /marked done on the way out/.test(end.out) && item().status === 'reviewed', end.out + end.err + JSON.stringify(item()))
+    continue
+  }
+  if (kind === 'shipped') {
+    o.patch((s) => { s.recovery.items[k].owner = 'next-chat' })
+    check(`${kind}: the caller's own unverified item still refuses ready`, o.run('ready', '--session', 'next-chat').code !== 0 && item().status === 'owned')
+    o.patch((s) => { s.recovery.items[k].owner = 'ended-owner' })
+  }
+  const r = o.run('ready', '--session', 'next-chat')
+  if (kind === 'shipped') check(`${kind}: a new chat's ready succeeds and the item reads reviewed`, r.code === 0 && item().status === 'reviewed' && item().reason === 'included by trunk ancestry' && o.state().recovery.active !== k, r.out + r.err + JSON.stringify(item()))
+  else check(`${kind}: a new chat's ready still refuses and the item stays owned`, r.code !== 0 && /recovered work requires a current verification receipt/.test(r.err) && item().status === 'owned' && (kind !== 'uncommitted-on-trunk' || item().dirty === true), r.out + r.err + JSON.stringify(item()))
+}
+
 // Event barriers live only in the fixture copy, never in the production engine.
 const eventFile = (path) => new Promise((resolve, reject) => {
   if (existsSync(path)) { resolve(); return }
