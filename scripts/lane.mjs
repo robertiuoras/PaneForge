@@ -2390,6 +2390,35 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Cheap, throttled, and the reason most conflicts never reach a human.
   retryConflicts(state)
 
+  // The app can reopen a checkout after its former pane closed, before the gone-owner
+  // sweep has removed the claim. Do not route a pinned task elsewhere merely because
+  // that empty claim remains. An all-copy inventory must identify THIS native chat and
+  // prove the former app owner absent; unknown inventory, external owners, sleeping
+  // panes and every kind of unfinished work keep their protection.
+  const empty = (id) => {
+    const w = laneWork(id)
+    return !w.damaged && !w.dirty && w.ahead === 0 && !state.ready[id] && !state.conflicts[id] && !preservedRecovery(state, id)
+  }
+  const requested = prefer && prefer !== 'main' && POOL.includes(prefer) && cwd && inside(samePath(cwd), samePath(laneDir(prefer)))
+  if (requested) {
+    const owner = state.lanes[prefer]
+    if (owner?.pane && owner.session !== session && !owner.asleep && empty(prefer)) {
+      const living = recoveryLiving()
+      if (living?.has(session) && !living.has(owner.session)) {
+        dropClaims(state, owner.session)
+        delete state.lanes[prefer]
+      }
+    }
+    // A previous prompt may already have allocated an empty fallback. Returning to the
+    // checkout recorded at the original claim is safe only while BOTH copies are empty
+    // and the requested one is unheld. A visit to another checkout never moves a hold.
+    const held = Object.keys(state.lanes).find((id) => state.lanes[id].session === session)
+    if (held && held !== 'main' && held !== prefer && !state.lanes[prefer] && state.lanes[held].cwd &&
+        inside(samePath(state.lanes[held].cwd), samePath(laneDir(prefer))) && empty(held) && empty(prefer)) {
+      delete state.lanes[held]
+    }
+  }
+
   // ONE PANE IS ONE CHAT, so a pane may hold one lane and never two.
   //
   // A chat's id changes when it is cleared or resumed (`/clear` starts a new session id in

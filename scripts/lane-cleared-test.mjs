@@ -25,16 +25,14 @@
 //   node scripts/lane-cleared-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-lane-cleared-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+const root = mkdtempSync(join(tmpdir(), 'paneforge-lane-cleared-test-'))
 
 let failed = 0
 const ok = (name, cond, detail) => {
@@ -128,6 +126,90 @@ const identity = (dir) => {
   ok('A: the hold is a live one (not parked, not marked ended)', !f.state().lanes.a?.parked && !f.state().lanes.a?.ended, JSON.stringify(f.state().lanes.a))
   const write = f.lane('pane-s10', 'guard', '--session', 'after-clear', '--path', join(a.dir, 'feature.js'))
   ok('A: and it may write in its own folder again', write.ok, write.out || write.err)
+}
+
+{
+  // A prompt pinned to b was sent after its previous app owner disappeared. Startup
+  // chose c, and every later prompt kept c even after b became available.
+  const f = fixture('routing-empty-dead-owner')
+  const b = f.claim('old-pane', 'old-session', '--prefer', 'b')
+  writeFileSync(join(f.repo, '.git', 'paneforge-panes.json'), JSON.stringify({
+    [`pf-${process.pid}`]: { at: Date.now(), chats: ['new-session'] }
+  }))
+  const next = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: startup reclaims the requested empty checkout only after its app owner is proven gone', next.lane === 'b', JSON.stringify(next))
+}
+
+{
+  const f = fixture('routing-live-owner')
+  const b = f.claim('old-pane', 'live-session', '--prefer', 'b')
+  writeFileSync(join(f.repo, '.git', 'paneforge-panes.json'), JSON.stringify({
+    [`pf-${process.pid}`]: { at: Date.now(), chats: ['live-session', 'new-session'] }
+  }))
+  const next = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: startup never takes the requested checkout from a live app owner', next.lane !== 'b' && f.laneOf('live-session') === 'b', JSON.stringify(next))
+  // When that owner actually leaves, a repeated prompt must stop injecting the empty
+  // fallback assignment. This does not require changing the native conversation id.
+  f.patchState((s) => delete s.lanes.b)
+  const back = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: an empty fallback returns to its original requested checkout when it becomes free', back.lane === 'b', JSON.stringify(back))
+  ok('A: reconciliation releases the unused fallback hold', Object.keys(f.state().lanes).length === 1, JSON.stringify(f.state().lanes))
+}
+
+{
+  const f = fixture('routing-unknown-owner')
+  const b = f.claim('old-pane', 'old-session', '--prefer', 'b')
+  const next = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: missing native inventory never proves the requested owner gone', next.lane !== 'b' && f.laneOf('old-session') === 'b', JSON.stringify(next))
+}
+
+{
+  const f = fixture('routing-external-owner')
+  const b = f.claim('', 'external-session', '--prefer', 'b')
+  writeFileSync(join(f.repo, '.git', 'paneforge-panes.json'), JSON.stringify({
+    [`pf-${process.pid}`]: { at: Date.now(), chats: ['new-session'] }
+  }))
+  const next = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: app inventory cannot give up an external terminal owner', next.lane !== 'b' && f.laneOf('external-session') === 'b', JSON.stringify(next))
+}
+
+{
+  const f = fixture('routing-preserve-work')
+  const b = f.claim('old-pane', 'old-session', '--prefer', 'b')
+  writeFileSync(join(b.dir, 'unfinished.js'), 'preserve this\n')
+  writeFileSync(join(f.repo, '.git', 'paneforge-panes.json'), JSON.stringify({
+    [`pf-${process.pid}`]: { at: Date.now(), chats: ['new-session'] }
+  }))
+  const next = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: a gone owner with unfinished work is preserved', next.lane !== 'b' && f.laneOf('old-session') === 'b', JSON.stringify(next))
+  writeFileSync(join(next.dir, 'current.js'), 'preserve this too\n')
+  f.patchState((s) => delete s.lanes.b)
+  const back = f.claim('new-pane', 'new-session', '--cwd', b.dir, '--prefer', 'b', '--visitor')
+  ok('A: reconciliation never abandons work in the current fallback', back.lane === next.lane, JSON.stringify(back))
+}
+
+{
+  const f = fixture('routing-checkout-visit')
+  const a = f.claim('pane', 'session', '--prefer', 'a')
+  f.claim('pane', 'session', '--cwd', a.dir, '--prefer', 'a')
+  f.claim('other-pane', 'other-session', '--prefer', 'b')
+  f.patchState((s) => delete s.lanes.b)
+  const next = f.claim('pane', 'session', '--cwd', join(f.repo + '-b', 'subfolder'), '--prefer', 'b')
+  ok('A: visiting another free checkout does not move an existing hold', next.lane === a.lane, JSON.stringify(next))
+}
+
+{
+  const f = fixture('routing-unrecorded-cwd')
+  const a = f.claim('pane', 'session', '--prefer', 'a')
+  const b = f.claim('other-pane', 'other-session', '--prefer', 'b')
+  f.patchState((s) => delete s.lanes.b)
+  // A hand claim records no cwd. Resolving that missing value as the process cwd
+  // would incorrectly turn a subsequent visit into evidence of the original home.
+  const next = JSON.parse(execFileSync(process.execPath, [join(f.repo, 'scripts', 'lane.mjs'),
+    'claim', '--session', 'session', '--cwd', b.dir, '--prefer', 'b'], {
+    cwd: b.dir, encoding: 'utf8', env: { ...process.env, PF_PANE: 'pane' }
+  }))
+  ok('A: an unrecorded home is not inferred from the current process cwd', next.lane === a.lane, JSON.stringify(next))
 }
 
 {
@@ -429,4 +511,5 @@ const openMerge = (dir) => {
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
+if (!failed) rmSync(root, { recursive: true, force: true })
 process.exit(failed ? 1 : 0)
