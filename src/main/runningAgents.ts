@@ -122,7 +122,8 @@ export function backgroundWorkerReadingFor(paneId: string, since: number | undef
     workers: runningAgents(r.scan, { since }).map(a => ({
       id: a.id, name: a.label || 'Background task',
       state: a.at == null ? 'unknown' : now - a.at > AGENT_MAX_AGE_MS ? 'stale' : 'running',
-      startedAt: a.at ?? undefined
+      startedAt: a.at ?? undefined,
+      ...(a.model ? { requestedModel: a.model } : {})
     }))
   }
 }

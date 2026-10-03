@@ -127,6 +127,18 @@ c=sqlite3.connect(sys.argv[1]);c.execute('create table threads(id text,rollout_p
   const claudeReading = backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 1000)
   assert.equal(claudeReading.status, 'fresh')
   assert.deepEqual(claudeReading.workers.map(w => [w.name, w.state, w.startedAt, w.model]), [['Visual review Design 4 pages', 'running', launchedAt, undefined]], 'requested model is not an executed-model claim')
+  assert.equal(claudeReading.workers[0].requestedModel, 'sonnet', 'the model the launch asked for is carried, apart from the executed model')
+  const opusFile = join(dir, 'opus.jsonl')
+  const opusAt = '2026-09-22T19:00:00.000Z'
+  writeFileSync(opusFile, [
+    { parentUuid: null, isSidechain: false, type: 'assistant', message: { model: 'claude-opus-5-5', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_OPUS', name: 'Agent', input: { subagent_type: 'locator', model: 'opus', description: 'Opus review', prompt: '(redacted)' }, caller: { type: 'direct' } }], stop_reason: 'tool_use' }, timestamp: opusAt },
+    { parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_OPUS', type: 'tool_result', content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a0pus00000000001 (internal ID)\nThe agent is working in the background.' }] }] }, timestamp: opusAt }
+  ].map(l => JSON.stringify(l)).join('\n') + '\n')
+  const opusAtMs = Date.parse(opusAt)
+  backgroundAgentsFor('opus-claude', opusFile, opusAtMs - 1, opusAtMs + 1000)
+  const opusWorker = backgroundWorkerReadingFor('opus-claude', opusAtMs - 1, opusAtMs + 1000).workers[0]
+  assert.equal(opusWorker?.requestedModel, 'opus', 'an Agent launch with input.model opus yields a worker that reads opus')
+  assert.equal(opusWorker.model, undefined, 'asked-for is never an executed-model claim')
   assert.equal(backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 4 * 60 * 60_000).workers[0].state, 'stale', 'aged background launches are not falsely idle')
   appendFileSync(claudeFile, claudeLines.slice(2).join('\n') + '\n')
   backgroundAgentsFor('claude', claudeFile, launchedAt - 1, launchedAt + 5000)
@@ -152,6 +164,10 @@ c=sqlite3.connect(sys.argv[1]);c.execute('create table threads(id text,rollout_p
   assert.match(ui, /1m 30s/)
   assert.equal(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'stale' }] } }), '', 'only stopped/stale workers draws nothing')
   assert.match(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'running', startedAt: fixtureNow - 1000 }, { id: 'two', name: 'Old', state: 'stale' }] } }), /1 confirmed running/)
+  const asked = render({ id: 'fixture', title: 'Worker proof', agent: 'claude', claudeWorkers: { status: 'fresh', workers: [{ id: 'one', name: 'Opus review', requestedModel: 'opus', state: 'running', startedAt: fixtureNow - 1000 }] } })
+  assert.match(asked, /Asked for [^<]*[Oo]pus/, 'requested model is labelled as asked for')
+  assert.doesNotMatch(asked, /Model unknown/)
+  assert.match(render({ id: 'fixture', title: 'Worker proof', agent: 'claude', claudeWorkers: { status: 'fresh', workers: [{ id: 'one', name: 'No model', state: 'running', startedAt: fixtureNow - 1000 }] } }), /Model unknown/)
   assert.equal(render({ ...session, agent: 'shell' }), '', 'unsupported provider does not claim zero')
   delete globalThis.window
   console.log('Codex workers: event ordering, incremental reads, partial writes, stale/unknown states, read-only DB and identity checks passed')
