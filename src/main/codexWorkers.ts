@@ -76,9 +76,9 @@ function scriptValue(script: string, key: string): string | undefined {
   try { return m[1][0] === '"' ? JSON.parse(m[1]) : m[1].slice(1, -1) } catch { return m[1].slice(1, -1) }
 }
 
-/** An add-on tool is named `mcp__<add-on>__<tool>`: `mcp__node_repl__js` -> `node repl: js`. */
+/** An add-on tool is named `[mcp__]<add-on>__<tool>`: `mcp__node_repl__js` -> `node repl: js`. */
 function addOn(name: string): string | undefined {
-  const m = /^mcp__(.+?)__(.+)$/.exec(name)
+  const m = /^(?:mcp__)?(.+?)__(.+)$/.exec(name)
   return m ? `${m[1].replace(/_+/g, ' ')}: ${m[2].replace(/_+/g, ' ')}` : undefined
 }
 
@@ -124,7 +124,7 @@ export function describeStep(name: string, raw: unknown): string {
     case 'search_contents': case 'grep': case 'rg': return 'Searching files'
     case 'list_items': case 'list_dir': return 'Listing files'
     case 'update_plan': return 'Updating its plan'
-    case 'web_search': case 'search': return 'Searching the web'
+    case 'web_search': case 'search': case 'web__run': return 'Searching the web'
     default: return cut(`Using ${addOn(name) ?? (name || 'a tool')}`)
   }
 }

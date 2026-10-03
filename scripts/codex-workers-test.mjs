@@ -64,6 +64,10 @@ try {
   assert.equal(describeStep('mcp_tool', undefined), 'Using mcp_tool')
   // An add-on tool's name (PC 2026-10-03: `mcp__node_repl__js`) reads as words, not code.
   assert.equal(describeStep('mcp__node_repl__js', '{}'), 'Using node repl: js')
+  // Same table as PaneForge Next (2026-10-03): a script's own `a__b` tools and the web tool.
+  assert.equal(describeStep('clock__curr_time', '{}'), 'Using clock: curr time')
+  assert.equal(describeStep('exec', 'text(await tools.web__run({q:"codex"}))'), 'Searching the web')
+  assert.equal(describeStep('exec', 'text(await tools.write_stdin({session_id:74812,chars:""}))'), 'Checking on a running command')
   const event = (type, turn_id = 'one') => JSON.stringify({ type: 'event_msg', payload: { type, turn_id } }) + '\n'
   const context = JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6.1-sol', effort: 'high' } }) + '\n'
   const scan = { file: '', offset: 0, state: 'unknown' }
