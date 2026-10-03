@@ -741,7 +741,9 @@ export function movePrompt(briefPath) {
  * folder", which is a different conversation as soon as anything else ran there.
  */
 export function continueTarget(resumeId, panes, history) {
-  const mine = (panes ?? []).filter((p) => p.resumeId === resumeId)
+  // `resumeId` is only stamped when a turn ends, so a pane still in its FIRST turn has none;
+  // it lists `conversationId` instead. `resumeId` wins whenever the pane has one.
+  const mine = (panes ?? []).filter((p) => p.resumeId === resumeId || (!p.resumeId && p.conversationId === resumeId))
   const local = mine.filter((p) => !String(p.id).startsWith('@'))
   const running = local.filter((p) => !p.asleep && p.status !== 'exited')
   if (running.length > 1)
