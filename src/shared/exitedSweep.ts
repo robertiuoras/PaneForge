@@ -59,6 +59,12 @@ export interface ExitedFact {
    * closed before it was typed)" six times. A card holding unfinished work is never swept.
    */
   owed?: boolean
+  /**
+   * The finished chat expects its person (`Session.waitsForYou`). Robert, 2026-10-03: such a
+   * chat stays until he acts, so the asleep sweep never takes it. The exited sweep (its
+   * program died) is unchanged.
+   */
+  waitsForYou?: boolean
 }
 
 export interface ExitedRemoval {
@@ -138,7 +144,7 @@ export const ASLEEP_REMOVE_MS = 30 * 60_000
 export function asleepSweep(panes: ExitedFact[], now: number, seenAt: number | null = 0): ExitedRemoval[] {
   const out: ExitedRemoval[] = []
   for (const p of panes) {
-    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff || p.owed) continue
+    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff || p.owed || p.waitsForYou) continue
     if (p.restored && seenAt === null) continue
     const slept = typeof p.asleep === 'number' ? p.asleep : 0
     const since = p.restored && slept ? Math.max(slept, seenAt ?? 0) : slept

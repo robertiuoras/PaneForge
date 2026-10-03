@@ -9,7 +9,7 @@ import { lstatSync, readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { actionableNextSteps, handoffCandidates } from '../shared/handoffSteps'
+import { actionableNextSteps, handoffCandidates, paneSlot } from '../shared/handoffSteps'
 
 /** How stale a cached reading may be. A handoff is rewritten once a session, not once a second. */
 const CACHE_MS = 30_000
@@ -101,6 +101,13 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
       return hit.reading
     }
   }
+  const best = readNewest(candidates)
+  cache.set(key, { at: now, reading: best, statAt: now })
+  return best
+}
+
+/** The newest readable handoff among `candidates`, read in full. */
+function readNewest(candidates: string[]): HandoffReading {
   let best: HandoffReading = NONE
   for (const p of candidates) {
     try {
@@ -118,8 +125,40 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
       /* absent, or unreadable - neither is evidence about the work */
     }
   }
-  cache.set(key, { at: now, reading: best, statAt: now })
   return best
+}
+
+const own = new Map<string, { mtimeMs: number; reading: HandoffReading }>()
+
+/**
+ * This pane's OWN handoff - its `session-handoff.pane-<id>.md` - or a reading with no path.
+ * `handoffFor` takes the newest candidate, so another chat writing the project's unscoped
+ * handoff later outranks the pane's own: PC s25-murguhxd (2026-10-02) said None in its own
+ * file at 21:57 and held on the unscoped one another chat rewrote at 23:09. What holds a
+ * finished pane reads this first. Re-read only when the newest own file changes.
+ */
+export function ownHandoffFor(cwd: string, paneId: string): HandoffReading {
+  const slot = paneSlot(paneId)
+  if (!slot) return NONE
+  const mine = handoffCandidates(cwd, paneId, claudeHome(), symlinked).filter((p) => p.endsWith(`/session-handoff${slot}.md`))
+  let top = { path: '', mtimeMs: 0 }
+  for (const p of mine) {
+    try {
+      const st = statSync(p)
+      if (st.mtimeMs > top.mtimeMs) top = { path: p, mtimeMs: st.mtimeMs }
+    } catch {
+      /* absent */
+    }
+  }
+  if (!top.path) {
+    own.delete(paneId)
+    return NONE
+  }
+  const hit = own.get(paneId)
+  if (hit && hit.reading.path === top.path && hit.mtimeMs === top.mtimeMs) return hit.reading
+  const reading = readNewest(mine)
+  own.set(paneId, { mtimeMs: top.mtimeMs, reading })
+  return reading
 }
 
 export function verifiedPaneHandoff(cwd: string, paneId: string, agent: string, resumeId: string, now = Date.now()): HandoffReading | null {
@@ -143,9 +182,11 @@ export function verifiedPaneHandoff(cwd: string, paneId: string, agent: string, 
 /** Drop a pane's cached reading, so the next read is fresh. Called when a pane closes. */
 export function forgetHandoff(paneId: string): void {
   for (const key of cache.keys()) if (key.startsWith(`${paneId} `)) cache.delete(key)
+  own.delete(paneId)
 }
 
 /** Everything, for tests and for anything that could move the answer. */
 export function clearHandoffCache(): void {
   cache.clear()
+  own.clear()
 }

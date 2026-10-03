@@ -71,14 +71,15 @@ export class FinishedDigest {
   }
 
   /** Tell every opener whose panes have all closed, or who has waited long enough. */
-  flush(stillOpen: (opener: string) => number, tell: (opener: string, text: string) => boolean, now = Date.now()): string[] {
+  // `stillWorking` decides when to tell (a pane that is idle or waiting on Robert holds
+  // nothing back, 2026-10-03); `stillOpen` is what the text says is still open.
+  flush(stillWorking: (opener: string) => number, tell: (opener: string, text: string) => boolean, now = Date.now(), stillOpen = stillWorking): string[] {
     const told: string[] = []
     for (const [opener, p] of this.pending) {
-      const open = stillOpen(opener)
-      if (open > 0 && now - p.firstAt < DIGEST_MAX_HOLD_MS) continue
+      if (stillWorking(opener) > 0 && now - p.firstAt < DIGEST_MAX_HOLD_MS) continue
       this.pending.delete(opener)
       // An opener that has gone cannot be told; every reply is still a Review row.
-      if (tell(opener, digestText(p.notes, open))) told.push(opener)
+      if (tell(opener, digestText(p.notes, stillOpen(opener)))) told.push(opener)
     }
     return told
   }

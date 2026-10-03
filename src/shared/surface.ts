@@ -215,6 +215,9 @@ export const SURFACE: Surface = {
   scanRemote: ['invoke', 'remote:scan'],
   watchRemote: ['invoke', 'remote:watch'],
   setRemoteKeepOpen: ['invoke', 'remote:keepOpen'],
+  // Keep open for any pane by id, local or `@device/...`: GuardDeck's Stop on a finished
+  // chat's countdown, over `/pf/call`. See `sessions:keepOpen` in main/index.ts.
+  keepPaneOpen: ['invoke', 'sessions:keepOpen'],
   remoteProjects: ['invoke', 'remote:projects'],
   remoteAgents: ['invoke', 'remote:agents'],
   startRemote: ['invoke', 'remote:start'],
@@ -256,6 +259,7 @@ export const SURFACE: Surface = {
   onBell: ['on', 'sessions:bell'],
   onAsk: ['on', 'sessions:ask'],
   onSleepRefused: ['on', 'sessions:sleepRefused'],
+  onCopyMade: ['on', 'lanes:copyMade'],
   onActivity: ['on', 'activity:changed'],
   paneBell: ['send', 'sessions:bell'],
   onRemote: ['on', 'remote:changed'],

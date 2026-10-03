@@ -434,6 +434,13 @@ export interface ReclaimPane {
    */
   pinned?: boolean
   /**
+   * The finished chat expects its person (`Session.waitsForYou`): a question, unfinished
+   * work, agent steps, subagents out, a handoff with open steps, panes it opened. Robert,
+   * 2026-10-03: it stays open until he acts. Refused by every CLOSE path here (`onTheClock`,
+   * `reclaimPlan`), never by the sleep clock: a sleeping card stays on screen.
+   */
+  waitsForYou?: boolean
+  /**
    * The pane is ASLEEP: its agent has already been given back and the card is what
    * somebody is keeping (`shared/sleep.ts`).
    *
@@ -619,6 +626,7 @@ export function reclaimPlan(
         !p.backJob &&
         !p.serving &&
         !p.pinned &&
+        !p.waitsForYou &&
         !p.asleep &&
         CLOSEABLE.has(p.state)
     )
@@ -861,6 +869,9 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // and a turn nobody looked at is not taken off the desk for going quiet. See
     // `bornAsleep`.
     !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere) &&
+    // A chat that expects its person is never closed by a clock. Here, not in `keepable`,
+    // which the sleep clock shares: sleeping it under pressure is still allowed.
+    !p.waitsForYou &&
     // A pane BORN asleep is off this clock altogether. It holds no process, so closing it
     // frees nothing, and its quiet clock started at the relaunch: 2026-09-30 s7/s8 (04:55)
     // and s6/s8 (11:30) were live chats before the restart and closed ten minutes after it.

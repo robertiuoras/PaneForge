@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url'
 const { openNextSteps, actionableNextSteps, personOwnedSteps, stepsWord } = await import(
   '../src/shared/handoffSteps.ts'
 )
-const { handoffCandidates, handoffOpenAfter } = await import('../src/shared/handoffSteps.ts')
+const { handoffCandidates, handoffOpenAfter, handoffIsPanes, notForNow } = await import('../src/shared/handoffSteps.ts')
 const noSymlinks = () => false
 
 let pass = 0
@@ -152,7 +152,77 @@ t('a handoff older than the last prompt no longer counts as open', () => {
   assert.strictEqual(handoffOpenAfter({ ...hand, mtimeMs: s78.lastKeyboard + 60_000 }, s78.lastKeyboard), 1, 'a handoff written after the prompt counts')
   assert.strictEqual(handoffOpenAfter({ path: null, open: 0, mtimeMs: 0 }, s78.lastKeyboard), undefined, 'no handoff: nothing')
   const sessions = readFileSync(join(process.cwd(), 'src/main/sessions.ts'), 'utf8')
-  assert.match(sessions, /const open = handoffOpenAfter\(hand, live\.promptAt\)/, 'the sweep uses it')
+  assert.match(sessions, /const open = handoffOpenAfter\(hand, live\.promptAt, \{ id: meta\.id, since: Math\.max\(meta\.openedAt \?\? meta\.createdAt, live\.clearedAt \?\? 0\) \}\)/, 'the sweep uses it, with the pane floor')
+})
+
+// ---------------------------------------------------------------------------
+// Round 2 of the stuck chats, 2026-10-03 (UTC times, the PC's real files).
+
+t('a Next steps section that OPENS with None is closed, whatever is listed under it', () => {
+  // PC s15-muqrpdgh's own handoff, 22:03Z: "None." and then four bullets of FINISHED work.
+  const s15 = withSteps('None. All closed 8:03am Sat 2026-10-03 (session e0e365d4):\n- a328a8d0788e461d7 was interrupted mid-run (no report); af00b6536e995db3b replaced it, and 655bbc3 handles all 6 of its findings.\n- PC Next is running 655bbc3 (/api/state updates.revision, /api/debug version, update-restart.log). Nothing owed after the restart.\n- autoclear + autoclear-box 42/42. owed-prompts/idle-close/pf-compat/completion-close are green.\n- The recheck paneforge-next-on-the-pc-runs-323b is still registered (7:56am Sun, 7:56am Sat 10 Oct); handle its card only if it fails.')
+  assert.deepStrictEqual(openNextSteps(s15), [], 'four finished bullets are no open steps')
+  assert.deepStrictEqual(actionableNextSteps(s15), [])
+  for (const head of ['None', '- None.', 'Nothing left.', 'None - all closed', 'No open steps.', '**None.** Shipped.'])
+    assert.deepStrictEqual(openNextSteps(withSteps(`${head}\n- Run the suite.`)), [], head)
+  // "None for agents" is not the section saying it is closed: what follows is still read.
+  assert.deepStrictEqual(personOwnedSteps(withSteps('- None for agents.\n- Robert: approve the Vercel build')), ['Robert: approve the Vercel build'])
+  assert.deepStrictEqual(openNextSteps(withSteps('1. Run the suite.\n2. None after that.')), ['Run the suite.'], 'only the FIRST line closes the section')
+})
+
+t('a step that runs by itself, is another chat\'s, or is dated for later is not work for now', () => {
+  const real = [
+    // Mac s15-murh3a5m
+    'Chat 6 reports when the new GuardDeck is installed and the 5-second test passes.',
+    // PC s25-murguhxd
+    "The Mac's sync pulls the fix by itself. The check booked for 7:50am Sun will confirm the Mac has it and that its tests pass.",
+    // PC s26-muriaoad
+    'On or after 5 Oct 2026, run the two checks: whether re-reported fixes are below the baseline of 10.5 per 100 fix claims, and how often agents reopen a trimmed result. Both are carried in the updated handoff file.'
+  ]
+  for (const step of real) {
+    assert.strictEqual(notForNow(step), true, step)
+    assert.deepStrictEqual(actionableNextSteps(withSteps(`- ${step}`)), [], step)
+  }
+  for (const step of ['Pane 4 will merge it.', 'Hold until then, waiting on chat 3 for the sha.', 'The PC recheck runs at 7:50am Sun.', 'Tomorrow, rerun the suite.', 'Rerun the PC check tomorrow.', 'After 5 Oct, delete the old logs.', 'Recheck it at 9am Mon.'])
+    assert.strictEqual(notForNow(step), true, step)
+  // Real agent work keeps holding. PC s22-murfd10o's three steps, then the plain ones.
+  const work = [
+    'Fix the Background workers panel, with a test for each change and a check of the page in light and dark themes.',
+    'Make the four review changes and commit them with the settings text change.',
+    'Run the full check again, merge into master, then send the report to the assistant chat and write the `.DONE.md` copy.',
+    'Run the tests.', 'Fix X.', 'Commit and push.', 'Rerun checks and merge.',
+    'Make the PC job run automatically.', 'Wire the hook so the clear happens by itself.',
+    'Fix the regression introduced after 5 Oct.', 'Tell chat 6 the sha.',
+    'The Mac pulls it by itself. Then rerun the suite on the PC.',
+    'The tests need fixing before the merge.'
+  ]
+  for (const step of work) assert.strictEqual(notForNow(step), false, step)
+  assert.strictEqual(actionableNextSteps(withSteps(work.slice(0, 3).map((x, i) => `${i + 1}. ${x}`).join('\n'))).length, 3, 's22 still has 3 steps')
+})
+
+t('another chat\'s handoff, or one older than the pane, never holds it; its own always does', () => {
+  const at = (iso) => Date.parse(iso)
+  const dir = 'C:/Users/Gamer/.claude/projects/C--Users-Gamer-Desktop-Projects-paneforge-next/memory'
+  // PC s23-murfiff5: born 20:42Z, cleared 21:20:19Z; the project's unscoped handoff was another chat's, 21:01Z.
+  const other = { path: `${dir}/session-handoff.md`, open: 4, mtimeMs: at('2026-10-02T21:01:26Z') }
+  const s23 = { id: 's23-murfiff5', since: at('2026-10-02T21:20:19Z') }
+  assert.strictEqual(handoffOpenAfter(other, undefined), 4, 'before: no prompt read, held for good')
+  assert.strictEqual(handoffOpenAfter(other, undefined, s23), undefined, 'older than its last clear: not its handoff')
+  assert.strictEqual(handoffOpenAfter({ ...other, mtimeMs: at('2026-10-02T21:30:00Z') }, undefined, s23), 4, 'written after its clear: it may be the pane\'s word')
+  // PC s27-murjmmk3: born 22:37Z on 2 Oct; the taskdriver-ai handoff is from 28 Sep.
+  const td = { path: 'C:/Users/Gamer/.claude/projects/C--Users-Gamer-Desktop-Projects-taskdriver-ai/memory/session-handoff.md', open: 3, mtimeMs: at('2026-09-28T20:45:15Z') }
+  assert.strictEqual(handoffOpenAfter(td, undefined, { id: 's27-murjmmk3', since: at('2026-10-02T22:37:15Z') }), undefined, 'older than the pane')
+  // Its own file holds whatever its age; so does one whose metadata names it.
+  const mine = { path: `${dir}/session-handoff.pane-s23-murfiff5.md`, open: 2, mtimeMs: at('2026-10-02T20:50:00Z') }
+  assert.strictEqual(handoffIsPanes(mine, 's23-murfiff5'), true)
+  assert.strictEqual(handoffIsPanes({ path: mine.path.replace(/\//g, '\\'), meta: undefined }, 's23-murfiff5'), true, 'Windows separators')
+  assert.strictEqual(handoffOpenAfter(mine, undefined, s23), 2)
+  assert.strictEqual(handoffOpenAfter({ ...other, meta: { paneId: 's23-murfiff5' } }, undefined, s23), 4, 'named in its metadata')
+  assert.strictEqual(handoffIsPanes(other, 's23-murfiff5'), false)
+  // ...and the sweep reads the pane's own file before a newer one another chat wrote (PC s25-murguhxd, 23:09Z).
+  const sessions = readFileSync(join(process.cwd(), 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /const mine = handoffIsPanes\(found, meta\.id\) \? found : ownHandoffFor\(meta\.cwd, meta\.id\)/)
+  assert.match(sessions, /if \(nativeId && live\.nativeSeen && nativeId !== live\.nativeSeen\) live\.clearedAt = now/, 'a new conversation id is a clear')
 })
 
 // ---------------------------------------------------------------------------

@@ -698,6 +698,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'sessions:composer',
     'sessions:contextUsage', 'sessions:continuationStatus',
     'autoclear:cancel', 'autoclear:takeover',
+    // Reviewed 2026-10-03. GuardDeck's Stop on a finished chat's countdown: the card's own
+    // Keep open, by id. It stands a close down or lifts a pin; it types nothing, starts
+    // nothing and reaches no pty - the same class as `remote:keepOpen` below.
+    'sessions:keepOpen',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
     // Exact client visibility only: no folder, transcript, process or authority changes.

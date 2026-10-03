@@ -118,8 +118,10 @@ export const COMMANDS = [
     usage: 'pf close <pane>',
     example: 'pf close 3',
     detail: [
-      'It does not ask first: a working pane is stopped mid-turn. Look at its state in `pf list` before closing.',
-      'Numbers shift after a close; close several panes by id, or from the highest number down.'
+      'It does not ask first: closed by id, a working pane is stopped mid-turn. Look at its state in `pf list` before closing.',
+      'Numbers shift when a pane opens, arrives or closes; close several panes by id, or from the highest number down.',
+      'By number it refuses a pane that is working or came onto the desk in the last 2 minutes, since the number',
+      '  may have moved onto it since you read it. It prints the pane\'s id; close it by that id if it is the one.'
     ]
   },
   {
@@ -358,6 +360,26 @@ export function cardNumber(list, id) {
 /** The pane whose card shows `n`, or undefined. See `cardNumber`. */
 export function paneAt(list, n) {
   return list.find((p) => cardNumber(list, p.id) === n)
+}
+
+/**
+ * Why `pf close <number>` must not close `s`, the pane that number names right now, or null.
+ *
+ * A card number is the pane's place on the desk NOW. 2026-10-03 10:28am: chat 7's own test
+ * pane had closed itself into Review, a chat moved back from the PC landed as the new card 9,
+ * and chat 7's `pf close 9` closed that one mid-turn, 13 s after it arrived. So a number is
+ * refused on a pane that is working or arrived under 2 minutes ago - the two shapes of "not
+ * the pane you read". An id never moves, so `pf close <id>` still closes anything.
+ */
+export function numberCloseRefusal(ref, s, now) {
+  if (!/^\d+$/.test(ref) || ref === s.id) return null
+  const age = now - s.createdAt
+  const what =
+    s.status === 'working' ? 'is working right now'
+    : age < 120_000 ? `came onto the desk ${Math.floor(age / 1000)} s ago`
+    : null
+  if (!what) return null
+  return `card ${ref} is "${s.title}" (${s.id}), which ${what} - card numbers move when a chat opens, arrives or closes, so it may not be the pane you read as ${ref}. If it is the one, close it by id: pf close ${s.id}`
 }
 
 /**
