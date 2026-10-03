@@ -84,6 +84,7 @@
     "test:renametrigger": "node scripts/rename-trigger-test.mjs",
     "test:clititle": "node scripts/cli-title-test.mjs",
     "test:pfrename": "node scripts/pf-rename-test.mjs",
+    "test:pfclose": "node scripts/pf-close-test.mjs",
     "test:peerchrome": "node scripts/peer-chrome-test.mjs",
     "test:projectname": "node scripts/project-name-test.mjs",
     "test:historysearch": "node scripts/history-search-test.mjs",

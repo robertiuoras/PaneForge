@@ -148,12 +148,16 @@ function page() {
 }
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-sticky-profile-'))
-const cdpPort = 9448
+// Port 0: Chrome picks a free port and prints it. A fixed port (9448 until 2026-10-03) is
+// one port for every run on the machine, and the PC runs several suites at once - lane a's
+// two runs that morning both went red here with "Chrome never opened its debugging port"
+// while other jobs ran the same suite, and a killed Windows Chrome holds its port for the
+// 34-58s it takes to leave (close-test-chrome.mjs).
 const chrome = spawn(
   CHROME,
   [
     '--headless=new',
-    `--remote-debugging-port=${cdpPort}`,
+    '--remote-debugging-port=0',
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -161,22 +165,24 @@ const chrome = spawn(
     '--window-size=900,700',
     'about:blank'
   ],
-  { stdio: 'ignore' }
+  { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] }
 )
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function browserSocket() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const info = await (await fetch(`http://127.0.0.1:${cdpPort}/json/version`)).json()
-      if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl
-    } catch {
-      /* not up yet */
-    }
-    await sleep(200)
-  }
-  throw new Error('Chrome never opened its debugging port')
+// The address Chrome prints once its debugging port is open - its own port, nobody else's.
+function browserSocket() {
+  return new Promise((resolve, reject) => {
+    let said = ''
+    const timer = setTimeout(() => reject(new Error(`Chrome never opened its debugging port - it said: ${said.trim() || 'nothing'}`)), 12_000)
+    chrome.on('error', (error) => (clearTimeout(timer), reject(error)))
+    chrome.on('exit', (code) => (clearTimeout(timer), reject(new Error(`Chrome exited ${code} before opening its debugging port - it said: ${said.trim() || 'nothing'}`))))
+    chrome.stderr.on('data', (data) => {
+      said += data
+      const found = /DevTools listening on (ws:\/\/\S+)/.exec(said)
+      if (found) (clearTimeout(timer), resolve(found[1]))
+    })
+  })
 }
 
 function client(ws) {
