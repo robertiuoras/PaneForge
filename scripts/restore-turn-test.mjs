@@ -137,9 +137,10 @@ const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 ok('snapshot() writes when the pane really opened', /openedAt: s\.meta\.openedAt \?\? s\.meta\.createdAt/.test(sessions))
 ok('snapshot() writes the last turn length', /lastRunMs: s\.meta\.lastRunMs/.test(sessions))
 ok('snapshot() writes whether the pane was engaged', /engaged: s\.meta\.engaged/.test(sessions))
+ok('snapshot() writes the mid-turn reading', /wasWorking: this\.midTurn\(s\)/.test(sessions))
 ok(
-  'snapshot() reconciles the native turn and falls back to the clock or a pending background task',
-  /wasWorking:[\s\S]*?rolloutTurn\(codexTranscriptPath[\s\S]*?\.inProgress[\s\S]*?\?\? \(Boolean\(s\.meta\.runSince\) \|\| this\.hasPendingBackground\(s\)\)/.test(sessions)
+  'that reading reconciles the native turn and falls back to the clock or a pending background task',
+  /private midTurn\(s: Live\): boolean \{[\s\S]*?rolloutTurn\(codexTranscriptPath[\s\S]*?\.inProgress[\s\S]*?\?\? \(Boolean\(s\.meta\.runSince\) \|\| this\.hasPendingBackground\(s\)\)/.test(sessions)
 )
 ok('start() takes its clock from restoredClock', /restoredClock\(req, Date\.now\(\)\)/.test(sessions))
 ok('start() uses that openedAt', /openedAt: clock\.openedAt/.test(sessions))

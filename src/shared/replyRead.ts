@@ -15,6 +15,8 @@
 // pane closed on a running research graph and killed it (it was not counted). Closing a pane on that would kill the build
 // the agent is running (2026-09-19: a `/clear` did exactly that).
 
+import { isNotificationLine } from './runningAgents'
+
 /** One reply as the Review list wants it. */
 export interface ReplyRead {
   /** The last assistant message, text blocks joined. Empty when the tail holds none. */
@@ -140,8 +142,9 @@ export function readClaudeReply(jsonl: string): ReplyRead {
     }
     // The notification arrives as a queued command (`attachment` / `queue-operation` rows),
     // never inside a tool result - a tool result QUOTING one (a grep over this very code)
-    // must not count, or a pane would close on top of the agent it was waiting for.
-    if (line.includes('<task-notification>') && !line.includes('"tool_result"')) {
+    // must not count, or a pane would close on top of the agent it was waiting for. Nor does
+    // a tool CALL or the model's own prose quoting one (`isNotificationLine`, 2026-10-02).
+    if (isNotificationLine(line)) {
       for (const m of line.matchAll(/<tool-use-id>([^<]+)<\/tool-use-id>/g)) notified.add(m[1])
     }
     if (!/"type":"(assistant|user)"/.test(line)) continue

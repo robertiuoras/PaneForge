@@ -10,7 +10,7 @@
 
 import { build } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -70,6 +70,7 @@ export class Harness {
   sessions = new Map(); activeId = null; killed: unknown[] = []
   windowFocused = () => false; deskWatched = () => false
   openChildrenOf = () => 0; workingChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
+  backgroundTasks = (s: { bgTasks?: number }) => s.bgTasks ?? 0
   kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id); return true }
   replyFor = null; turnOpenFor = () => null
 ${method('doneReadings', 'turnRead')}
@@ -123,7 +124,13 @@ ${method('closeAfterResult', 'killAll')}
     records([]); h = fresh({ ask: { question: 'terminal question' } })
     assert.equal(verdict(h).close, false, 'terminal questions still hold')
     assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false)
+    // The real doneReadings carries the pane's outstanding background-task count to the verdict.
     records([]); h = fresh()
+    h.sessions.get('synthetic-pane').bgTasks = 1
+    assert.equal(h.doneReadings()[0].backgroundTasks, 1)
+    assert.equal(verdict(h).reason, '1 background task still running', 'a pane with its own task outstanding stays')
+    records([]); h = fresh()
+    assert.equal(h.doneReadings()[0].backgroundTasks, 0)
     assert.equal(verdict(h).close, true)
     writeFileSync(join(process.env.GD_QUESTIONS_DIR, 'new.json'), JSON.stringify(question()))
     assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false, 'a question arriving after the sweep reading prevents the kill')
@@ -1058,4 +1065,110 @@ ${sessions.slice(from, to + 4)}
   const history = readFileSync(join(root, 'src/main/history.ts'), 'utf8')
   assert.match(history, /if \(closedBecause\) entry\.closedBecause = closedBecause/)
   console.log('done-close: s105 - a turn still open in its transcript is never closed, and every close says why ok')
+}
+
+{
+  // s87-muqligjy, 2 Oct 5:11pm Gold Coast (07:11Z): closed "into Review" while its turn was
+  // waiting on a `run_in_background` bg-wait.mjs waiter it had started itself - the one thing
+  // that would have woken the chat. The process table calls bg-wait "only waiting"
+  // (`backWaitOnly`) and the reply read counted subagents only, so nothing held it.
+  //
+  // Rows 86/88 of the fixture are a real bg-wait.mjs launch + "running in background"
+  // result; 112/114/115 are that task's notification (queued, then delivered).
+  const rows = JSON.parse(readFileSync(join(root, 'scripts/fixtures/claude-background-shell-rows.json'), 'utf8'))
+  const text = (...ns) => ns.map((n) => rows[n]).join('\n') + '\n'
+  const LAUNCH = Date.parse('2026-10-01T07:53:20.253Z')
+
+  // The verdict: a chat with a task out is not finished, whatever the task's command is.
+  const waiter = finished({ backWaitOnly: true, backJob: 'bg-wait.mjs', backgroundTasks: 1 })
+  assert.deepEqual(doneVerdict(waiter, NOW), { close: false, reason: '1 background task still running' }, 'its own outstanding bg-wait waiter holds the pane')
+  assert.equal(doneVerdict({ ...waiter, backgroundTasks: 2 }, NOW).reason, '2 background tasks still running')
+  assert.equal(doneVerdict({ ...waiter, reply: undefined }, NOW).reason, '1 background task still running', 'held before the reply is even read')
+  // Robert, 2026-09-24: a waiter that is NOT the chat's outstanding task is still ignored.
+  assert.equal(doneVerdict({ ...waiter, backgroundTasks: 0 }, NOW).close, true, 'a leftover waiter (notification arrived) does not hold it')
+  assert.equal(doneVerdict({ ...waiter, backgroundTasks: undefined }, NOW).close, true, 'nothing in the transcript started it: closes')
+
+  // The reading: `backgroundTasksFor` over a real transcript, through the main-side reader.
+  const out = join(work, 'running-main.cjs')
+  await build({
+    absWorkingDir: root, entryPoints: ['src/main/runningAgents.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'silent',
+    plugins: [{ name: 'quiet-log', setup(b) {
+      b.onResolve({ filter: /\/activationLog$/ }, () => ({ path: 'quiet-log', namespace: 'fixture' }))
+      b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export function logHandoff() {}' }))
+    } }]
+  })
+  const { backgroundAgentsFor, backgroundTasksFor } = require(out)
+  const file = join(work, 'waiter.jsonl')
+  const since = LAUNCH - 60_000
+  writeFileSync(file, text(86, 88))
+  backgroundAgentsFor('w1', file, since, LAUNCH + 10_000)
+  assert.equal(backgroundTasksFor('w1', since, LAUNCH + 10_000), 1, 'launched, notification not arrived: one task out')
+  assert.equal(backgroundTasksFor('w1', LAUNCH + 5_000, LAUNCH + 10_000), 0, 'launched before this CLI started: it died with that process')
+  assert.equal(backgroundTasksFor('w1', since, LAUNCH + 4 * 60 * 60_000), 0, 'older than the age cap is not believed for ever')
+  appendFileSync(file, text(112, 114, 115))
+  backgroundAgentsFor('w1', file, since, LAUNCH + 20_000)
+  assert.equal(backgroundTasksFor('w1', since, LAUNCH + 20_000), 0, 'notification delivered: nothing out, the pane may close')
+  assert.equal(backgroundTasksFor('never-read', since), 0, 'no reading is never a hold')
+  rmSync(file)
+  backgroundAgentsFor('w1', file, since, LAUNCH + 30_000)
+  assert.equal(backgroundTasksFor('w1', since, LAUNCH + 30_000), 0, 'an unreadable transcript is never a hold')
+
+  // A row that merely MENTIONS `<task-notification>` is not a notification. Measured
+  // 2026-10-02 in claude-config/handoff-state.mjs `runningAgentsOf`: the Agent launch whose
+  // brief quoted the tag was skipped as if it were one, and a running agent read as 0.
+  // `scanAgentLines` had the same `continue` on any line containing the text.
+  {
+    const { newAgentScan, scanAgentLines, pendingBackground } = await bundle('src/shared/runningAgents.ts', 'running-shared.cjs')
+    const jrow = (o) => JSON.stringify(o)
+    const quote = '<task-notification>\n<task-id>t0</task-id>\n<tool-use-id>toolu_OTHER</tool-use-id>\n<status>completed</status>\n</task-notification>'
+    const launch = (id, name, input) => jrow({ type: 'assistant', timestamp: '2026-10-02T07:00:00.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+    const result = (id, content) => jrow({ type: 'user', timestamp: '2026-10-02T07:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } })
+    const pending = (...ls) => { const sc = newAgentScan(); scanAgentLines(sc, ls.join('\n') + '\n'); const p = pendingBackground(sc, {}); return [p.agents.length, p.shells.length] }
+    const agent = [
+      launch('toolu_AG', 'Agent', { description: 'fix it', prompt: `Fix X. A notification looks like:\n${quote}` }),
+      result('toolu_AG', [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1b2c3 (internal)' }])
+    ]
+    assert.deepEqual(pending(...agent), [1, 0], 'an Agent launch whose brief quotes the tag is still a running agent')
+    const shell = [
+      launch('toolu_SH', 'Bash', { command: "grep -c '<task-notification>' t.jsonl; node bg-wait.mjs --probe x", run_in_background: true, description: 'wait' }),
+      result('toolu_SH', 'Command running in background with ID: bxyz. Output is being written to: /tmp/bxyz.output')
+    ]
+    assert.deepEqual(pending(...shell), [0, 1], 'a background Bash whose command contains the tag is still a pending task')
+    const mention = (id) => [
+      launch('toolu_G', 'Bash', { command: `echo '${quote.replace('toolu_OTHER', id)}'` }),
+      result('toolu_G', quote.replace('toolu_OTHER', id)),
+      jrow({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: quote.replace('toolu_OTHER', id) }] } })
+    ]
+    assert.deepEqual(pending(...agent, ...shell, ...mention('toolu_AG'), ...mention('toolu_SH')), [1, 1], 'a tool call, a tool result or prose quoting a notification never ends the task it names')
+    const real = (id) => jrow({ type: 'user', timestamp: '2026-10-02T07:10:00.000Z', message: { role: 'user', content: quote.replace('toolu_OTHER', id) } })
+    assert.deepEqual(pending(...agent, ...shell, real('toolu_AG'), real('toolu_SH')), [0, 0], 'the real notification (a user row with string content) still ends them')
+    const queued = jrow({ type: 'queue-operation', operation: 'enqueue', timestamp: '2026-10-02T07:10:00.000Z', content: quote.replace('toolu_OTHER', 'toolu_SH') })
+    assert.deepEqual(pending(...shell, queued), [0, 1], 'a queued-only notification still counts as pending')
+  }
+
+  // The sweep: the count rides on the pane's reading and the log says why it stayed.
+  const transcript = join(work, 'waiter-reply.jsonl')
+  writeFileSync(transcript, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Waiting on autosync (background waiter running).\n\n## Next steps\n- None' }] } }))
+  const lines = []
+  const shut = []
+  const sweep = (over) => main.sweepDoneClose({
+    enabled: () => true,
+    readings: () => [{ id: 'bg1', ...finished({ reply: undefined, runningAgents: undefined, backWaitOnly: true, backJob: 'bg-wait.mjs', ...over }) }],
+    transcriptFor: () => transcript, resumeIdFor: () => 'native-bg', history: () => [],
+    titleOf: () => ({ title: 'waiter', cwd: '/Users/r/Projects/claude-memory', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, markRead: () => {},
+    close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+    log: (l) => lines.push(l), now: () => NOW, quietMs: () => 0
+  })
+  assert.deepEqual(sweep({ backgroundTasks: 1 }), [], 'the sweep leaves a chat with its own waiter outstanding open')
+  assert.deepEqual(shut, [])
+  assert.ok(lines.includes('bg1 stays - 1 background task still running'), JSON.stringify(lines))
+  assert.deepEqual(sweep({ backgroundTasks: 0 }), ['bg1'], 'the same chat closes once its notification has arrived')
+
+  // The wiring: the real `doneReadings` method carries the count, and the verdict reads it.
+  const source = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(source, /backgroundTasks: this\.backgroundTasks\(live\)/, 'doneReadings hands the sweep the count')
+  assert.match(source, /backgroundTasksFor\(s\.meta\.id, procBorn\.get\(s\.proc\)\)/, 'counted from the cached transcript reading, since this CLI started')
+  console.log('done-close: a chat with its own background task outstanding stays open (s87) ok')
 }
