@@ -2321,6 +2321,13 @@ const samePath = (p) => {
   return t.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 const inside = (at, dir) => Boolean(dir) && (at === dir || at.startsWith(dir + '/'))
+/**
+ * A path as the file system matches it: case folded where case is ignored (macOS, Windows).
+ * A chat's paths keep the case it typed (`paneforge-a`) while lane dirs are built from the
+ * repo's on-disk name (`PaneForge-a`); compared raw, a write through the other spelling
+ * matched no lane and the guard let it through (2026-10-04).
+ */
+const foldCase = (p) => (process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p)
 
 /**
  * The lanes some OTHER chat is physically standing in, whichever lane that chat was given.
@@ -2567,8 +2574,23 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // the whole history there and would never hand out `main`.)
     return work.dirty || (id !== 'main' && work.ahead > 0 && !state.ready[id])
   }))
+  // A lane kept for a recovery item whose checkout is not whole (folder missing, not a
+  // worktree, index emptied) is the recovery's to diagnose: `preservedCheckout` refuses to
+  // hand it out, so the pool must not pick it - picked, the throw failed the WHOLE claim and
+  // a new chat got no checkout at all (2026-10-04: lane c, item `blocked`, folder gone; the
+  // pane's first prompt read "preserved recovery checkout needs backup ..."). Asked for by
+  // name, it still refuses with that sentence.
+  const kept = new Set(order.filter((id) => {
+    if (state.lanes[id] || !preservedRecovery(state, id)) return false
+    try {
+      preservedCheckout(state, id)
+      return false
+    } catch {
+      return true
+    }
+  }))
   const spare = order.filter(
-    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id)
+    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id) && !kept.has(id)
   )
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
@@ -2696,7 +2718,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
       const spare = pick(
-        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id))
+        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id) && !kept.has(id))
       )
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
@@ -2718,6 +2740,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       held.join(', '),
       stuck.length && `conflicted: ${stuck.join(', ')}`,
       unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`,
+      kept.size && `kept for recovery: ${[...kept].join(', ')} (its folder needs checking before anyone works in it)`,
       damaged.size &&
         `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`
     ].filter(Boolean).join('; ')
@@ -2787,7 +2810,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
 function guard(session, path) {
   if (!session || !path) return null
   const target = resolve(path)
-  const inside = (dir) => target === dir || target.startsWith(dir + sep)
+  const key = foldCase(target)
+  const inside = (dir) => key === foldCase(dir) || key.startsWith(foldCase(dir) + sep)
 
   const owned = POOL.map((id) => ({ id, dir: laneDir(id) })).filter((l) => inside(l.dir))
   if (!owned.length) return null
@@ -2945,12 +2969,15 @@ function remoteLaneHunks(rel, cache, t) {
 function overlap(session, path) {
   if (!session || !path) return null
   const target = resolve(path)
-  const inside = (dir) => target === dir || target.startsWith(dir + sep)
+  const folded = foldCase(target)
+  const inside = (dir) => folded === foldCase(dir) || folded.startsWith(foldCase(dir) + sep)
   const mine = POOL.map((id) => ({ id, dir: laneDir(id) }))
     .filter((l) => inside(l.dir))
     .sort((x, y) => y.dir.length - x.dir.length)[0]
   if (!mine) return null
-  const rel = relative(mine.dir, target)
+  // Same length either spelling, so the part below the lane folder is cut, not `relative`d
+  // (which compares case and would answer `../../paneforge-a/...`).
+  const rel = target.slice(mine.dir.length + 1)
   if (!rel || rel.startsWith('..')) return null
 
   const cachePath = join(dirname(STATE), 'paneforge-overlap.json')
@@ -4648,8 +4675,12 @@ function ready(session, wanted) {
  * chat's. Measured 2026-09-09: 26 of 41 holds on this machine were asleep and owned by
  * chats no window had, immune to every sweep for ASLEEP_MAX_MS - the strip read
  * `Other copies (21)` for three days over checkouts nobody was in.
+ *
+ * `cleared` is the chat's own SessionEnd for `/clear` (lane-hook passes it for reason
+ * "clear"): the same pane goes on with a new session id, so its unfinished lane is kept for
+ * that next chat to carry (claim) instead of being given up - see below.
  */
-function releaseClaim(session, { gone = false } = {}) {
+function releaseClaim(session, { gone = false, cleared = false } = {}) {
   const state = reap(read())
   // The chat is going. Whatever this device told the other one on its behalf stops being
   // true now rather than in PEER_STALE_MS - otherwise the desk that ends its day first
@@ -4682,6 +4713,19 @@ function releaseClaim(session, { gone = false } = {}) {
       // carries both (claim, carryRecovery). A pane nobody types in again is swept by the
       // app's `--gone` release, or STALE_MS. Its test copy still closes with the chat.
       if (c.ended && c.pane && !gone && Object.values(state.recovery?.items ?? {}).some((r) => r.owner === session && carryableRecovery(r, id))) {
+        closeLaneApps(laneDir(id))
+        continue
+      }
+      // Any chat's /clear, recovery item or not (2026-10-04, PaneForge on the Mac): the pane
+      // held lane a with a pushed commit and six uncommitted files, this release beat the
+      // pane's next prompt and deleted the hold, and the new chat - nothing left to carry -
+      // was sent to lane b while lane a sat unheld and dirty, every write to it refused.
+      // Unfinished is uncommitted work, or commits not yet marked ready (`main`: uncommitted
+      // only - its commits are not a lane's to finish). An empty or ready lane, a hold no
+      // pane wore, and a pane the app says is gone are given up exactly as before; claim
+      // carries a kept hold only to the SAME pane, so nobody else can take it.
+      if (cleared && c.pane && !gone && (w.dirty || (id !== 'main' && w.ahead > 0 && !state.ready[id]))) {
+        c.ended ??= now()
         closeLaneApps(laneDir(id))
         continue
       }
@@ -6679,8 +6723,9 @@ try {
     }
   } else if (cmd === 'release') {
     // `--gone` is passed only by the app's reclaim sweep (src/main/laneBoard.ts), which has
-    // asked every running copy and found no pane hosting this chat.
-    const r = releaseClaim(session, { gone: argv.includes('--gone') })
+    // asked every running copy and found no pane hosting this chat. `--cleared` only by
+    // lane-hook's SessionEnd for /clear.
+    const r = releaseClaim(session, { gone: argv.includes('--gone'), cleared: argv.includes('--cleared') })
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
     // The chat let go of its folder: the moment a finished copy becomes removable.
