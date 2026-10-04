@@ -389,6 +389,7 @@ const TESTS = [
   ['tailnettrust', 'tailnet-trust-test.mjs'],
   ['deskticket', 'desk-ticket-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
+  ['pushgate', 'lane-push-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
   ['lanemergeitself', 'lane-merge-itself-test.mjs'],
@@ -494,7 +495,7 @@ const LANE_ONLY = new Set([
   'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
   'lanedamaged', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
   'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice',
-  'lanestrand'
+  'lanestrand', 'pushgate'
 ])
 const PASSES = passesFile()
 const plan = planRun(run, {

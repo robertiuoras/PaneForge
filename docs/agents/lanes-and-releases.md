@@ -109,6 +109,14 @@ stop. `npm run typecheck`/`npm test` gate a commit. `node scripts/lane.mjs ready
 another chat's release is not yours; yesterday's word is not today's (`test:unreleased`).
 Never cut one while a next step is open.
 
+**A push of master needs a passing suite on the exact tree it pushes** (`test:pushgate`).
+`installPushGate` writes a git pre-push hook that runs `lane.mjs prepush`, which asks
+`treeVerdict` (the ledger's suite records, matched by tree) about every `refs/heads/master`
+push; other refs are never gated. `ship()` run by `autoship` re-tests the merged tree with
+`pushedTreeFailure` before pushing and resets to the pre-merge commit when it is red. A hand
+`ship` and a version release record `pushOk` for their tree and go through. `--no-verify` is
+a deliberate bypass.
+
 **Dev-window tour** (`shared/tour.ts`, `TourCard.tsx`, `shared/lookCheck.ts`; `test:tour`,
 `test:look`): each `feat:`/`fix:`/`perf:` commit since the installed build touching `src/`,
 deduped by subject, is a step. Card = NAME in screen words (SCOPE via `SCOPE_PLACES`, then
