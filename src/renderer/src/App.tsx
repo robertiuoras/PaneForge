@@ -166,6 +166,7 @@ import {
 import { fleetState, type FleetState } from '../../shared/fleet'
 import { canSleep, sleepRefusal } from '../../shared/sleep'
 import { asleepChip } from '../../shared/sleepWords'
+import { clockDay } from '../../shared/tell'
 import type { SleepReason } from '../../shared/types'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
@@ -312,6 +313,38 @@ function ExitedChip({ s }: { s: { exitCode?: number; startFailed?: boolean } }):
   ) : (
     <span className="chip dead">exited {s.exitCode ?? ''}</span>
   )
+}
+
+/**
+ * The tag a card wears while its chat is owed a prompt, or holds one that never went in.
+ *
+ * Copies two chips already on the card rather than inventing one: a prompt left in the
+ * input box is `.chip.stalled`'s amber hairline (look at this - nothing will send it), and
+ * a prompt PaneForge is still holding is `.chip.asleep`'s quiet hairline (nothing is wrong,
+ * the app types it in when the chat is ready). Hairline outline, no fill, no shadow: the
+ * `design-vault/linear.app.md` rule the card's other chips follow. Without it a Codex chat
+ * whose prompt never went in read as working for an hour (s40-mus3teu4, 2026-10-03).
+ */
+function PromptChip({ owed, unsent }: { owed?: boolean; unsent?: number }): React.ReactElement | null {
+  if (unsent)
+    return (
+      <span
+        className="chip unsent"
+        title={`A prompt was typed into this chat's input box at ${clockDay(unsent)} and the agent never took it. It is still in the box: open the chat and press Enter to send it.`}
+      >
+        prompt not sent
+      </span>
+    )
+  if (owed)
+    return (
+      <span
+        className="chip owed"
+        title="PaneForge is holding a prompt for this chat and types it in as soon as the chat is ready for it."
+      >
+        prompt waiting
+      </span>
+    )
+  return null
 }
 
 /**
@@ -5308,6 +5341,7 @@ export default function App(): JSX.Element {
               {/* That desk's own number, forwarded. No press: this window does not own the
                   pty and cannot call the close off. */}
               {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
+              <PromptChip owed={pane.owedPrompt} unsent={pane.promptUnsent} />
             </span>
             {/* The label its own machine gave it ("Mac 3"). No Ctrl key: that is this desk's panes'. */}
             {row.label && (
@@ -5615,6 +5649,7 @@ export default function App(): JSX.Element {
                       ) : s.status === 'exited' ? (
                         <ExitedChip s={s} />
                       ) : null}
+                      <PromptChip owed={s.owedPrompt} unsent={s.promptUnsent} />
                       {/* What the pane is still RUNNING with its turn over. This is the one
                           card state Robert reported as a lie: an agent that started work in
                           the background goes quiet, the clock stops, and the card reads

@@ -387,6 +387,14 @@ export interface Session {
    * autoclear timing.
    */
   owedPrompt?: boolean
+  /**
+   * When a typed prompt was given up on with no sign the agent took it (Codex wrote no
+   * rollout line for it after every Enter retry), in ms. The text is still in the agent's
+   * input box. Shown on the card, in `pf list` and as a GuardDeck card, because the pane
+   * otherwise reads as working (s40-mus3teu4, 2026-10-03). Cleared when the person types
+   * into the pane or a later prompt is confirmed sent.
+   */
+  promptUnsent?: number
   autoClearPrompt?: string
   /**
    * The exact keystrokes the countdown will send, frozen when it was armed.
@@ -1666,6 +1674,10 @@ export interface RemotePaneInfo {
   number?: number
   /** which kind of machine that device is, from its handshake */
   machine?: 'mac' | 'pc'
+  /** that desk holds a prompt for it, not yet typed in - see `Session.owedPrompt` */
+  owedPrompt?: boolean
+  /** a prompt typed into it never went in and still sits in its input box - see `Session.promptUnsent` */
+  promptUnsent?: number
 }
 
 /** Live state of one paired device. */
@@ -2746,9 +2758,10 @@ export interface Api {
   /**
    * What is typed into a pane and not sent. `from` says which reading answered: `screen`
    * is the terminal buffer itself, `keystrokes` the reconstruction main keeps for a pane
-   * whose window could not be asked - see `sessions:draft` in `main/index.ts`.
+   * whose window could not be asked - see `sessions:draft` in `main/index.ts`. A pane on
+   * another computer is read there; `unavailable` says why that computer could not be asked.
    */
-  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | null>
+  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | { unavailable: string } | null>
   /**
    * Open pull requests and unfinished local work, for the repositories behind the
    * folders given. Read on demand: this is a dialog's question, never a poll.
@@ -2903,6 +2916,8 @@ export interface Api {
   updateState(): Promise<UpdateState>
   /** Hand one line to a pane, queued for the gap between its own turns. */
   tellPane(ref: string, text: string): void
+  /** `pf tell`: the same, answered with what happened (`shared/tell.ts`) and the line pf prints. */
+  tellPaneReceipt(ref: string, text: string): Promise<import('./tell').TellOutcome & { line: string }>
   answerPane(req: import('./paneAnswer').PaneAnswerRequest): Promise<import('./paneAnswer').PaneAnswerReceipt>
   answerStatus(req: import('./paneAnswer').PaneAnswerIdentity): Promise<import('./paneAnswer').PaneAnswerReceipt | null>
   /**

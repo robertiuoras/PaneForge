@@ -37,6 +37,8 @@ import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
 import type { ReviewRecord } from '../../shared/reviews'
+import type { TellOutcome } from '../../shared/tell'
+import type { PaneDraft } from './client'
 import { machineOf } from '../../shared/paneLabel'
 
 export { joinId, splitId }
@@ -90,7 +92,7 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, screenView: true, person: this.person }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, tellReceipt: true, draftRead: true, screenView: true, person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
@@ -238,6 +240,16 @@ export class Remote extends EventEmitter {
     return true
   }
 
+  /**
+   * After `closeOn`: true once the owner's own list has dropped the pane, false when it has
+   * not within CLOSE_ACK_MS - the same wait after which this desk shows the row again.
+   */
+  closedOn(id: string): Promise<boolean> {
+    const cut = splitId(id)
+    const client = cut ? this.clients.get(cut.peer) : undefined
+    return cut && client ? client.gone(cut.local, CLOSE_ACK_MS) : Promise.resolve(false)
+  }
+
   /** Arm a mirrored pane on the machine that owns its pty. */
   armCloseWhenDone(id: string): boolean {
     const cut = splitId(id)
@@ -347,6 +359,31 @@ export class Remote extends EventEmitter {
     const cut = splitId(id)
     if (!cut) return false
     return this.clients.get(cut.peer)?.sendPrompt(cut.local, text) === true
+  }
+
+  /**
+   * `pf tell` to a pane on another computer: the owner types it and answers with what
+   * happened (`shared/tell.ts`). An id whose computer this desk has no link to is missing.
+   */
+  tellPane(id: string, text: string): Promise<TellOutcome> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.resolve<TellOutcome>({ kind: 'missing', ref: id })
+    return client.tellPane(cut.local, text)
+  }
+
+  /** Every pane `device` lists, mirrored or not, or null while it is not connected. */
+  panesOn(device: string): Session[] | null {
+    const client = this.clients.get(device)
+    return client && client.status === 'online' ? client.panes() : null
+  }
+
+  /** `pf composer` on a pane another computer runs: that computer reads its own input box. */
+  draftOn(id: string): Promise<PaneDraft | null> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.resolve({ unavailable: 'that chat is on another computer, and this one is not connected to it' })
+    return client.draftOf(cut.local)
   }
 
   /** Start a pane on another device - the "new session over there" path. */
@@ -544,7 +581,12 @@ export class Remote extends EventEmitter {
             keepOpen: s.keepOpen,
             // The owner's card number and machine, so a listed row reads "Mac 3" here too.
             number: s.number,
-            machine
+            machine,
+            // A prompt that desk still owes the pane, or one that never left its input box:
+            // the listed row's tag and `pf list` say so here too (a mirrored row already has
+            // them, the whole Session rides the mirror).
+            owedPrompt: s.owedPrompt,
+            promptUnsent: s.promptUnsent
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,

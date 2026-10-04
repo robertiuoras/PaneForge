@@ -167,6 +167,9 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // `pf tell`'s answered form: the same line into a pane as the `pane:tell` send above,
+  // waiting for the receipt - typing either way, so the same passkey touch.
+  'pane:tell',
   // Steering an active Codex turn types into its pty, just like pane:tell.
   'pane:answer',
   // A report can close a pane or ask the desktop to open local evidence.

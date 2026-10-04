@@ -36,6 +36,7 @@ import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
 import { machineOf } from '../../shared/paneLabel'
 import type { ReviewRecord } from '../../shared/reviews'
+import { TELL_WAIT_MS, type TellOutcome } from '../../shared/tell'
 
 /** Same cap the local session manager keeps, for the same reason. */
 const BUFFER_LIMIT = 400_000
@@ -76,6 +77,49 @@ export function splitId(id: string): { peer: string; local: string } | null {
 
 export function joinId(peer: string, local: string): string {
   return `@${peer}/${local}`
+}
+
+/** What `pf tell` says about an owner that has no tell answer yet - wording fixed by the brief. */
+export const OLDER_TELL_REASON =
+  'the other computer runs an older PaneForge that sends no receipt; it types the prompt when that chat is ready'
+
+/**
+ * What `sessions:draft` answers for one pane: the text in its input box and where it was
+ * read (the drawn screen, or the keystrokes the app relayed), or why the computer that runs
+ * it could not be asked. Null (no such pane) is answered beside it.
+ */
+export type PaneDraft = { text: string; certain: boolean; from: 'screen' | 'keystrokes' } | { unavailable: string }
+
+/** What `pf composer` says about an owner from before `draftRead` - it is not asked. */
+export const olderDraftReason = (name: string): string =>
+  `${name} runs an older PaneForge that cannot say what is typed in its chats; update PaneForge there`
+
+/** An owner's draft answer, checked where it lands; anything else is said to be unreadable. */
+export function draftFrom(raw: unknown, name: string): PaneDraft | null {
+  if (raw === null) return null
+  const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  if (typeof d.text === 'string' && typeof d.certain === 'boolean' && (d.from === 'screen' || d.from === 'keystrokes'))
+    return { text: d.text, certain: d.certain, from: d.from }
+  return { unavailable: `${name} answered, but its answer could not be read` }
+}
+
+/**
+ * An owner's tell answer, checked where it lands and put back under the device's name.
+ * Anything this side cannot read is a failure that says so - never a delivery.
+ */
+export function outcomeFrom(raw: unknown, peer: string, id: string, title: string): TellOutcome {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const { kind, at, how, receipt, reason, busySince, title: said, id: local, ref } = o
+  const theirTitle = typeof said === 'string' ? said : title
+  const theirId = typeof local === 'string' && local ? joinId(peer, local) : id
+  const theirRef = typeof ref === 'string' && ref ? joinId(peer, ref) : id
+  if (kind === 'missing') return { kind: 'missing', ref: theirRef }
+  if (kind === 'delivered' && typeof at === 'number' && (how === 'typed' || how === 'steered') && typeof receipt === 'string')
+    return { kind: 'delivered', id: theirId, title: theirTitle, at, how, receipt }
+  if (kind === 'queued' && typeof reason === 'string')
+    return { kind: 'queued', id: theirId, title: theirTitle, ...(typeof busySince === 'number' ? { busySince } : {}), reason }
+  if (kind === 'failed' && typeof reason === 'string') return { kind: 'failed', id: theirId, title: theirTitle, reason }
+  return { kind: 'failed', id, title, reason: 'the other computer answered, but its answer could not be read, so whether the prompt was sent is not known' }
 }
 
 export class RemoteClient extends EventEmitter {
@@ -438,6 +482,76 @@ export class RemoteClient extends EventEmitter {
     })
   }
 
+  /**
+   * `pf tell` to one of that machine's panes, answered with what happened to the prompt.
+   *
+   * The owner runs its own `tellPane` and replies with the outcome, so the line printed here
+   * is the owner's knowledge, not a guess: s42-mus4a344 (2026-10-03) printed "told" for a
+   * prompt that never left this desk. An owner from before this answer exists gets the one
+   * `prompt` intent it understands, and the outcome says that no receipt is coming.
+   * Ids cross bare; the outcome comes back under `@<device>/`.
+   */
+  tellPane(localId: string, text: string): Promise<TellOutcome> {
+    const id = joinId(this.peer.id, localId)
+    const title = this.available.find((s) => s.id === localId)?.title ?? ''
+    if (!this.conn?.ready) return Promise.resolve<TellOutcome>({ kind: 'failed', id, title, reason: `${this.peer.name} is not connected right now` })
+    if (this.conn.peer.tellReceipt !== true) {
+      if (!this.sendPrompt(localId, text)) return Promise.resolve<TellOutcome>({ kind: 'failed', id, title, reason: `${this.peer.name} is not connected right now` })
+      return Promise.resolve<TellOutcome>({ kind: 'queued', id, title, reason: OLDER_TELL_REASON })
+    }
+    // The owner waits up to TELL_WAIT_MS for its own receipt; the extra 15 s is the link.
+    return this.ask<unknown>({ t: 'tell', ref: localId, id: localId, text }, TELL_WAIT_MS + 15_000).then(
+      (raw) => outcomeFrom(raw, this.peer.id, id, title),
+      (err: Error) => ({
+        kind: 'failed' as const,
+        id,
+        title,
+        // A timeout or a dropped link leaves the prompt's fate over there unknown, and
+        // "failed" must not read as "safe to send again".
+        reason: /did not answer|Connection lost/.test(err.message)
+          ? `${err.message} - the prompt may still be waiting there, so check that chat before sending it again`
+          : err.message
+      })
+    )
+  }
+
+  /**
+   * `pf composer` on one of that machine's panes, mirrored here or not: the owner reads its
+   * own input box (`sessions:draft` there) and answers. Before this, the app looked for an
+   * `@device/` id among this desk's own panes and `pf` said "is not running" (s54, 2026-10-03).
+   */
+  draftOf(localId: string): Promise<PaneDraft | null> {
+    if (!this.conn?.ready) return Promise.resolve({ unavailable: `${this.peer.name} is not connected right now` })
+    if (this.conn.peer.draftRead !== true) return Promise.resolve({ unavailable: olderDraftReason(this.peer.name) })
+    return this.ask<unknown>({ t: 'draft', id: localId }).then(
+      (raw) => draftFrom(raw, this.peer.name),
+      (err: Error) => ({ unavailable: err.message })
+    )
+  }
+
+  /** Checked on every pane list the owner sends; see `gone`. */
+  private listWaits = new Set<() => void>()
+
+  /**
+   * True once a pane list FROM the owner no longer has `localId`; false if `ms` passes first.
+   * Only the owner's own list counts: this desk hides a row it asked to close
+   * (`Remote.closeOn`), and a dropped link empties the list, so neither is proof it closed.
+   */
+  gone(localId: string, ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (!this.available.some((s) => s.id === localId)) finish(true)
+      }
+      const finish = (v: boolean): void => {
+        clearTimeout(timer)
+        this.listWaits.delete(check)
+        resolve(v)
+      }
+      const timer = setTimeout(() => finish(false), ms)
+      this.listWaits.add(check)
+    })
+  }
+
   /** Save Keep open on the machine that actually owns the pane. */
   setKeepOpen(localId: string, keep: boolean): Promise<boolean> {
     return this.ask<boolean>({ t: 'keep', id: localId, keep }, 10_000).catch((err: Error) => {
@@ -613,6 +727,7 @@ export class RemoteClient extends EventEmitter {
     switch (m.t) {
       case 'sessions': {
         this.available = (m.list as Session[]) ?? []
+        for (const check of [...this.listWaits]) check()
         // Only what was picked is attached. A pane nobody asked for is listed and left
         // alone: no scrollback fetched, no live output crossing the network for it.
         this.applyWatch()
@@ -705,6 +820,12 @@ export class RemoteClient extends EventEmitter {
       }
       case 'kept':
         this.settle(m, m.keep === true)
+        return
+      case 'told':
+        this.settle(m, m.outcome)
+        return
+      case 'drafted':
+        this.settle(m, m.draft)
         return
       case 'filesdone':
         this.settle(m, m.result)

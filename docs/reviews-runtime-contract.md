@@ -37,7 +37,7 @@ GuardDeck's next-prompt box writes the typed prompt to a file and runs, on the n
 pf continue <resumeId> --prompt-file /absolute/path/prompt.txt --json
 ```
 
-- A local pane holding that conversation is open: the prompt is queued for the gap between its turns (the `pf tell` path). A sleeping pane is woken first.
+- A local pane holding that conversation is open: the prompt goes the `pf tell` way - a Codex chat mid-answer takes it at once as more input for its running turn, any other chat gets it in the gap between its turns. A sleeping pane is woken first.
 - No pane holds it: the newest History row with that `resumeId` is reopened on this computer with `resume: true` and `resumeId` (the CLI's `--resume <id>`, so its earlier messages are back), and the prompt is then sent to that pane. A Claude conversation reopened in a copy of its folder has its transcript copied there and the pane restarted before the prompt goes.
 - Exit 0 prints `{"paneId": "...", "number": <card number>, "reopened": true|false}` on stdout.
 - Exit 1 prints one plain-words line on stderr and sends nothing: an id that is neither open nor in History (never a guess at the newest chat), a conversation open on the other computer, a pane whose agent has stopped, a conversation file that is gone (the pane the app opened for it is closed again), a missing/empty/over-64000-character prompt file, or a malformed id. Exit 2 means PaneForge is not answering on this computer.

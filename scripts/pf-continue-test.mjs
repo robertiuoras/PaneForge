@@ -7,6 +7,11 @@
 //   - reopened into a copy of the folder: the Claude transcript goes with it, pane restarted
 //   - conversation file gone (app opens it asleep): that pane is closed, nothing sent, exit 1
 //   - unknown id, a chat on the other computer, a bad id, an empty file: exit 1, nothing sent
+//   - the prompt goes through the answered `pane:tell` call; pf prints the app's own line and
+//     exits 1 when the app says the prompt was not sent
+// and `pf tell` / `pf type`, which share that answered call: delivered/queued exit 0,
+// failed/missing exit 1, an older app says it gives no receipt, a Codex pane is typed
+// through the receipt path, any other agent is typed raw and says nothing confirms it.
 //
 //   node scripts/pf-continue-test.mjs
 import { spawn } from 'node:child_process'
@@ -49,11 +54,11 @@ const server = createServer((req, res) => {
       return res.end('{}')
     }
     if (req.url === '/pf/send') {
-      for (const c of msg.calls) calls.push([c.channel, c.args])
+      for (const c of msg.calls) calls.push([c.channel, c.args, 'send'])
       res.writeHead(200)
       return res.end('{}')
     }
-    calls.push([msg.channel, msg.args])
+    calls.push([msg.channel, msg.args, 'call'])
     let value
     try {
       value = app(msg.channel, msg.args)
@@ -93,13 +98,20 @@ const history = [
   { id: 's12-done', title: 'Fix the footer', cwd: project, agent: 'claude', model: 'claude-opus-5-5', startedAt: 10, endedAt: 20, resumeId: CHAT },
   { id: 's13-other', title: 'Other chat', cwd: project, agent: 'claude', startedAt: 30, endedAt: 40, resumeId: 'aaaaaaaa-0000-0000-0000-000000000000' }
 ]
+// What the app answers `pane:tell` with: an outcome plus the line `tellLine` made of it. The
+// line is a marker here so a check can see pf printed the APP's words, not its own.
+const answer = (kind, id) =>
+  kind === 'missing' ? { kind, ref: id, line: `LINE missing ${id}` } : { kind, id, title: 'Fix the footer', reason: 'r', line: `LINE ${kind} ${id}` }
+let tellKind = 'queued'
 const scenario = (panes, extra = {}) => {
   calls = []
+  tellKind = 'queued'
   const desk = [...panes]
   app = (channel, args) => {
     if (extra[channel]) return extra[channel](args, desk)
     if (channel === 'sessions:list') return desk
     if (channel === 'history:list') return history
+    if (channel === 'pane:tell') return answer(tellKind, args[0])
     throw new Error(`unknown channel ${channel}`)
   }
   return desk
@@ -113,7 +125,8 @@ const scenario = (panes, extra = {}) => {
   ])
   const r = await pf(['continue', CHAT, '--prompt-file', promptFile, '--json'])
   ok(r.code === 0, 'open pane: exit 0', r.err)
-  ok(r.out === JSON.stringify({ paneId: 's2-b', number: 2, reopened: false }), 'open pane: JSON names the pane and its card number', r.out)
+  ok(r.out === JSON.stringify({ paneId: 's2-b', number: 2, reopened: false, outcome: 'queued', line: 'LINE queued s2-b' }), 'open pane: JSON names the pane, its card number and what happened to the prompt', r.out)
+  ok(told().every(([, , via]) => via === 'call'), 'open pane: told through the answered call, not the silent send', JSON.stringify(told()))
   ok(started().length === 0, 'open pane: no second pane is started')
   ok(told().length === 1 && told()[0][1][0] === 's2-b' && told()[0][1][1] === PROMPT, 'open pane: the whole prompt is told to that pane', JSON.stringify(told()))
 }
@@ -160,7 +173,7 @@ const scenario = (panes, extra = {}) => {
   })
   const r = await pf(['continue', CHAT, '--prompt-file', promptFile, '--json'])
   ok(r.code === 0, 'closed pane: exit 0', r.err)
-  ok(r.out === JSON.stringify({ paneId: 's20-new', number: 2, reopened: true }), 'closed pane: JSON says reopened, with the new card number', r.out)
+  ok(r.out === JSON.stringify({ paneId: 's20-new', number: 2, reopened: true, outcome: 'queued', line: 'LINE queued s20-new' }), 'closed pane: JSON says reopened, with the new card number', r.out)
   const req = started()[0]?.[1]?.[0] ?? {}
   ok(req.resume === true && req.resumeId === CHAT, 'closed pane: started with BOTH resume and resumeId', JSON.stringify(req))
   ok(req.cwd === project && req.agent === 'claude' && req.model === 'claude-opus-5-5' && req.where === 'local', 'closed pane: the NEWEST History row for that chat, on this computer', JSON.stringify(req))
@@ -187,7 +200,7 @@ const scenario = (panes, extra = {}) => {
   })
   const r = await pf(['continue', notice.result.resumeId, '--prompt-file', promptFile, '--json'])
   ok(r.code === 0, 'autoclosed chat: exit 0', r.err)
-  ok(r.out === JSON.stringify({ paneId: 's23-back', number: 2, reopened: true }), 'autoclosed chat: reopened, with its new card number', r.out)
+  ok(r.out === JSON.stringify({ paneId: 's23-back', number: 2, reopened: true, outcome: 'queued', line: 'LINE queued s23-back' }), 'autoclosed chat: reopened, with its new card number', r.out)
   const req = started()[0]?.[1]?.[0] ?? {}
   ok(req.resume === true && req.resumeId === AUTO && req.cwd === project && req.title === 'Autoclosed chat', 'autoclosed chat: its own conversation, in its own folder', JSON.stringify(req))
   ok(told().length === 1 && told()[0][1][0] === 's23-back' && told()[0][1][1] === PROMPT, 'autoclosed chat: the prompt reaches it')
@@ -211,7 +224,7 @@ const scenario = (panes, extra = {}) => {
   ok(existsSync(join(projectDir(copy), `${CHAT}.jsonl`)), 'copy: the conversation file is placed where that pane reads it')
   const order = calls.map(([c]) => c).filter((c) => c === 'sessions:restart' || c === 'pane:tell')
   ok(order.join(',') === 'sessions:restart,pane:tell', 'copy: restarted before it is told', order.join(','))
-  ok(/^sent to pane 1 \(s21-copy\) - reopened from History$/.test(r.out), 'copy: plain output names the card', r.out)
+  ok(r.out === 'LINE queued s21-copy (card 1, reopened from History first)', "copy: plain output is the app's line, naming the card", r.out)
 }
 
 // ---- conversation file gone: the app opens it asleep; that pane goes, nothing is sent -------
@@ -272,6 +285,104 @@ for (const returnedResumeId of ['bbbbbbbb-0000-0000-0000-000000000000', undefine
   ok(n.code === 1 && /--prompt-file/.test(n.err) && calls.length === 0, 'no prompt file: refused', n.err)
   const x = await pf(['continue', CHAT, '--prompt-file', join(work, 'missing.txt')])
   ok(x.code === 1 && /could not read/.test(x.err) && calls.length === 0, 'missing prompt file: refused', x.err)
+}
+
+// ---- the app says the prompt was NOT sent: exit 1 with its line, no "sent" --------------------
+{
+  scenario([{ id: 's2-b', title: 'Fix the footer', status: 'working', resumeId: CHAT }])
+  tellKind = 'failed'
+  const r = await pf(['continue', CHAT, '--prompt-file', promptFile, '--json'])
+  ok(r.code === 1 && /LINE failed s2-b/.test(r.err) && r.out === '', 'continue, prompt refused by the pane: exit 1 with the app line, nothing on stdout', `${r.code} ${r.out} ${r.err}`)
+}
+
+// ---- pf tell: the app's answer is what is printed ------------------------------------------
+{
+  const desk = [
+    { id: 's2-b', title: 'Fix the footer', status: 'working', agent: 'claude' },
+    { id: '@HOSTID/s42-mus4a344', title: 'Blender film', status: 'working', agent: 'codex', remote: { id: 'HOSTID', name: 'Desk PC' } }
+  ]
+  for (const [kind, code] of [['delivered', 0], ['queued', 0], ['failed', 1], ['missing', 1]]) {
+    scenario(desk)
+    tellKind = kind
+    const r = await pf(['tell', 's2-b', 'check', 'the', 'build'])
+    const said = code === 0 ? r.out : r.err
+    ok(r.code === code, `tell ${kind}: exit ${code}`, `exit ${r.code} ${r.err}`)
+    ok(said.includes(`LINE ${kind} s2-b`), `tell ${kind}: prints the app's own line`, `${r.out} | ${r.err}`)
+    ok(kind === 'delivered' || !/\btold\b/.test(r.out + r.err), `tell ${kind}: never says "told"`, r.out + r.err)
+    ok(told().length === 1 && told()[0][2] === 'call' && told()[0][1][1] === 'check the build', `tell ${kind}: one answered call with the whole line`, JSON.stringify(told()))
+  }
+  // A pane on the other computer is handed to the app under its full id; the app routes it.
+  scenario(desk)
+  const far = await pf(['tell', '@HOSTID/s42-mus4a344', 'still there?'])
+  ok(far.code === 0 && far.out === 'LINE queued @HOSTID/s42-mus4a344', 'tell to another computer: the full id goes to the app and its line is printed', `${far.code} ${far.out} ${far.err}`)
+  ok(told()[0]?.[1]?.[0] === '@HOSTID/s42-mus4a344', 'tell to another computer: the device stays on the id', JSON.stringify(told()))
+  // An app from before the answer: the line still goes, and pf says nothing confirms it.
+  scenario(desk, { 'pane:tell': () => { throw new Error('unknown channel pane:tell') } })
+  const old = await pf(['tell', 's2-b', 'check the build'])
+  ok(old.code === 0 && /no receipt/.test(old.out) && !/\btold\b/.test(old.out), 'tell, older app: handed over and says no receipt exists', `${old.code} ${old.out} ${old.err}`)
+  ok(told().filter(([, , via]) => via === 'send').length === 1, 'tell, older app: the old fire-and-forget send carries it', JSON.stringify(told()))
+}
+
+// ---- pf type: Codex goes through the receipt path, others are typed raw --------------------
+{
+  const desk = [
+    { id: 's2-b', title: 'Fix the footer', status: 'idle', agent: 'claude' },
+    { id: 's4-x', title: 'Codex work', status: 'working', agent: 'codex' },
+    { id: '@HOSTID/s42-mus4a344', title: 'Blender film', status: 'working', agent: 'codex', remote: { id: 'HOSTID', name: 'Desk PC' } }
+  ]
+  const writes = () => calls.filter(([c]) => c === 'pty:write')
+  const long = 'x'.repeat(1463)
+  for (const id of ['s4-x', '@HOSTID/s42-mus4a344']) {
+    scenario(desk)
+    tellKind = 'delivered'
+    const r = await pf(['type', id, long])
+    ok(r.code === 0 && r.out === `LINE delivered ${id}`, `type into a Codex pane (${id}): the receipt line is printed`, `${r.code} ${r.out} ${r.err}`)
+    ok(told().length === 1 && told()[0][1][0] === id && told()[0][1][1] === long && writes().length === 0, `type into a Codex pane (${id}): sent through tell, never raw text plus Return`, JSON.stringify(calls.map(([c, a]) => [c, a[0]])))
+  }
+  scenario(desk)
+  tellKind = 'failed'
+  const bad = await pf(['type', 's4-x', 'hello'])
+  ok(bad.code === 1 && /LINE failed s4-x/.test(bad.err), 'type into a Codex pane that refuses: exit 1 with the reason', `${bad.code} ${bad.err}`)
+  scenario(desk)
+  const raw = await pf(['type', 's2-b', 'hello there'])
+  ok(raw.code === 0 && writes().map(([, a]) => a[1]).join('|') === 'hello there|\r', 'type into a Claude pane: text, then Return as its own write', JSON.stringify(writes()))
+  ok(told().length === 0, 'type into a Claude pane: not routed through tell', JSON.stringify(told()))
+  ok(/s2-b \(Fix the footer\)/.test(raw.out) && /no receipt/.test(raw.out) && !/\btold\b/.test(raw.out), 'type into a Claude pane: names the pane and says nothing confirms it', raw.out)
+}
+
+// ---- pf tell / pf type to a chat `pf list` shows from the other computer, not mirrored here --
+// `pf list` prints `@HOSTID/s6-x` in column 2 for a chat that runs over there and is not
+// mirrored on this desk, and `pf help tell` says to use that id. It was looked up only in
+// this desk's own list, so the id pf itself printed answered "no pane named".
+{
+  const desk = [{ id: 's2-b', title: 'Fix the footer', status: 'idle', agent: 'claude' }]
+  const state = () => ({
+    peers: [{
+      id: 'HOSTID', name: 'Desk PC', status: 'online', panes: [
+        { id: 's6-x', title: 'Render queue', status: 'working', agent: 'codex', number: 6, machine: 'pc', watched: false },
+        { id: 's7-y', title: 'Notes', status: 'idle', agent: 'claude', number: 7, machine: 'pc', watched: false }
+      ]
+    }]
+  })
+  const writes = () => calls.filter(([c]) => c === 'pty:write')
+  scenario(desk, { 'remote:state': state })
+  const t = await pf(['tell', '@HOSTID/s6-x', 'keep', 'going'])
+  ok(t.code === 0 && t.out === 'LINE queued @HOSTID/s6-x', 'tell to a listed chat on another computer: its @ id from pf list is found and told', `${t.code} ${t.out} ${t.err}`)
+  ok(told().length === 1 && told()[0][1][0] === '@HOSTID/s6-x' && told()[0][1][1] === 'keep going' && told()[0][2] === 'call',
+    'tell to a listed chat: one answered call under the full @ id', JSON.stringify(told()))
+  scenario(desk, { 'remote:state': state })
+  tellKind = 'delivered'
+  const ty = await pf(['type', '@HOSTID/s6-x', 'x'.repeat(1463)])
+  ok(ty.code === 0 && ty.out === 'LINE delivered @HOSTID/s6-x' && told().length === 1 && told()[0][1][0] === '@HOSTID/s6-x' && writes().length === 0,
+    'type into a listed Codex chat on another computer: sent through tell, never raw text plus Return', `${ty.code} ${ty.out} ${ty.err} ${JSON.stringify(calls.map(([c, a]) => [c, a[0]]))}`)
+  scenario(desk, { 'remote:state': state })
+  const tc = await pf(['type', '@HOSTID/s7-y', 'hello there'])
+  ok(tc.code === 0 && writes().map(([, a]) => `${a[0]}:${a[1]}`).join('|') === '@HOSTID/s7-y:hello there|@HOSTID/s7-y:\r' && told().length === 0,
+    'type into a listed Claude chat on another computer: typed the same way as a mirrored one', `${tc.code} ${tc.out} ${tc.err} ${JSON.stringify(writes())}`)
+  scenario(desk, { 'remote:state': state })
+  const none = await pf(['tell', '@HOSTID/s99-gone', 'hello'])
+  ok(none.code === 1 && /no pane named "@HOSTID\/s99-gone"/.test(none.err) && told().length === 0,
+    'tell to an @ id nobody lists: still no pane, nothing sent', `${none.code} ${none.err}`)
 }
 
 // ---- the rule on its own: a live pane beats History, History picks the newest row ---------

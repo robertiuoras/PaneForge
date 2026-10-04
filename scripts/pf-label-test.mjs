@@ -108,4 +108,91 @@ check('pf list status word says what a finished chat is still running', () => {
   assert.equal(w({ status: 'idle', backJob: `${'word '.repeat(12)}tail` }), `idle, still running: ${'word '.repeat(11)}word…`)
 })
 
+// ------------------------------------------------- a command that changes a chat refuses a number
+// 2026-10-03: `pf close 9` closed a chat that had become card 9 13 s earlier, and `pf type 13` typed
+// into the wrong chat - a card number is a place on the desk, and places shift when a chat above
+// closes. tell/type/close/close-when-done/move and --report-to now take only an id or a name.
+
+check('a bare number is refused with what it names right now and the id form to run', () => {
+  const pane = { id: 's12-abc123', title: 'Blender film', status: 'idle', createdAt: 0 }
+  const why = lib.cardRefRefusal('3', pane, { redo: (id) => `pf tell ${id} "..."`, now: 10 * 60_000 })
+  assert.equal(
+    why,
+    'refused: "3" is a card number, and card numbers shift when a chat above closes. Card 3 is s12-abc123 (Blender film) right now; run: pf tell s12-abc123 "..."'
+  )
+})
+
+check('a machine label is refused the same way', () => {
+  const pane = { id: '@pc/s7-x', title: 'Site', status: 'idle', createdAt: 0, remote: { machine: 'pc' } }
+  const why = lib.cardRefRefusal('pc3', pane, { redo: (id) => `pf close ${id}`, now: 10 * 60_000 })
+  assert.equal(
+    why,
+    'refused: "pc3" is a card label, and card numbers shift when a chat above closes. PC 3 is @pc/s7-x (Site) right now; run: pf close @pc/s7-x'
+  )
+})
+
+check('a working or just-arrived pane says so; a number naming nothing lists the cards', () => {
+  const now = 1_000_000
+  const busy = { id: 's35-m', title: 'New', status: 'working', createdAt: now - 13_000 }
+  assert.match(lib.cardRefRefusal('9', busy, { redo: (id) => `pf close ${id}`, now }), /right now - it is working and came onto the desk 13 s ago; run: pf close s35-m$/)
+  const none = lib.cardRefRefusal('42', null, { cards: ['1', '2', '4'], redo: () => 'x', now })
+  assert.equal(none, 'refused: "42" is a card number, and card numbers shift when a chat above closes. There is no card 42 right now (the cards are 1, 2, 4); run pf list and use the id in column 2.')
+})
+
+check('a pane only listed from another computer names the command to run THERE', () => {
+  const listed = { id: '@mac/s5-m', title: 'Listed chat', status: 'idle', listed: true, machine: 'mac' }
+  const why = lib.cardRefRefusal('Mac 5', listed, { redo: (id) => `pf tell ${id} "x"`, now: 0 })
+  assert.match(why, /Mac 5 is @mac\/s5-m \(Listed chat\) right now - it runs on the Mac and is not open on this desk; open it here first, or on the Mac run: pf tell s5-m "x"$/)
+})
+
+check('an id, a name or a word that is not a number is never refused', () => {
+  const pane = { id: 's3-x', title: 'Three', status: 'working', createdAt: 0 }
+  for (const ref of ['s3-x', 'Three', '@pc/s3-x', 'PC', 'x3']) assert.equal(lib.cardRefRefusal(ref, pane, { redo: () => '', now: 0 }), null, ref)
+})
+
+check('redoLine puts the id where the number was, positional or --report-to, and shortens long words', () => {
+  assert.equal(lib.redoLine(['tell', '3', 'commit', 'and', 'stop'], '3', 's12-a'), 'pf tell s12-a commit and stop')
+  assert.equal(lib.redoLine(['tell', '3', 'When done, commit'], '3', 's12-a'), "pf tell s12-a 'When done, commit'")
+  assert.equal(lib.redoLine(['tell', 'PC 3', 'x'.repeat(200)], 'PC 3', '@pc/s1'), 'pf tell @pc/s1 "..."')
+  assert.equal(lib.redoLine(['open', '/x', '--report-to', '3', '--here'], '3', 's9-b'), 'pf open /x --report-to s9-b --here')
+  assert.equal(lib.redoLine(['open', '/x', '--report-to=3'], '3', 's9-b'), 'pf open /x --report-to=s9-b')
+  // the ref is replaced where it IS the pane, not where it happens to be a word of the text
+  assert.equal(lib.redoLine(['close-when-done', 's1', '--report-to', '3'], '3', 's9-b', '--report-to'), 'pf close-when-done s1 --report-to s9-b')
+  assert.equal(lib.redoLine(['tell', '3', '3'], '3', 's2-c'), 'pf tell s2-c 3')
+})
+
+check('clockDay is a 12-hour local clock with the day', () => {
+  assert.equal(lib.clockDay(new Date(2026, 9, 2, 4, 10).getTime()), '4:10am Fri')
+  assert.equal(lib.clockDay(new Date(2026, 9, 2, 16, 5).getTime()), '4:05pm Fri')
+  assert.equal(lib.clockDay(new Date(2026, 9, 4, 0, 0).getTime()), '12:00am Sun')
+  assert.equal(lib.clockDay(new Date(2026, 9, 4, 12, 30).getTime()), '12:30pm Sun')
+})
+
+check('owedSince keeps the oldest queued prompt per pane; junk is skipped', () => {
+  const store = {
+    a: { id: 's1-a', key: 'a', text: 'x', at: 300 },
+    b: { id: 's1-a', key: 'b', text: 'y', at: 100 },
+    c: { id: 's2-b', key: 'c', text: 'z', at: 50 },
+    d: { id: 's3-c', key: 'd', text: 'w' },
+    e: null
+  }
+  const since = lib.owedSince(store)
+  assert.equal(since.get('s1-a'), 100)
+  assert.equal(since.get('s2-b'), 50)
+  assert.equal(since.has('s3-c'), false)
+  assert.equal(lib.owedSince(null).size, 0)
+})
+
+check('the pf list note says a prompt is waiting, since when, or that it never went in', () => {
+  const at = new Date(2026, 9, 2, 4, 10).getTime()
+  assert.equal(lib.listNote({ id: 's1', owedPrompt: true }, new Map([['s1', at]])), 'prompt waiting since 4:10am Fri')
+  assert.equal(lib.listNote({ id: 's1', owedPrompt: true }, new Map()), 'prompt waiting')
+  assert.equal(lib.listNote({ id: 's1', promptUnsent: at }, new Map()), 'prompt not sent - still in its input box')
+  assert.equal(
+    lib.listNote({ id: 's1', promptUnsent: at, owedPrompt: true }, new Map([['s1', at]])),
+    'prompt not sent - still in its input box; prompt waiting since 4:10am Fri'
+  )
+  assert.equal(lib.listNote({ id: 's1' }, new Map([['s1', at]])), '')
+})
+
 console.log(`\n${n} checks passed`)

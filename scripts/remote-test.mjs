@@ -56,7 +56,8 @@ function bundle() {
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
       `export { makeInvite, readInvite, INVITE_MINUTES } from ${JSON.stringify(join(root, 'src/main/remote/invite.ts').replace(/\\/g, '/'))}`,
-      `export { isSelfPeer, dropSelf, liveWatch } from ${JSON.stringify(join(root, 'src/main/remote/peers.ts').replace(/\\/g, '/'))}`
+      `export { isSelfPeer, dropSelf, liveWatch } from ${JSON.stringify(join(root, 'src/main/remote/peers.ts').replace(/\\/g, '/'))}`,
+      `export { RemoteOpeners, promptInBox, unsentLine } from ${JSON.stringify(join(root, 'src/main/remote/openers.ts').replace(/\\/g, '/'))}`
     ].join('\n'),
     'utf8'
   )
@@ -91,6 +92,10 @@ function backend() {
   const returned = []
   const started = []
   const submitted = []
+  // What `pf tell` asked this desk to hand a pane, and what the desk's own tellPane answers.
+  // s1 settles delivered; any id this desk does not have answers `missing`, as the real
+  // SessionManager does.
+  const told = []
   const kept = new Set()
   const closeDone = []
   const reviews = Array.from({ length: 21 }, (_, index) => ({
@@ -115,6 +120,7 @@ function backend() {
     returned,
     started,
     submitted,
+    told,
     kept,
     closeDone,
     setHistory(id, data) {
@@ -151,6 +157,15 @@ function backend() {
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
       sendPrompt: (id, text) => submitted.push([id, text]),
+      // What `pf composer` reads off this desk's own pane: the screen's input box, as the
+      // real `sessions:draft` answers. Unknown id = null, as for a pane that is not running.
+      draft: async (id) => (sessions.some((x) => x.id === id) ? { text: `typed in ${id}`, certain: true, from: 'screen' } : null),
+      tellPane: async (ref, text) => {
+        told.push([ref, text])
+        const s = sessions.find((x) => x.id === ref)
+        if (!s) return { kind: 'missing', ref }
+        return { kind: 'delivered', id: s.id, title: s.title, at: 1_700_000_000_000, how: 'typed', receipt: 'the turn started' }
+      },
       resize: (id, cols, rows, borrowed, viewer, _mirror, person) =>
         resized.push([id, cols, rows, borrowed === true, viewer, person]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
@@ -294,6 +309,274 @@ async function main() {
     )
   }
 
+  // ------------------------------------------------------- pf tell to another computer
+  // `pf tell @<device>/<id>` used to look only at this desk's own panes, find nothing, and
+  // print "told" anyway (s42-mus4a344, 2026-10-03). A tell now crosses as one request with
+  // an answer, and an owner too old to answer says so instead of a made-up success.
+  {
+    const guestOf = () =>
+      new RemoteClient(
+        { id: 'OWNER', name: 'Desk PC', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+        () => ({ id: 'NEW', name: 'New desk', platform: 'darwin', version: 'test' })
+      )
+    const has = (c) => typeof c.tellPane === 'function'
+    // An owner that answers tells: one `tell` frame with the id stripped of its device, and
+    // the owner's outcome comes back with the device put back on.
+    {
+      const c = guestOf()
+      const sent = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new', promptSubmit: true, tellReceipt: true }, send: (m) => sent.push(m) }
+      const pending = has(c) ? c.tellPane('s7-abc', 'check the build') : Promise.resolve(null)
+      const frame = sent[0] ?? {}
+      ok(
+        'a tell to an owner that answers goes out as one tell request with the bare id',
+        frame.t === 'tell' && frame.ref === 's7-abc' && frame.id === 's7-abc' && frame.text === 'check the build' && typeof frame.rid === 'number',
+        JSON.stringify(sent)
+      )
+      ok('and nothing is typed into that pane by this side', !sent.some((m) => m.t === 'write' || m.t === 'prompt'), JSON.stringify(sent))
+      c.receive({ t: 'told', rid: frame.rid, ref: 's7-abc', outcome: { kind: 'queued', id: 's7-abc', title: 'Blender film', busySince: 1_700_000_000_000, reason: 'pane is busy; it will be typed when the turn ends' } })
+      const out = await pending
+      ok(
+        "the owner's answer comes back with the device put back on the id",
+        JSON.stringify(out) === JSON.stringify({ kind: 'queued', id: '@OWNER/s7-abc', title: 'Blender film', busySince: 1_700_000_000_000, reason: 'pane is busy; it will be typed when the turn ends' }),
+        JSON.stringify(out)
+      )
+      const garbled = has(c) ? c.tellPane('s7-abc', 'again') : Promise.resolve(null)
+      c.receive({ t: 'told', rid: sent[1]?.rid, ref: 's7-abc', outcome: { kind: 'delivered', id: 's7-abc' } })
+      const bad = await garbled
+      ok(
+        'an answer this side cannot read is a failure that says so, never a delivery',
+        bad?.kind === 'failed' && bad.id === '@OWNER/s7-abc' && /could not be read/.test(bad.reason),
+        JSON.stringify(bad)
+      )
+    }
+    // An owner from before tells had answers: it still gets the one `prompt` intent it knows,
+    // and this side says plainly that no receipt is coming.
+    {
+      const c = guestOf()
+      const sent = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'old', promptSubmit: true }, send: (m) => sent.push(m) }
+      const out = has(c) ? await c.tellPane('s7-abc', 'check the build') : null
+      ok(
+        'an older owner gets the prompt frame it understands',
+        sent.length === 1 && sent[0].t === 'prompt' && sent[0].id === 's7-abc' && sent[0].text === 'check the build',
+        JSON.stringify(sent)
+      )
+      ok(
+        'and the tell answers queued, saying the other computer sends no receipt',
+        out?.kind === 'queued' && out.id === '@OWNER/s7-abc' &&
+          out.reason === 'the other computer runs an older PaneForge that sends no receipt; it types the prompt when that chat is ready',
+        JSON.stringify(out)
+      )
+    }
+    // Not connected: nothing went anywhere, and the line says which computer.
+    {
+      const c = guestOf()
+      const out = has(c) ? await c.tellPane('s7-abc', 'check the build') : null
+      ok('a tell while that computer is not connected fails and names it', out?.kind === 'failed' && out.id === '@OWNER/s7-abc' && /Desk PC/.test(out.reason), JSON.stringify(out))
+    }
+    // `pf close @<device>/<id>`: closed once the owner's own list drops the chat, never on
+    // the strength of this desk hiding the row, and a list that keeps it is a refusal.
+    {
+      const goneOf = (c, id, ms) => (typeof c.gone === 'function' ? c.gone(id, ms) : Promise.resolve(null))
+      const c = guestOf()
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new' }, send: () => {} }
+      c.receive({ t: 'sessions', list: [{ id: 's7-abc', title: 'Blender film', status: 'idle', cwd: '/x' }] })
+      let settled = 'pending'
+      const closing = goneOf(c, 's7-abc', 2000).then((v) => (settled = v))
+      c.receive({ t: 'sessions', list: [{ id: 's7-abc', title: 'Blender film', status: 'idle', cwd: '/x' }] })
+      await wait(20)
+      ok('a list that still has the chat leaves the close unconfirmed', settled === 'pending', String(settled))
+      c.receive({ t: 'sessions', list: [] })
+      ok("the owner's list without the chat confirms the close", (await closing) === true)
+      c.receive({ t: 'sessions', list: [{ id: 's8-def', title: 'Kept', status: 'idle', cwd: '/x' }] })
+      ok('a chat the owner keeps reads as not closed when the wait runs out', (await goneOf(c, 's8-def', 120)) === false)
+    }
+    // `pf composer @<device>/<id>` (s54, 2026-10-03, "is not running"): asked of the owner,
+    // behind a capability, and an older owner or a dead link is said in plain words.
+    {
+      const draftOf = (c, id) => (typeof c.draftOf === 'function' ? c.draftOf(id) : Promise.resolve(null))
+      const old = guestOf()
+      const sent = []
+      old.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'old', promptSubmit: true, tellReceipt: true }, send: (m) => sent.push(m) }
+      const out = await draftOf(old, 's7-abc')
+      ok(
+        'an owner too old to read its input boxes is not asked, and the answer says to update it',
+        sent.length === 0 && out?.unavailable === 'Desk PC runs an older PaneForge that cannot say what is typed in its chats; update PaneForge there',
+        JSON.stringify({ sent, out })
+      )
+      const off = await draftOf(guestOf(), 's7-abc')
+      ok('a draft read while that computer is not connected says so', /Desk PC is not connected/.test(off?.unavailable ?? ''), JSON.stringify(off))
+      const c = guestOf()
+      const asked = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new', draftRead: true }, send: (m) => asked.push(m) }
+      const pending = draftOf(c, 's7-abc')
+      ok('a draft read goes out as one draft request with the bare id', asked[0]?.t === 'draft' && asked[0]?.id === 's7-abc' && typeof asked[0]?.rid === 'number', JSON.stringify(asked))
+      c.receive({ t: 'drafted', rid: asked[0]?.rid, draft: { text: 42 } })
+      const bad = await pending
+      ok('an answer that is not a draft is said to be unreadable, never printed as the box', /could not be read/.test(bad?.unavailable ?? ''), JSON.stringify(bad))
+    }
+  }
+
+  // ------------------------------------------------- the opener on this desk is told
+  // 2026-10-03 17:09Z: the Mac opened a Claude chat on the PC with --close-when-done
+  // --report-to <a Mac chat>. Its 2870-char first prompt never went in, and the Mac chat that
+  // opened it was never told: the PC looked for that chat among its own and found none. The
+  // link is kept HERE, and read off the PC's pane list, which every PaneForge sends.
+  {
+    const RemoteOpeners = mod.RemoteOpeners
+    ok('the opener links are a module', typeof RemoteOpeners === 'function')
+    if (typeof RemoteOpeners === 'function') {
+      const prompt = 'Finish the preserved work in claude-memory.\nThen run the checks and report.'
+      const pane = (extra = {}) => ({ id: 's54-musnckna', title: 'Finish preserved work', status: 'working', cwd: 'C:\\x\\claude-memory', createdAt: 1, owedPrompt: true, ...extra })
+      const world = (list) => {
+        const told = []
+        const notes = []
+        const boxes = []
+        return {
+          told,
+          notes,
+          boxes,
+          deps: {
+            panesOf: (device) => (device === 'pc1' ? list() : null),
+            boxOf: async (id, text) => (boxes.push([id, text]), world.box),
+            tell: (opener, text) => told.push([opener, text]),
+            finished: (opener, note) => notes.push([opener, note])
+          }
+        }
+      }
+      const info = { machine: 'the PC', title: 'Finish preserved work', project: 'claude-memory', prompt }
+      // Typed but never taken, and NOT in the input box - the real incident: the line says so.
+      {
+        let list = [pane()]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 2000)
+        ok('nothing is said while the first prompt is still on its way', w.told.length === 0, JSON.stringify(w.told))
+        list = [pane({ promptUnsent: 5000 })]
+        await o.sweep(w.deps, 6000)
+        ok('a prompt marked unsent a moment ago is not yet reported (a Claude one can still land)', w.told.length === 0, JSON.stringify(w.told))
+        await o.sweep(w.deps, 125000)
+        await o.sweep(w.deps, 140000)
+        ok('the opener is told once when the first prompt never went in', w.told.length === 1 && w.told[0][0] === 's59-mus31kfv', JSON.stringify(w.told))
+        ok(
+          'and it says what is true about the input box: empty, so send it again',
+          w.told[0]?.[1] === 'Your first prompt to @pc1/s54-musnckna (Finish preserved work) on the PC never went in, and that chat\'s input box is empty, so it has to be sent again.',
+          JSON.stringify(w.told)
+        )
+        ok('the input box is read with the prompt it should hold', w.boxes[0]?.[0] === '@pc1/s54-musnckna' && w.boxes[0]?.[1] === prompt, JSON.stringify(w.boxes))
+        ok('while that chat is open it holds the digest back', o.workingFor('s59-mus31kfv', w.deps.panesOf) === 1 && o.openFor('s59-mus31kfv', w.deps.panesOf) === 1)
+        // Closed over there under close-when-done: its report crossed as a Review row first.
+        o.review('@pc1/s54-musnckna', '## Done\nMerged the preserved work and the checks pass.\n## Next steps\nNone')
+        list = []
+        await o.sweep(w.deps, 160000)
+        ok(
+          'the close leaves the same note a local opener gets, with the report that came back',
+          w.notes.length === 1 && w.notes[0][0] === 's59-mus31kfv' &&
+            JSON.stringify(w.notes[0][1]) === JSON.stringify({ id: '@pc1/s54-musnckna', title: 'Finish preserved work', project: 'claude-memory', summary: 'Done Merged the preserved work and the checks pass.', personSteps: [] }),
+          JSON.stringify(w.notes)
+        )
+        ok('and the link is over', o.workingFor('s59-mus31kfv', w.deps.panesOf) === 0 && o.openFor('s59-mus31kfv', w.deps.panesOf) === 0)
+      }
+      // Claude prompts marked unsent have landed 44-97 s later, and the other computer then clears
+      // the flag: told at once, the opener sent it again (a double prompt).
+      {
+        let list = [pane({ promptUnsent: 5000 })]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 20000)
+        await o.sweep(w.deps, 95000)
+        list = [pane({ owedPrompt: false })]
+        await o.sweep(w.deps, 110000)
+        await o.sweep(w.deps, 200000)
+        ok('a prompt that lands at +90s is never reported', w.told.length === 0, JSON.stringify(w.told))
+        // A turn that began after the stamp means it went in, even with the flag still up.
+        list = [pane({ promptUnsent: 300000, runSince: 310000 })]
+        await o.sweep(w.deps, 500000)
+        ok('nor one whose turn has started since the stamp', w.told.length === 0, JSON.stringify(w.told))
+      }
+      // "Your first prompt" is the first one: later unsent prompts in a chat that has had turns
+      // are not compared with it, even when its replies end in a question (never `finished`).
+      {
+        let list = [pane()]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'other'
+        await o.sweep(w.deps, 2000)
+        list = [pane({ owedPrompt: false, status: 'waiting' })]
+        await o.sweep(w.deps, 20000)
+        list = [pane({ owedPrompt: false, status: 'waiting', promptUnsent: 50000 })]
+        await o.sweep(w.deps, 200000)
+        ok('a later unsent prompt is not called the first one', w.told.length === 1 && /^A prompt typed into/.test(w.told[0][1]) && w.boxes[0][1] === '', JSON.stringify([w.told, w.boxes]))
+      }
+      // Linking again (close-when-done armed after the open) adds to the link, never wipes it.
+      {
+        let list = [pane({ promptUnsent: 5000 })]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 130000)
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', { ...info, prompt: '' }, 140000)
+        await o.sweep(w.deps, 160000)
+        ok('the same stamp is not told twice after a second link', w.told.length === 1, JSON.stringify(w.told))
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', { ...info, prompt: '' }, 170000)
+        list = [pane({ promptUnsent: 180000 })]
+        await o.sweep(w.deps, 320000)
+        ok('and the first prompt is still known to it', w.boxes[1]?.[1] === prompt, JSON.stringify(w.boxes))
+      }
+      // A chat linked with no prompt known: whatever its box holds cannot be called this prompt.
+      ok('no prompt known: a box with text reads as unknown, not as holding it', mod.promptInBox('some text typed', '') === 'unknown')
+      ok('no prompt known: an empty box is still empty', mod.promptInBox('', '') === 'empty')
+      // A box of one word is inside any prompt: too little to be it.
+      ok('a box holding "y" does not read as holding the prompt', mod.promptInBox('y', prompt) === 'other')
+      ok('nor one holding "Then"', mod.promptInBox('Then', prompt) === 'other')
+      ok('a short prompt can still be held whole', mod.promptInBox('ship it', 'ship it') === 'holds')
+      // The prompt really is in the box; a computer that cannot be asked is said to be unknown.
+      ok('a box holding the prompt reads as holding it', mod.promptInBox('Finish the preserved work in claude-memory. Then run the', prompt) === 'holds')
+      ok('a collapsed paste reads as holding it', mod.promptInBox('[Pasted text #1 +40 lines]', prompt) === 'holds')
+      ok('an empty box reads as empty', mod.promptInBox('  ', prompt) === 'empty')
+      ok('a box with other words reads as other', mod.promptInBox('Try "write a test"', prompt) === 'other')
+      const head = { id: '@pc1/s5', title: 'T', machine: 'the PC' }
+      ok('holds: it is still in that chat\'s input box', mod.unsentLine(head, 'holds', true) === 'Your first prompt to @pc1/s5 (T) on the PC never went in; it is still in that chat\'s input box.')
+      ok(
+        'unknown: says it could not be checked and how to look',
+        mod.unsentLine(head, 'unknown', true) === 'Your first prompt to @pc1/s5 (T) on the PC never went in; whether it is still in that chat\'s input box could not be checked (pf composer @pc1/s5 reads it).'
+      )
+      // The PC not connected says nothing either way; a close seen with no report still tells.
+      {
+        let list = null
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s7', 's59-mus31kfv', { ...info, title: 'Other' }, 1000)
+        await o.sweep(w.deps, 2000)
+        ok('a computer that is not connected closes nothing and holds the digest', w.notes.length === 0 && o.workingFor('s59-mus31kfv', w.deps.panesOf) === 1)
+        list = []
+        await o.sweep(w.deps, 3000)
+        ok('a close waits a minute for its report', w.notes.length === 0)
+        await o.sweep(w.deps, 64000)
+        ok(
+          'then the note says no report came back',
+          w.notes.length === 1 && w.notes[0][1].summary === 'it closed on the PC, and no report of what it did came back to this computer.',
+          JSON.stringify(w.notes)
+        )
+      }
+      // Kept across a restart of this app: the PC chat can outlive it.
+      {
+        const file = join(out, 'remote-openers.json')
+        const a = new RemoteOpeners(file)
+        a.link('@pc1/s8', 's59-mus31kfv', info, 1000)
+        const b = new RemoteOpeners(file)
+        ok('a link survives a restart of this app', b.openFor('s59-mus31kfv', () => [{ id: 's8', status: 'idle' }]) === 1)
+      }
+    }
+  }
+
   // ------------------------------------------------------------------- invites
   // The one line that replaced three typed fields. Everything here is about the round
   // trip surviving the way a person actually moves it: selected with a stray quote, sent
@@ -342,7 +625,7 @@ async function main() {
   const code = newCode()
   const port = await freePort()
   const be = backend()
-  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true }
+  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true, tellReceipt: true, draftRead: true }
   const host = new RemoteHost(be.api, () => identity, () => code)
   host.start(port)
   ok('listener comes up', await until(() => host.listening))
@@ -613,6 +896,53 @@ async function main() {
     !be.typed.some(([id, data]) => id === 's1' && (data === 'run the queued job' || data === '\r')),
     JSON.stringify(be.typed)
   )
+
+  // `pf tell` over the real link: the host's own tellPane answers, and that answer is what
+  // the guest prints - delivered, missing, or the host's failure - never a guess made here.
+  {
+    const tell = (id, text) => (typeof client.tellPane === 'function' ? client.tellPane(id, text) : Promise.resolve(null))
+    ok('the host advertises that it answers tells', client.identity()?.tellReceipt === true, JSON.stringify(client.identity()))
+    const out = await tell('s1', 'run the tests')
+    ok('a guest tell reaches the host as the bare id', be.told.some(([id, text]) => id === 's1' && text === 'run the tests'), JSON.stringify(be.told))
+    ok(
+      "a guest tell returns the host's outcome, id put back under the device",
+      JSON.stringify(out) === JSON.stringify({ kind: 'delivered', id: '@HOSTID/s1', title: 'assistant', at: 1_700_000_000_000, how: 'typed', receipt: 'the turn started' }),
+      JSON.stringify(out)
+    )
+    ok('a tell is not also sent as a prompt frame', !be.submitted.some(([, text]) => text === 'run the tests'), JSON.stringify(be.submitted))
+    const gone = await tell('s99-gone', 'anyone there')
+    ok('a pane the host does not have comes back missing, under its full name', JSON.stringify(gone) === JSON.stringify({ kind: 'missing', ref: '@HOSTID/s99-gone' }), JSON.stringify(gone))
+    const saved = be.api.tellPane
+    be.api.tellPane = async () => {
+      throw new Error('the pane closed while the prompt was waiting')
+    }
+    const broke = await tell('s1', 'run the tests')
+    ok(
+      "a host whose tell throws answers failed with its reason, not the guest's timeout",
+      broke?.kind === 'failed' && broke.id === '@HOSTID/s1' && /pane closed while the prompt was waiting/.test(broke.reason),
+      JSON.stringify(broke)
+    )
+    be.api.tellPane = saved
+    // A chat `pf list` shows from over there but this desk does not mirror: the tell still
+    // reaches its owner. The link, not the mirror, is what carries it.
+    client.setWatch(['s1'])
+    ok('s2 is no longer mirrored here', await until(() => client.list().length === 1 && !client.list().some((s) => s.id === '@HOSTID/s2')))
+    const unmirrored = await tell('s2', 'pick this up')
+    ok(
+      'a tell to a chat over there that is not mirrored here reaches its owner and comes back delivered',
+      be.told.some(([id, text]) => id === 's2' && text === 'pick this up') && unmirrored?.kind === 'delivered' && unmirrored.id === '@HOSTID/s2',
+      JSON.stringify(unmirrored)
+    )
+    // `pf composer` over the real link, the mirror off for s2 as above: the owner's own read.
+    const draftOf = (id) => (typeof client.draftOf === 'function' ? client.draftOf(id) : Promise.resolve(null))
+    ok('the host advertises that it reads input boxes for a guest', client.identity()?.draftRead === true, JSON.stringify(client.identity()))
+    const typedThere = await draftOf('s2')
+    ok("a guest's draft read of an unmirrored chat returns the owner's input box", JSON.stringify(typedThere) === JSON.stringify({ text: 'typed in s2', certain: true, from: 'screen' }), JSON.stringify(typedThere))
+    const noPane = await draftOf('s99-gone')
+    ok('a chat the owner does not have reads as not running (null)', noPane === null, JSON.stringify(noPane))
+    client.setWatch(['s1', 's2'])
+    ok('both are mirrored again', await until(() => client.list().length === 2))
+  }
 
   // A finished turn over there raises a hand here.
   let raised = null

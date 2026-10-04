@@ -22,6 +22,14 @@ import { readFileSync } from 'node:fs'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { mock } from 'node:test'
+
+// The ceiling on waiting for a start-up hook, short so the "never ends" case runs in seconds.
+// Windows reads hooks with PowerShell, one reading a second at best and 1-3s each under the PC's
+// suite load, and "over" takes two quiet readings after the hook ends: a 4s hook then confirmed
+// at about +7.4s of process age, so a 6s ceiling dropped the watch first and "over" never came
+// (PC job 6a65805a, 2026-10-04; same on the Mac with readings 1.8s apart). The "never ends"
+// case runs only off Windows.
+process.env.PF_PROMPT_HOOKS_MAX_MS ??= process.platform === 'win32' ? '30000' : '6000'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -88,7 +96,7 @@ module.exports={spawn:(file,args,opts)=>({
 
 buildSync({
   absWorkingDir: root,
-  stdin: { contents: `export { SessionManager } from './src/main/sessions'; export { forgetQueuedPrompts, noteAccepted, noteTyped } from './src/main/queuedPrompts'; export { claudeAcceptedPrompt } from './src/main/transcripts'`, resolveDir: root },
+  stdin: { contents: `export { SessionManager } from './src/main/sessions'; export { forgetQueuedPrompts, noteAccepted, noteTyped } from './src/main/queuedPrompts'; export { claudeAcceptedPrompt, claudeStartup } from './src/main/transcripts'`, resolveDir: root },
   bundle: true,
   format: 'cjs',
   platform: 'node',
@@ -111,7 +119,7 @@ buildSync({
 })
 
 const req = createRequire(join(work, 'x.cjs'))
-const { SessionManager, claudeAcceptedPrompt, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
+const { SessionManager, claudeAcceptedPrompt, claudeStartup, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
 
 // Every wait the app makes here is cut to 120-200ms so the file runs in a minute and a half,
 // which makes this process's own event loop part of every check: measured on the PC 28 Sep-
@@ -843,10 +851,10 @@ const ANSWERING =
       return { proc, ended }
     }
     // Opens a pane on a fake CLI and waits for its prompt: typed when, and after which hook.
-    const run = async (sessionId, plan, firstLookMs = 40) => {
+    const run = async (sessionId, plan, firstLookMs = 40, waitMs = 4500) => {
       const cli = await fakeCli(sessionId, plan)
       const pane = open(cli.proc.pid, firstLookMs)
-      const typed = await typedAt(pane.p, 4500)
+      const typed = await typedAt(pane.p, waitMs)
       await sleep(50)
       return { ...pane, cli, typed, after: (i) => typed > 0 && cli.ended(i) > 0 && typed >= cli.ended(i),
         why: (i) => `typed ${typed ? typed - pane.at : '-'}ms in, hook ${i} ended ${cli.ended(i) ? cli.ended(i) - pane.at : '-'}ms in\n${logOf(pane.pane.id)}`,
@@ -893,12 +901,29 @@ const ANSWERING =
       'a hook still running at the short wait holds the prompt until it ends', `${uWaited}s waited\n${long.why(0)}`)
     long.done()
 
-    // ...and never past the ceiling.
-    const stuck = await run('sess-tree-stuck', { hooks: [{ at: 0, ms: 6000 }] })
+    // ...and an UNDECLARED child in a group of its own (the status line, a plugin's hook) holds it
+    // only to the start-up wait, as before the hooks ceiling existed: typed at about
+    // PF_PROMPT_STARTUP_MS, not held to PF_PROMPT_HOOKS_MAX_MS (6s here) while it runs.
+    const stuck = await run('sess-tree-stuck', { hooks: [{ at: 0, ms: 7800 }] }, 40, 9000)
     const sWaited = await shortWaitOf(stuck.pane.id)
-    ok(stuck.typed > 0 && sWaited >= 3 && !stuck.cli.ended(0) && /typing anyway/.test(logOf(stuck.pane.id)),
-      'a hook that never ends holds it only up to the ceiling', `${sWaited}s waited\n${logOf(stuck.pane.id)}`)
+    const startupS = Number(process.env.PF_PROMPT_STARTUP_MS) / 1000
+    ok(stuck.typed > 0 && sWaited >= startupS - 0.1 && sWaited < startupS + 1.5 && !stuck.cli.ended(0) && /typing anyway/.test(logOf(stuck.pane.id)),
+      'a group-only hook that never ends holds it only to the start-up wait, not the hooks ceiling', `${sWaited}s waited (start-up wait ${startupS}s)\n${logOf(stuck.pane.id)}`)
     stuck.done()
+
+    // A hook DECLARED in settings.json and seen by the same reading holds past the start-up wait
+    // (sleep 3.6 against a 3s wait here), until it ends, and never past the ceiling.
+    writeFileSync(join(home, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'sleep 3.6' }] }] } }))
+    const decl = await run('sess-tree-declared', { hooks: [{ at: 200, ms: 3600 }] }, 40, 9000)
+    ok(decl.after(0) && decl.typed - decl.at > Number(process.env.PF_PROMPT_STARTUP_MS) && /finished starting/.test(logOf(decl.pane.id)),
+      'a declared hook seen in the process tree holds the prompt past the start-up wait until it ends', decl.why(0))
+    decl.done()
+    writeFileSync(join(home, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'sleep 7.8' }] }] } }))
+    const declStuck = await run('sess-tree-declared-stuck', { hooks: [{ at: 0, ms: 7800 }] }, 40, 9000)
+    const dsWaited = await shortWaitOf(declStuck.pane.id)
+    ok(declStuck.typed > 0 && dsWaited >= 5.5 && !declStuck.cli.ended(0), 'and a declared hook that never ends holds it only to the hooks ceiling', `${dsWaited}s waited\n${logOf(declStuck.pane.id)}`)
+    declStuck.done()
+    deskHooks(true)
 
     // Five at once, as a desk opens them: one shared reading, each pane its own answer.
     const five = await Promise.all([0, 1, 2, 3, 4].map((i) => run(`sess-tree-five-${i}`, { hooks: [{ at: 0, ms: 300 + i * 60 }] })))
@@ -1254,6 +1279,152 @@ const ANSWERING =
     ok(returnsOf(p) > 1 && /UNSENT/.test(logOf(pane.id)) && !/prompt submitted/.test(logOf(pane.id)),
       'then it gets its returns, and with no row it is UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
     manager.kill(pane.id, 'user')
+  }
+
+  // A START-UP HOOK FOUND BY ITS COMMAND, AND HELD FOR PAST THE MINUTE. s54-musnckna (PC,
+  // 0.8.233, 2026-10-03): typed at the 10s short wait, its three SessionStart hooks ran from
+  // +14s to +71.7s - past the 60s ceiling - and six returns went in while they ran; the prompt
+  // sat unsent for 37 minutes until Robert pressed Enter from his phone. Windows has no process
+  // groups, so there a hook is a process under the CLI running a command this desk's
+  // settings.json declares for SessionStart (`hookState`, transcripts.ts). Here every hook is a
+  // child in the CLI's own group, so only its command can find it: on Windows this is the real
+  // reading (PowerShell), elsewhere `ps` stands in for it.
+  {
+    const hookFile = join(work, 'slow-start-hook.mjs')
+    writeFileSync(hookFile, 'setTimeout(() => {}, Number(process.argv[2]))\n')
+    const q = (s) => `"${s}"`
+    // Declared the way the PC's are: a quoted node, a quoted script, then its arguments.
+    const declare = (...ms) => writeFileSync(join(home, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ matcher: 'startup',
+      hooks: ms.map((n) => ({ type: 'command', command: `${q(process.execPath)} ${q(hookFile)} ${n}` })) }] } }))
+    process.env.PF_CLAUDE_HOOKS_BY = 'command'
+    // A real process standing in for Claude Code: an MCP-like child declared nowhere for its whole
+    // run, its pid file at once, and each hook ({at, ms}) a plain child running the declared command.
+    const slowCli = async (sessionId, hooks) => {
+      const plan = JSON.stringify({ hooks, hookFile, dir: join(home, 'sessions'), sessionId, cwd: root })
+      const proc = spawn(process.execPath, ['-e', `
+        const { spawn } = require('node:child_process')
+        const { writeFileSync } = require('node:fs')
+        const plan = JSON.parse(process.env.SLOW_CLI)
+        const kids = [spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)'], { stdio: 'ignore' })]
+        writeFileSync(plan.dir + '/' + process.pid + '.json',
+          JSON.stringify({ pid: process.pid, sessionId: plan.sessionId, cwd: plan.cwd, startedAt: Date.now(), status: 'idle' }))
+        console.log('up')
+        plan.hooks.forEach(({ at, ms }, i) => setTimeout(() => {
+          const hook = spawn(process.execPath, [plan.hookFile, String(ms)], { stdio: 'ignore' })
+          kids.push(hook)
+          hook.on('exit', () => console.log('hook-ended ' + i + ' ' + Date.now()))
+        }, at))
+        process.on('SIGTERM', () => { for (const k of kids) { try { k.kill() } catch {} } process.exit() })
+        setTimeout(() => process.exit(), 15000)`], { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, SLOW_CLI: plan } })
+      let out = ''
+      proc.stdout.on('data', (d) => (out += d))
+      const born = Date.now()
+      for (const until = Date.now() + 5000; !out.includes('up') && Date.now() < until; ) await sleep(5)
+      return { proc, born, ended: (i) => Number(new RegExp(`hook-ended ${i} (\\d+)`).exec(out)?.[1] ?? 0) }
+    }
+
+    // The reading itself, on this platform's own process list: running, then over - and the
+    // MCP-like child, still running, is not a hook.
+    declare(4000)
+    const r = await slowCli('sess-cmd-read', [{ at: 0, ms: 4000 }])
+    let seen = ''
+    for (const until = Date.now() + 8000; Date.now() < until && !r.ended(0); await sleep(100)) {
+      if (claudeStartup(r.proc.pid, r.born) === 'hooks') seen ||= `${Date.now() - r.born}ms`
+    }
+    let over = ''
+    for (const until = Date.now() + (process.platform === 'win32' ? 15_000 : 8000); Date.now() < until && !over; await sleep(100)) {
+      if (claudeStartup(r.proc.pid, r.born) === 'started') over = `${Date.now() - (r.ended(0) || Date.now())}ms after it ended`
+    }
+    ok(Boolean(seen), 'a start-up hook is found by its declared command while it runs', `seen ${seen || 'never'}`)
+    ok(Boolean(over), 'and the start is over once it ends, with an undeclared child still running', `over ${over || 'never'}`)
+    r.proc.kill()
+
+    if (process.platform !== 'win32') {
+      // Seen running at the start ceiling (3s here, a minute for real): held until it ends.
+      declare(3600)
+      const g = await slowCli('sess-cmd-gate', [{ at: 200, ms: 3600 }])
+      const gp = open(g.proc.pid)
+      const gTyped = await typedAt(gp.p, 9000)
+      await sleep(50)
+      ok(gTyped > 0 && g.ended(0) > 0 && gTyped >= g.ended(0) && /finished starting/.test(logOf(gp.pane.id)),
+        'a start-up hook still running at the start ceiling holds the prompt until it ends',
+        `typed ${gTyped ? gTyped - gp.at : '-'}ms in, hook ended ${g.ended(0) ? g.ended(0) - gp.at : '-'}ms in\n${logOf(gp.pane.id)}`)
+      manager.kill(gp.pane.id, 'user')
+      g.proc.kill()
+
+      // s54 itself: typed before the hooks started, which then outlive the ceiling. One return,
+      // none more while they run, and the submit Claude Code runs when they end is the receipt.
+      declare(2400)
+      const name = 'sess-cmd-s54'
+      const s = await slowCli(name, [{ at: 1500, ms: 2400 }])
+      const sPane = manager.start({ cwd: root, agent: 'claude' })
+      const sp = { pane: sPane, p: manager.sessions.get(sPane.id).proc, at: Date.now() }
+      sp.p.pid = s.proc.pid
+      let settles = 0
+      manager.queuePrompt(sPane.id, BRIEF, 0, 40, () => settles++, 5000)
+      sp.p.say(IDLE)
+      for (const until = Date.now() + 9000; Date.now() < until && !s.ended(0); ) await sleep(20)
+      const before = returnsOf(sp.p)
+      received(name)
+      for (const until = Date.now() + budget + 3000; Date.now() < until && !settles; ) await sleep(50)
+      await logSays(sp.pane.id, /prompt submitted|UNSENT/)
+      ok(s.ended(0) > 0 && before <= 1 && returnsOf(sp.p) === 1,
+        'no return goes in while a start-up hook runs past the start ceiling',
+        `${before} returns by the hook's end (+${s.ended(0) ? s.ended(0) - sp.at : '-'}ms), ${returnsOf(sp.p)} in all\n${logOf(sp.pane.id)}`)
+      ok(/Claude transcript receipt/.test(logOf(sp.pane.id)) && !/UNSENT/.test(logOf(sp.pane.id)),
+        'and the submit Claude Code ran when its hooks ended is the receipt', logOf(sp.pane.id))
+      manager.kill(sp.pane.id, 'user')
+      s.proc.kill()
+    }
+    // NOTHING DECLARED, NOTHING READ: with no SessionStart command to look for (none at all, or
+    // one too short to name a hook - a bare `node` matches every node child) the Windows reading
+    // is never started, where it would cost a PowerShell every second for every Claude start.
+    {
+      const cp = createRequire(import.meta.url)('node:child_process')
+      const spawnsFor = async (label) => {
+        await sleep(2500) // the earlier cases' own readings wind down first
+        const spy = mock.method(cp, 'execFile')
+        const c = await slowCli(label, [{ at: 0, ms: 1500 }])
+        let hooks = false
+        for (const until = Date.now() + 1200; Date.now() < until; await sleep(100)) hooks ||= claudeStartup(c.proc.pid, c.born) === 'hooks'
+        // Only the hook reading: the app's other `ps` (ages of processes) is not it.
+        const reads = spy.mock.calls.filter((c) => c.arguments[0] === 'powershell' || (c.arguments[0] === 'ps' && (String(c.arguments[1]).includes('ppid=,') && !String(c.arguments[1]).includes('etime'))))
+        const n = reads.length
+        const first = reads.map((c) => `${c.arguments[0]} ${String(c.arguments[1]).slice(0, 60)}`).join(' | ')
+        spy.mock.restore()
+        c.proc.kill()
+        return { n, hooks, first }
+      }
+      declare()
+      const none = await spawnsFor('sess-cmd-none')
+      ok(none.n === 0 && !none.hooks, 'with no SessionStart command declared no reading of the process list is started', `${none.n} reads: ${none.first}`)
+      writeFileSync(join(home, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: 'node' }] }] } }))
+      const short = await spawnsFor('sess-cmd-short')
+      ok(short.n === 0 && !short.hooks, 'and a declared command shorter than 8 characters names no hook', `${short.n} reads, hooks ${short.hooks}: ${short.first}`)
+      declare(1500)
+      const some = await spawnsFor('sess-cmd-some')
+      ok(some.n > 0 && some.hooks, 'while a real declared command is read and found', `${some.n} reads, hooks ${some.hooks}`)
+    }
+    // An unusable ceiling in the environment must not remove the bound (NaN compares false with everything).
+    {
+      buildSync({
+        absWorkingDir: root,
+        stdin: { contents: `export { CLAUDE_HOOKS_MAX_MS } from './src/main/transcripts'`, resolveDir: root },
+        bundle: true, format: 'cjs', platform: 'node', outfile: join(work, 'hooksmax.bundle.cjs'),
+        alias: { electron: join(work, 'electron-stub.cjs'), '@lydell/node-pty': join(work, 'pty-stub.cjs') }, logLevel: 'silent'
+      })
+      const was = process.env.PF_PROMPT_HOOKS_MAX_MS
+      const got = []
+      for (const v of ['abc', '', '-5', '0']) {
+        process.env.PF_PROMPT_HOOKS_MAX_MS = v
+        delete req.cache[req.resolve(join(work, 'hooksmax.bundle.cjs'))]
+        got.push(req('./hooksmax.bundle.cjs').CLAUDE_HOOKS_MAX_MS)
+      }
+      process.env.PF_PROMPT_HOOKS_MAX_MS = was
+      ok(got.every((n) => n === 300_000), 'an invalid hooks ceiling in the environment falls back to 5 minutes', JSON.stringify(got))
+    }
+    delete process.env.PF_CLAUDE_HOOKS_BY
+    deskHooks(true)
   }
 
   // A TYPED CLAUDE PROMPT LEFT UNSENT IS KEPT, NOT CALLED LOST. After the 2026-10-01 restarts
@@ -2281,6 +2452,269 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(() => pasted(recoveredUntyped.p, untypedText) && ledger(recoveredUntyped.pane.id).length === 0),
     'accepted never-typed intent still recovers into an exact native submission')
   manager.kill(neverTyped.pane.id, 'user'); manager.kill(recoveredUntyped.pane.id, 'user')
+
+  // ---------------------------------------------------------------------------
+  // `pf tell` INTO A CODEX PANE LANDS, AND SAYS WHETHER IT DID.
+  //
+  // 2026-10-03: a tell to s42-mus4a344 waited for a turn that ran for hours and then gave up;
+  // a 1463-char `pf type` sat typed in s40-mus3teu4's box for 10 minutes; the Enter retries
+  // that should have rescued it were all held back because the box, read off the screen,
+  // had lost a space at each soft wrap. A fake Codex: one input box that takes a bracketed
+  // paste and shows it (long pastes as Codex 0.160 does, `[Pasted Content N chars]`), and an
+  // Enter that writes the box to the rollout as a user row - or is swallowed, as each knob says.
+  const fakeCodex = (f, o = {}) => {
+    const s = { box: '', echoedAt: 0, returns: 0, swallowed: 0, booting: Boolean(o.booting), top: o.top ?? '', bootEndedAt: 0, pastedAt: 0, firstEchoAt: 0, firstEnterAt: 0 }
+    const show = (text) => {
+      if (o.show) return o.show(text)
+      const n = [...text].length
+      if (n > 1000) return `[Pasted Content ${n} chars]`
+      if (!o.wrapAt) return text
+      // Soft wrap at the last space before the width, and the space is not drawn (s40: the
+      // box read 495 chars for a 497-char prompt).
+      const rows = []
+      let rest = text
+      while (rest.length > o.wrapAt) {
+        const cut = rest.lastIndexOf(' ', o.wrapAt)
+        if (cut <= 0) break
+        rows.push(rest.slice(0, cut))
+        rest = rest.slice(cut + 1)
+      }
+      return [...rows, rest].join('\n')
+    }
+    s.paint = () => {
+      let raw = frame(show(s.box), Boolean(o.working))
+      if (s.booting) raw = raw.replace('\x1b[2J', '\x1b[2J\x1b[2;1H• Starting MCP servers (0/2): codex_apps (0s • esc to interrupt)')
+      if (s.top) raw = raw.replace('\x1b[2J', `\x1b[2J\x1b[1;1H${s.top}`)
+      f.p.say(raw)
+      s.echoedAt = Date.now()
+    }
+    s.endBoot = () => { s.booting = false; s.bootEndedAt = Date.now(); s.paint() }
+    f.p.onWrite = (data) => {
+      const m = /^\x1b\[200~([\s\S]*)\x1b\[201~$/.exec(data)
+      if (m) {
+        s.box = m[1]
+        s.pastedAt = Date.now()
+        // A busy TUI draws the paste late (`echoMs`): the Enter has to wait for it.
+        const draw = () => { s.paint(); s.firstEchoAt ||= s.echoedAt }
+        if (o.echoMs) setTimeout(draw, o.echoMs)
+        else draw()
+        return
+      }
+      if (data !== '\r') return
+      s.returns++
+      s.firstEnterAt ||= Date.now()
+      // Codex 0.160 paste-burst guess: an Enter within 120ms of the last text it drew is part
+      // of the same burst. And an Enter while it is still starting goes nowhere.
+      const burst = o.burstMs !== undefined && Date.now() - s.echoedAt < o.burstMs
+      if (burst || s.booting || (o.swallowFirst && s.returns === 1) || o.swallowAll) { s.swallowed++; return }
+      if (s.box) f.received(s.box)
+      s.box = ''
+      s.paint()
+    }
+    s.paint()
+    return s
+  }
+  const longTurn = (f) => {
+    f.live.meta.runSince = Date.now() - 3 * 3600_000
+    f.live.busyUntil = Date.now() + 600_000
+    f.live.meta.status = 'working'
+  }
+  const ticker = (s, every = 250) => setInterval(() => s.paint(), every)
+
+  // (i) Mid-turn, box clear: steered into the running turn, receipted, and the turn never ended.
+  {
+    const f = open()
+    longTurn(f)
+    const s = fakeCodex(f, { working: true })
+    const tick = ticker(s)
+    const busySince = f.live.meta.runSince
+    const text = 'please also check the export settings before you render'
+    const startedAt = Date.now()
+    const outcome = await manager.tellPane(f.pane.id, text, 4000)
+    clearInterval(tick)
+    ok(outcome?.kind === 'delivered' && outcome.how === 'steered' && /Codex wrote it/.test(outcome.receipt) && outcome.id === f.pane.id,
+      'tell: a Codex pane mid-turn with a clear box gets the prompt steered in and receipted', JSON.stringify(outcome) + '\n' + logOf(f.pane.id))
+    ok(Date.now() - startedAt < 4000 && f.live.meta.runSince === busySince,
+      'tell: steered within seconds, without waiting for the turn to end', `${Date.now() - startedAt}ms, runSince ${f.live.meta.runSince} vs ${busySince}`)
+    ok(await logSays(f.pane.id, /steered into a running Codex turn \(busy since \d{1,2}:\d\d[ap]m \w{3}\)/),
+      'tell: the steer is written down once, with when the turn began', logOf(f.pane.id))
+    ok(pasted(f.p, text) && ledger(f.pane.id).length === 0, 'tell: one bracketed paste, ledger closed by the receipt')
+    manager.kill(f.pane.id, 'user')
+  }
+  // ...but not over the person's draft: that waits, and the tell says so.
+  {
+    const f = open()
+    longTurn(f)
+    const s = fakeCodex(f, { working: true })
+    manager.write(f.pane.id, 'half a thought', 'desk')
+    s.box = 'half a thought'
+    s.paint()
+    const outcome = await manager.tellPane(f.pane.id, 'a tell that must wait for the draft', 900)
+    ok(outcome?.kind === 'queued' && outcome.busySince === f.live.meta.runSince && /typing/.test(outcome.reason) &&
+      !pasted(f.p, 'a tell that must wait for the draft') && f.live.meta.owedPrompt,
+      "tell: a person's draft in the box keeps the prompt waiting, owed, and says why", JSON.stringify(outcome) + '\n' + logOf(f.pane.id))
+    manager.kill(f.pane.id, 'user')
+  }
+  // ...nor into a sub-agent's view, where Enter would go to the sub-agent.
+  {
+    const f = open()
+    longTurn(f)
+    const s = fakeCodex(f, { working: true, show: () => 'Viewing sub-agent — direct input is disabled' })
+    s.top = 'Sub-agent /root/worker'
+    s.paint()
+    const outcome = await manager.tellPane(f.pane.id, 'a tell that must not reach the sub-agent', 900)
+    ok(outcome?.kind === 'queued' && /sub-agent/.test(outcome.reason) && !pasted(f.p, 'a tell that must not reach the sub-agent'),
+      'tell: a sub-agent view keeps the prompt waiting and says why', JSON.stringify(outcome) + '\n' + logOf(f.pane.id))
+    manager.kill(f.pane.id, 'user')
+  }
+  // (vi) A name nobody has.
+  {
+    const outcome = await manager.tellPane('s999-nobody', 'hello', 500)
+    ok(outcome?.kind === 'missing' && outcome.ref === 's999-nobody', 'tell: no such chat answers missing', JSON.stringify(outcome))
+  }
+  // (ii) An Enter in the same burst as the paste is swallowed: the re-sent Enter lands it.
+  // The paste is drawn 150ms late, as a busy Windows TUI does; the first Enter waits for it.
+  {
+    const f = open()
+    const s = fakeCodex(f, { burstMs: 120, echoMs: 150 })
+    const text = 'a prompt whose first Enter is read as part of the paste'
+    const settled = queue(f, text)
+    ok(await waitFor(() => settled() === 1) && ledger(f.pane.id).length === 0 && await logSays(f.pane.id, /native Codex receipt/),
+      'a swallowed same-burst Enter is re-sent and the prompt lands', `${s.returns} returns, ${s.swallowed} swallowed\n${logOf(f.pane.id)}`)
+    ok(s.firstEchoAt > 0 && s.firstEnterAt >= s.firstEchoAt,
+      'and the first Enter waits until the paste is drawn', `Enter ${s.firstEnterAt - s.firstEchoAt}ms after the paste was drawn`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // (iii) The box soft-wraps at a space and drops it: still the prompt, so Enter is re-sent.
+  {
+    const f = open()
+    const s = fakeCodex(f, { wrapAt: 30, swallowFirst: true })
+    const text = 'render the opening shot again with the warmer key light and keep the same camera move throughout'
+    const settled = queue(f, text)
+    ok(await waitFor(() => settled() === 1) && ledger(f.pane.id).length === 0 && s.returns === 2,
+      'a soft-wrapped box that lost its spaces still gets the retry Enter', `${s.returns} returns\n${logOf(f.pane.id)}`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // ...while a box that really holds something else is held back, and the log says why.
+  {
+    const f = open()
+    const text = 'the prompt this app typed into the box'
+    const s = fakeCodex(f, { swallowAll: true, show: (t) => t ? 'somebody else wrote this instead' : '' })
+    const settled = queue(f, text)
+    ok(await waitFor(() => settled() === 1) && s.returns === 1,
+      'a box holding different text gets no retry Enter', `${s.returns} returns\n${logOf(f.pane.id)}`)
+    ok(await logSays(f.pane.id, new RegExp(`codex retry \\d/\\d held back: input box shows 32 chars, prompt is ${text.length}`)),
+      'and every held-back retry names both lengths', logOf(f.pane.id))
+    ok(Boolean(f.live.meta.promptUnsent), 'a Codex prompt given up on is marked not sent on the pane', String(f.live.meta.promptUnsent))
+    manager.write(f.pane.id, 'x', 'desk')
+    ok(!f.live.meta.promptUnsent, 'and the mark clears when the person writes into the pane', String(f.live.meta.promptUnsent))
+    manager.kill(f.pane.id, 'user')
+    // The ledger log is appended off the closing path, so it is waited for, not raced.
+    const lostOf = () => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(f.pane.id) && /LOST/.test(l)).join('\n') } catch { return '' } }
+    await waitFor(() => lostOf() !== '', 2000)
+    const lost = lostOf()
+    ok(/typed into the box but the agent never took it before the pane closed/.test(lost) && !/closed before it was typed/.test(lost),
+      'closing that pane logs the prompt as typed but never taken, not as never typed', lost)
+  }
+  // (iv) A 1,500-char paste shows as Codex's placeholder: that IS the prompt, so Enter is re-sent.
+  {
+    const f = open()
+    const s = fakeCodex(f, { swallowFirst: true })
+    const text = ('a long brief line that goes on. '.repeat(47) + 'end').slice(0, 1500)
+    const settled = queue(f, text)
+    ok(await waitFor(() => settled() === 1) && ledger(f.pane.id).length === 0 && s.returns === 2,
+      'a [Pasted Content 1500 chars] box is the prompt: retry Enter sent, receipt lands', `${s.returns} returns\n${logOf(f.pane.id)}`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // (v) A fresh Codex still starting its MCP servers, quiet long enough to look stale: the
+  // prompt waits for the start to finish, and lands whichever way the first Enter goes.
+  {
+    const f = open()
+    const s = fakeCodex(f, { booting: true })
+    const text = 'the first prompt into a Codex that is still starting'
+    const settled = queue(f, text, 8000)
+    setTimeout(() => s.endBoot(), Number(process.env.PF_PROMPT_STALE_BUSY_MS) + 900)
+    ok(await waitFor(() => settled() === 1, 9000) && ledger(f.pane.id).length === 0,
+      'the first prompt into a starting Codex lands', `${s.returns} returns, ${s.swallowed} swallowed\n${logOf(f.pane.id)}`)
+    ok(s.bootEndedAt > 0 && s.pastedAt >= s.bootEndedAt,
+      'and it is typed only once the start is over', `pasted ${s.pastedAt - s.bootEndedAt}ms after the start ended\n${logOf(f.pane.id)}`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // (vii) A Codex that finished starting before anybody looked - a restored or woken chat
+  // first looked at 8 s after spawn. Its start line is still in the text it printed, but the
+  // screen shows a ready, empty box: that is what counts, so the prompt goes in now, not when
+  // the start wait runs out a minute after spawn.
+  {
+    const f = open()
+    const bornAt = Date.now()
+    const s = fakeCodex(f, { booting: true })
+    s.endBoot()
+    // Quiet past the stale-footer wait, as such a chat is by the time it is looked at.
+    await sleep(Number(process.env.PF_PROMPT_STALE_BUSY_MS) + 100)
+    const text = 'the first prompt into a Codex that started before anybody looked'
+    const queuedAt = Date.now()
+    const settled = queue(f, text, 8000)
+    await waitFor(() => s.pastedAt > 0, 4000)
+    ok(s.pastedAt > 0 && s.pastedAt - queuedAt < 1000 && s.pastedAt - bornAt < Number(process.env.PF_PROMPT_STARTUP_MS),
+      'a Codex whose start is over on screen is typed at once, not held to the end of the start wait',
+      `pasted ${s.pastedAt ? s.pastedAt - queuedAt : 'never'}ms after it was queued, ${s.pastedAt ? s.pastedAt - bornAt : '-'}ms after spawn\n${logOf(f.pane.id)}`)
+    ok(!/waiting for Codex to finish starting/.test(logOf(f.pane.id)), 'and nothing says it is still starting', logOf(f.pane.id))
+    ok(await waitFor(() => settled() === 1) && ledger(f.pane.id).length === 0, 'and it lands', logOf(f.pane.id))
+    manager.kill(f.pane.id, 'user')
+  }
+  // (viii) A tell to a chat still starting says so in seconds. Without it a `pf continue` that
+  // reopened a chat held its caller for the whole receipt window, and GuardDeck gives it 45 s.
+  {
+    const f = open()
+    const s = fakeCodex(f, { booting: true })
+    const tick = ticker(s)
+    const startedAt = Date.now()
+    const outcome = await manager.tellPane(f.pane.id, 'continue', 8000)
+    const took = Date.now() - startedAt
+    clearInterval(tick)
+    ok(outcome?.kind === 'queued' && /still starting/.test(outcome.reason) && took < 6000 && f.live.meta.owedPrompt,
+      'tell: a chat still starting answers queued in seconds, and the prompt stays owed', `${took}ms ${JSON.stringify(outcome)}\n${logOf(f.pane.id)}`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // (ix) Codex takes a prompt late, after it was marked not sent: the mark goes with the hold,
+  // or the card and GuardDeck keep saying "not sent" over a prompt Codex is answering.
+  {
+    const f = open()
+    const s = fakeCodex(f, { swallowAll: true })
+    const text = 'a prompt Codex takes only after it was given up on'
+    const settled = queue(f, text)
+    ok(await waitFor(() => settled() === 1) && Boolean(f.live.meta.promptUnsent) && Boolean(f.live.draftConfirmation),
+      'precondition: a swallowed Codex prompt is marked not sent and keeps its hold', `${JSON.stringify(f.live.draftConfirmation)}\n${logOf(f.pane.id)}`)
+    f.received(text)
+    s.box = ''
+    s.paint()
+    await sleep(50)
+    await manager.confirmDraft(f.live)
+    ok(!f.live.draftConfirmation && !f.live.meta.promptUnsent,
+      'a prompt Codex took after it was marked not sent clears the mark with the hold',
+      `hold=${JSON.stringify(f.live.draftConfirmation)} promptUnsent=${f.live.meta.promptUnsent}`)
+    manager.kill(f.pane.id, 'user')
+  }
+  // (x) A tell whose prompt cannot even be queued answers failed, once, and leaves nothing
+  // ticking behind it: the 250 ms watch used to start first and then read a wait that was
+  // never made, throwing on every tick for ever.
+  {
+    const f = open()
+    const thrown = []
+    const catcher = (e) => thrown.push(String(e?.message ?? e))
+    process.on('uncaughtException', catcher)
+    manager.queuePrompt = () => { throw new Error('the list of waiting prompts could not be saved') }
+    let outcome
+    try { outcome = await manager.tellPane(f.pane.id, 'hello', 2000) } catch (e) { outcome = { rejected: String(e?.message ?? e) } }
+    delete manager.queuePrompt
+    await sleep(700)
+    // Left on when the old code is running, so its endless ticks do not end the whole file.
+    if (!thrown.length) process.off('uncaughtException', catcher)
+    ok(outcome?.kind === 'failed' && outcome.id === f.pane.id && /could not be saved/.test(outcome.reason) && thrown.length === 0,
+      'tell: a prompt that cannot be queued answers failed with the reason, and nothing keeps ticking',
+      `${JSON.stringify(outcome)} | ${thrown.length} errors after it: ${thrown[0] ?? ''}`)
+    manager.kill(f.pane.id, 'user')
+  }
 }
 
 // A completed Codex turn keeps its notification pending until the attention gate
@@ -2372,6 +2806,9 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     ok(settled === 1 && await logSays(pane.id, /returns were swallowed/) && owedAsExpected && live.meta.drafting === true,
       `${agent} (app): a queued prompt whose returns were swallowed keeps the draft hold`,
       `settled=${settled} owed=${live.meta.owedPrompt} drafting=${live.meta.drafting}\n${logOf(pane.id)}`)
+    // s54-musnckna (PC, 2026-10-03): "6 returns were swallowed" left no mark, so no card
+    // chip, no `pf list` note, no GuardDeck card and nothing for the Mac that opened it.
+    ok(Boolean(live.meta.promptUnsent), `${agent} (app): swallowed returns mark the prompt not sent`, String(live.meta.promptUnsent))
     live.proc.onWrite = undefined
   }
   const name = origin === 'app' ? `${agent} (app)` : agent

@@ -879,17 +879,33 @@ export function claimFromCli(id: string, pid: number | undefined): boolean {
  * six returns swallowed, the prompt lost. Hooks this desk runs but not seen yet are
  * `awaiting` (`hooksAwaited`): at load 50-137 a fresh CLI's first hook started at +11-25s.
  * A resumed transcript counts only a record stamped since this spawn (`startRecordSince`).
+ *
+ * `hooks` - a hook this desk's settings.json DECLARES for SessionStart, seen running in the
+ * process tree by its command - is the one reading that holds past the minute, up to
+ * `CLAUDE_HOOKS_MAX_MS`: s54-musnckna (PC, 2026-10-03) ran its SessionStart hooks from
+ * +14s to +71.7s, so a 60s ceiling let returns into a CLI still starting. A child seen only
+ * in another process group (Mac) could be the status-line command or a plugin hook, so it is
+ * `starting` and held no longer than before: to `PROMPT_STARTUP_MS`.
  */
 const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
+/**
+ * How long a start-up hook SEEN RUNNING may hold a fresh Claude Code's first prompt and its
+ * returns, counted from the process's start. Several minutes, not the minute every other
+ * startup reading gets: a seen hook is a reading, and the PC's measured 71.7s was past that
+ * minute. Past this the prompt is typed and its returns sent as before.
+ */
+export const CLAUDE_HOOKS_MAX_MS = ((n: number): number => (Number.isFinite(n) && n > 0 ? n : 300_000))(Number(process.env.PF_PROMPT_HOOKS_MAX_MS))
 export function claudeStartup(
   pid: number | undefined,
   born: number,
   resumed?: { cwd: string; id?: string }
-): 'started' | 'starting' | 'awaiting' | 'unknown' {
+): 'started' | 'hooks' | 'starting' | 'awaiting' | 'unknown' {
   const row = cliSession(pid)
   const hooks = pid === undefined ? 'unseen' : hookState(pid, born)
   if (hooks === 'over') return 'started'
-  // Seen running is a reading, not a guess: held past the short wait, up to the ceiling.
+  // A declared hook seen running is a reading, not a guess: held past the short wait and the minute.
+  if (hooks === 'running-declared') return 'hooks'
+  // Some other child in a group of its own: held to the start-up wait, no further.
   if (hooks === 'running') return 'starting'
   const file = (row && transcriptPath(row.cwd, row.sessionId)) || (resumed?.id && transcriptPath(resumed.cwd, resumed.id)) || null
   const record = file ? (resumed ? startRecordSince(file, born) : /"hookName":"SessionStart:/.test(readHead(file) ?? '')) : false
@@ -916,12 +932,13 @@ export function claudeStartup(
  * no pid file (the CLI has not got that far; at most 3x the short wait) and for the short
  * wait after it appears - a
  * hook short enough to fall between two readings must not cost the 60s ceiling. Windows
- * cannot see hooks, so it never awaits them.
+ * awaits them too now that it reads them by their command (`hookState`): s54-musnckna's
+ * hooks started at +14s, after the 10s short wait.
  */
 const HOOKS_UNSEEN_MS = Number(process.env.PF_PROMPT_PIDFILE_MS ?? 10_000)
 const pidFileSeen = new Map<number, { born: number; at: number }>()
 function hooksAwaited(pid: number, born: number, hasPidFile: boolean, source: 'startup' | 'resume'): boolean {
-  if (process.platform === 'win32' || !sessionStartHooks(source)) return false
+  if (!sessionStartHooks(source)) return false
   const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
   // A CLI too old to write pid files, or one writing them somewhere else, would otherwise hold
   // every prompt to the ceiling. Under load the pid file was born +3-19s in.
@@ -957,8 +974,23 @@ function startRecordSince(file: string, born: number): boolean {
  * then is a missing record "still starting"; with none, nothing will ever write one and the
  * short wait stands. Read from the user's settings.json, kept while its mtime and size hold.
  */
-let hookDecl: { key: string; on: Record<string, boolean> } | undefined
+let hookDecl: { key: string; on: Record<string, boolean>; commands: string[] } | undefined
 function sessionStartHooks(source: 'startup' | 'resume'): boolean {
+  return readHookDecl()?.on[source] ?? false
+}
+/** The commands this desk declares for SessionStart, in `commandKey` form (`hookState`). */
+function sessionStartCommands(): string[] {
+  return readHookDecl()?.commands ?? []
+}
+/**
+ * A command line as a hook's own process or the shell wrapping it shows it: quotes gone
+ * (a wrapper's `\"` too), `/` for `\`, one space, lower case. Matched whole-token, so a
+ * declared `"C:\Program Files\nodejs\node.exe" "C:\x\hook.mjs" a` is found in
+ * `bash.exe -c "\"C:\Program Files\nodejs\node.exe\" ..."` and in node's own line.
+ */
+const commandKey = (s: string): string =>
+  s.replace(/\\"/g, '"').replace(/["']/g, '').replace(/\\/g, '/').replace(/\s+/g, ' ').trim().toLowerCase()
+function readHookDecl(): typeof hookDecl {
   const file = join(process.env.PF_CLAUDE_HOME || join(homedir(), '.claude'), 'settings.json')
   try {
     const st = statSync(file)
@@ -976,17 +1008,21 @@ function sessionStartHooks(source: 'startup' | 'resume'): boolean {
             return g.matcher.includes(src)
           }
         })
-      hookDecl = { key, on: { startup: fires('startup'), resume: fires('resume') } }
+      const commands = groups.flatMap((g) => (Array.isArray(g?.hooks) ? g.hooks : []))
+        .map((h) => (typeof (h as { command?: unknown })?.command === 'string' ? commandKey((h as { command: string }).command) : ''))
+        // A bare `node` would match every node child: too short to name one hook.
+        .filter((c) => c.length >= 8)
+      hookDecl = { key, on: { startup: fires('startup'), resume: fires('resume') }, commands }
     }
-    return hookDecl.on[source]
+    return hookDecl
   } catch {
-    return false
+    return undefined
   }
 }
 
 const HOOKS_QUIET_MS = Number(process.env.PF_CLAUDE_HOOKS_QUIET_MS ?? 500)
 const HOOKS_PS_MS = Number(process.env.PF_CLAUDE_HOOKS_PS_MS ?? 200)
-type HookWatch = { born: number; asked: number; saw: boolean; quietSince: number; quietAt: number }
+type HookWatch = { born: number; asked: number; saw: boolean; declared: boolean; quietSince: number; quietAt: number }
 const hookWatch = new Map<number, HookWatch>()
 let hookPsRunning = false
 let hookTimer: NodeJS.Timeout | undefined
@@ -1000,8 +1036,10 @@ const hooksOver = (w: HookWatch): boolean => w.saw && w.quietSince > 0 && w.quie
  */
 export function watchClaudeHooks(pid: number | undefined, born: number): void {
   // Same pid, another process: a finished watch must not open a new CLI's gate.
-  if (process.platform === 'win32' || !pid || hookWatch.get(pid)?.born === born) return
-  hookWatch.set(pid, { born, asked: 0, saw: false, quietSince: 0, quietAt: 0 })
+  if (!pid || hookWatch.get(pid)?.born === born) return
+  // By command, with no command declared there is nothing to find: no PowerShell every second.
+  if (hooksByCommand() && !sessionStartCommands().length) return
+  hookWatch.set(pid, { born, asked: 0, saw: false, declared: false, quietSince: 0, quietAt: 0 })
   readHookTree()
 }
 
@@ -1021,46 +1059,116 @@ export function watchClaudeHooks(pid: number | undefined, born: number): void {
  * Watched only once the pid file is there: before it the CLI runs short children of its own
  * (a shell snapshot), and a quiet gap after one of those is not hooks done.
  * Never seen answers nothing here: `hooksAwaited` says whether they are still to come.
- * Windows has no process groups.
- * One `ps -Ao pid=,ppid=,pgid=` (~15ms, no command column) serves every pane asking.
+ * One `ps -ww -Ao pid=,ppid=,pgid=,command=` serves every pane asking, for the group test and
+ * for the declared-command test below. Only a hook found by a declared command is
+ * `running-declared` (it holds past the minute); a group-only child is `running`.
+ *
+ * WINDOWS HAS NO PROCESS GROUPS, so there a hook is found by its COMMAND: a process anywhere
+ * under the CLI whose command line holds, whole-token, a command this desk's settings.json
+ * declares for SessionStart (`commandKey`) - the hook itself, or the shell Claude Code wraps it
+ * in. Its MCP servers are declared nowhere there, and a command matches no matter when it
+ * started, so no pid file is waited for. Before this Windows saw no hook at all: s54-musnckna
+ * (PC, 2026-10-03) was typed at the 10s short wait and its hooks ran +14s to +71.7s. A plugin's own
+ * hooks are not in settings.json and are not seen. One PowerShell reading (~1s) serves every
+ * pane, at most once a second.
  */
-function hookState(pid: number, born: number): 'over' | 'running' | 'unseen' {
-  if (process.platform === 'win32') return 'unseen'
+function hookState(pid: number, born: number): 'over' | 'running-declared' | 'running' | 'unseen' {
   watchClaudeHooks(pid, born)
   const w = hookWatch.get(pid)
   if (!w) return 'unseen'
   w.asked = Date.now()
-  return hooksOver(w) ? 'over' : w.saw ? 'running' : 'unseen'
+  return hooksOver(w) ? 'over' : w.saw ? (w.declared ? 'running-declared' : 'running') : 'unseen'
 }
 
-/** One `ps` for every pane still being watched, again every HOOKS_PS_MS until each has settled or gone. */
+// The command reading is Windows' own; `PF_CLAUDE_HOOKS_BY=command` runs it on `ps` for a test.
+const hooksByCommand = (): boolean => process.platform === 'win32' || process.env.PF_CLAUDE_HOOKS_BY === 'command'
+const PS_HOOK_TABLE = [
+  // UTF-8 out, as settings.json is read: a non-ASCII path in a command line must still match.
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+  '$ErrorActionPreference="SilentlyContinue"',
+  'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CommandLine |',
+  '  ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }'
+].join('\n')
+type HookRow = { pid: number; ppid: number; pgid: number; cmd: string }
+/** Every process, as `ps` or PowerShell lists it; null when the reading failed. */
+function hookTable(byCommand: boolean, done: (rows: HookRow[] | null) => void): void {
+  const parse = (re: RegExp, text: string, row: (m: RegExpExecArray) => HookRow): HookRow[] =>
+    text.split(/\r?\n/).flatMap((line) => {
+      const m = re.exec(line)
+      return m ? [row(m)] : []
+    })
+  const opts = { timeout: 5000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, encoding: 'utf8' as const }
+  if (process.platform === 'win32') {
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(PS_HOOK_TABLE, 'utf16le').toString('base64')], opts,
+      (error, stdout) => done(error ? null : parse(/^\s*(\d+)\s+(\d+)\s?(.*)$/, stdout, (m) => ({ pid: Number(m[1]), ppid: Number(m[2]), pgid: 0, cmd: m[3] }))))
+  } else {
+    // One reading for the group test and the declared-command test. A command may hold spaces:
+    // it is the rest of the line.
+    execFile('ps', ['-ww', '-Ao', 'pid=,ppid=,pgid=,command='], opts,
+      (error, stdout) => done(error ? null : parse(/^\s*(\d+)\s+(\d+)\s+(\d+)\s?(.*)$/, stdout, (m) => ({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), cmd: m[4] }))))
+  }
+}
+
+/**
+ * The watched CLIs with a hook running now, and how it was found: `declared` = a process under
+ * the CLI runs a command settings.json declares for SessionStart; `group` = (Mac, not in the
+ * Windows reading) a direct child sits in a process group of its own.
+ */
+function hooksRunning(rows: HookRow[], byCommand: boolean): Map<number, 'declared' | 'group'> {
+  const running = new Map<number, 'declared' | 'group'>()
+  const declared = sessionStartCommands().map((c) => ` ${c} `)
+  if (declared.length) {
+    const kids = new Map<number, HookRow[]>()
+    for (const r of rows) if (r.pid !== r.ppid) kids.set(r.ppid, [...(kids.get(r.ppid) ?? []), r])
+    for (const pid of hookWatch.keys()) {
+      const seen = new Set<number>()
+      const stack = [...(kids.get(pid) ?? [])]
+      while (stack.length && !running.has(pid)) {
+        const r = stack.pop()!
+        if (seen.has(r.pid)) continue
+        seen.add(r.pid)
+        const line = ` ${commandKey(r.cmd)} `
+        if (declared.some((d) => line.includes(d))) running.set(pid, 'declared')
+        else stack.push(...(kids.get(r.pid) ?? []))
+      }
+    }
+  }
+  if (!byCommand) {
+    const group = new Map(rows.map((r) => [r.pid, r.pgid]))
+    for (const r of rows) if (hookWatch.has(r.ppid) && r.pgid !== group.get(r.ppid) && !running.has(r.ppid)) running.set(r.ppid, 'group')
+  }
+  return running
+}
+
+/** One reading for every pane still being watched, again every HOOKS_PS_MS until each has settled or gone. */
 function readHookTree(): void {
   if (hookPsRunning || hookTimer) return
   hookPsRunning = true
   const at = Date.now()
-  // Only a CLI that has written its pid file is read: see `hookState`.
-  const ready = new Set([...hookWatch.keys()].filter((pid) => cliSession(pid)))
-  execFile('ps', ['-Ao', 'pid=,ppid=,pgid='], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+  const byCommand = hooksByCommand()
+  // Only a CLI that has written its pid file is read by group: see `hookState`.
+  const ready = new Set([...hookWatch.keys()].filter((pid) => byCommand || cliSession(pid)))
+  hookTable(byCommand, (rows) => {
     hookPsRunning = false
     const end = Date.now()
     // Past the startup window, or no longer asked about (its prompt went in): stop watching,
-    // whether or not `ps` answered, so a failing `ps` never runs on for ever.
-    for (const [pid, w] of hookWatch) if (end - w.born > 60_000 || (w.asked && end - w.asked > 2000)) hookWatch.delete(pid)
+    // whether or not the reading answered, so a failing one never runs on for ever. A hook seen
+    // still running is asked about only once per confirm (4s), so it is kept for longer.
+    for (const [pid, w] of hookWatch) {
+      const unasked = w.saw && !hooksOver(w) ? 10_000 : 2000
+      if (end - w.born > CLAUDE_HOOKS_MAX_MS || (w.asked && end - w.asked > unasked)) hookWatch.delete(pid)
+    }
     // A failed reading is no reading: neither busy nor quiet.
-    if (!error) {
-      const rows: Array<[number, number, number]> = []
-      for (const line of stdout.split('\n')) {
-        const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line)
-        if (m) rows.push([Number(m[1]), Number(m[2]), Number(m[3])])
-      }
-      const group = new Map(rows.map(([p, , g]) => [p, g]))
-      const running = new Set(rows.filter(([, parent, g]) => hookWatch.has(parent) && g !== group.get(parent)).map(([, parent]) => parent))
+    if (rows) {
+      const alive = new Set(rows.map((r) => r.pid))
+      const running = hooksRunning(rows, byCommand)
       for (const [pid, w] of hookWatch) {
         // Gone (the pid may be reused): stop watching.
-        if (!group.has(pid)) hookWatch.delete(pid)
+        if (!alive.has(pid)) hookWatch.delete(pid)
         else if (!ready.has(pid) || hooksOver(w)) continue
         else if (running.has(pid)) {
           w.saw = true
+          if (running.get(pid) === 'declared') w.declared = true
           w.quietSince = 0
         } else if (w.saw) {
           // A hook may have ended just before this reading's snapshot: quiet counts from its end.
@@ -1070,10 +1178,11 @@ function readHookTree(): void {
       }
     }
     if ([...hookWatch.values()].some((w) => !hooksOver(w))) {
+      // A PowerShell reading costs about a second of a core where `ps` costs 15ms.
       hookTimer = setTimeout(() => {
         hookTimer = undefined
         readHookTree()
-      }, HOOKS_PS_MS)
+      }, process.platform === 'win32' ? Math.max(HOOKS_PS_MS, 1000) : HOOKS_PS_MS)
       hookTimer.unref?.()
     }
   })
