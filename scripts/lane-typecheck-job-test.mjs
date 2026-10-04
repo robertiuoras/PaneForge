@@ -27,6 +27,9 @@ const jobsFile = join(root, 'jobs.jsonl')
 const modeFile = join(root, 'mode')
 // Suite jobs answer from this file when it exists; comma-separated steps are used one per wait.
 const suiteModeFile = join(root, 'mode-suite')
+// While this file exists a wait on a job still in line takes 10 ms per second of its budget:
+// the 900 s wait a clock tick held the recovery lock through is 9 s here.
+const slowFile = join(root, 'slow')
 let failures = 0
 
 function ok(name, pass, detail = '') {
@@ -120,8 +123,11 @@ if (args.includes('--no-wait')) {
 const job = readFileSync(${JSON.stringify(jobsFile)}, 'utf8').trim().split('\\n').map(JSON.parse).find((j) => j.id === args[1])
 const file = job?.kind === 'suite' && existsSync(${JSON.stringify(suiteModeFile)}) ? ${JSON.stringify(suiteModeFile)} : ${JSON.stringify(modeFile)}
 const steps = readFileSync(file, 'utf8').trim().split(',')
+// --resume: the job's state now, never a wait - from the step the next wait would take, not using it up.
+if (args[0] === '--resume') process.exit(['queued', 'killed'].includes(steps[0]) ? 75 : steps[0] === 'pass' ? 0 : 1)
 if (steps.length > 1) writeFileSync(file, steps.slice(1).join(','))
 const mode = steps[0]
+if (mode === 'queued' && existsSync(${JSON.stringify(slowFile)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(args[2]) * 10)
 if (mode === 'queued') process.exit(75)
 if (mode === 'pass') process.exit(0)
 if (mode === 'ts') { console.log('src/x.ts(1,1): error TS2322: nope'); process.exit(2) }
@@ -367,6 +373,60 @@ process.exit(1)
   ok('r: both lanes waited on in the same try', rCalls.filter((a) => a[0] === '--wait' && laneIds.includes(a[1])).length === 2,
     JSON.stringify(rCalls))
   ok('r: reported as still being tested', /still being tested on the PC/.test(said(rOut)), said(rOut))
+
+  // s + t: a clock tick (`retry`) never waits on a PC job still in line. 2026-10-04 one held
+  // the recovery lock 15 minutes inside `--wait <id> 900` and every `recover` failed; lane-cron
+  // SIGKILLs a tick at 4 minutes. A job that has finished is still read by the next tick, and a
+  // chat's ready/autoship keeps the full wait.
+  const TICK_S = 60
+  const tick = (dir) => {
+    const from = calls().length
+    writeFileSync(slowFile, '')
+    const t0 = Date.now()
+    const out = lane(dir, 'retry', '--session', 'lane-cron')
+    const ms = Date.now() - t0
+    rmSync(slowFile, { force: true })
+    return { out, ms, waits: calls().slice(from).filter((a) => a[0] === '--wait') }
+  }
+  mode('queued')
+  const st = project('tick')
+  const s1 = work(st.dir, 'chat-s', 's.txt')
+  const sTip = git(s1.dir, 'rev-parse', 'HEAD')
+  lane(st.dir, 'ready', '--session', 'chat-s')
+  const sJob = waits().at(-1)?.[1]
+  const sTick = tick(st.dir)
+  console.log(`     s: tick with the typecheck still in line held ${sTick.ms} ms (${sTick.waits.map((a) => a[2]).join(',') || 'no'} s waits)`)
+  ok('s: tick makes no wait on a typecheck still in line', sTick.waits.length === 0, JSON.stringify(sTick.waits))
+  ok('s: tick ends inside a tenth of the 4-minute kill (stub time)', sTick.ms < 2400, `${sTick.ms} ms`)
+  ok('s: tick says it is still waiting its turn', /still waiting its turn on the PC/.test(said(sTick.out)), said(sTick.out))
+  ok('s: tick sends no new job', submits().filter((a) => repoOf(a) === real(st.dir)).length === 1, JSON.stringify(submits()))
+  mode('pass')
+  const sDone = tick(st.dir)
+  ok('s: the next tick reads the finished job and the lane lands', contains(st.remote, sTip, 'main'), said(sDone.out))
+  ok('s: that read is the same job, inside the tick budget',
+    sDone.waits.length >= 1 && sDone.waits.every((a) => Number(a[2]) <= TICK_S) && sDone.waits[0][1] === sJob, JSON.stringify(sDone.waits))
+
+  // t: master's suite confirmed red on a tick (both jobs finished), then a finished lane whose
+  // own job is still in line: the tick queues it and leaves it; a chat's autoship waits on it.
+  mode('queued')
+  const sT = project('ticksuite')
+  const t1 = work(sT.dir, 'chat-t1', 't1.txt')
+  lane(sT.dir, 'ready', '--session', 'chat-t1')
+  mode('pass')
+  suiteMode('red,red,queued')
+  const tTick = tick(sT.dir)
+  const tLane = suiteIds().at(-1)
+  console.log(`     t: tick with a lane suite still in line held ${tTick.ms} ms (${tTick.waits.map((a) => a[2]).join(',') || 'no'} s waits)`)
+  ok('t: master red is read and confirmed on the tick', ledger(sT.dir).pcSuite?.ok === false, JSON.stringify(ledger(sT.dir).pcSuite))
+  ok('t: every tick wait is a finished job inside the tick budget', tTick.waits.every((a) => Number(a[2]) <= TICK_S && a[1] !== tLane),
+    JSON.stringify(tTick.waits))
+  ok('t: tick ends inside a tenth of the 4-minute kill (stub time)', tTick.ms < 2400, `${tTick.ms} ms`)
+  ok('t: the lane job was queued once', suiteSubmits(t1.dir).length === 1, JSON.stringify(suiteSubmits(t1.dir)))
+  const tFrom = calls().length
+  lane(sT.dir, 'autoship', '--session', 'chat-t1')
+  const tFull = calls().slice(tFrom).filter((a) => a[0] === '--wait')
+  ok('t: a chat\'s autoship still waits the full budget on the lane job', tFull.some((a) => a[1] === tLane && Number(a[2]) > TICK_S),
+    JSON.stringify(tFull))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
