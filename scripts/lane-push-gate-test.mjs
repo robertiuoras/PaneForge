@@ -116,6 +116,13 @@ const commitIn = (dir, file, text, msg) => {
   const push = run(repo, 'push')
   ok('a hand push of an untested master is refused', push.code !== 0 && /refused/.test(push.err), `${push.code} ${push.err}`)
   ok('...and origin/master did not move', originTip(origin) === before)
+  ok(
+    'the refusal names master\'s own absolute lane.mjs, with ready for lane work and autoship for merged work',
+    /`node (?:\/|[A-Za-z]:)[^`\n]*scripts[\\/]lane\.mjs ready --repo/.test(push.err) &&
+      /(?:\/|[A-Za-z]:)[^`\n]*scripts[\\/]lane\.mjs autoship --repo/.test(push.err) &&
+      !/`node scripts\/lane\.mjs/.test(push.err),
+    push.err
+  )
 
   // The app runs lane.mjs as `ELECTRON_RUN_AS_NODE=1 <PaneForge>`, so the `git push` its ship
   // spawns can have no `node` on PATH. The hook must still run the check, not die with 127.
