@@ -1087,6 +1087,13 @@ function dispatchCompletion() {
   state.recovery ??= { items: {} }
   state.recovery.items ??= {}
   const items = state.recovery.items
+  // An item that lost the slot (an older recovery cleared `active` for another key) is still
+  // owed a look: adopt the first unfinished one so the dead-owner check below resumes or
+  // blocks it instead of leaving it `dispatched` forever (2026-10-04).
+  if (!items[state.recovery.active]) {
+    const lost = Object.values(items).find((r) => !['complete', 'reviewed', 'blocked'].includes(r.status))
+    if (lost) state.recovery.active = lost.key ?? Object.keys(items).find((k) => items[k] === lost)
+  }
   const active = items[state.recovery.active]
   let resume = null
   if (active && !['complete', 'reviewed', 'blocked'].includes(active.status)) {
@@ -1219,7 +1226,9 @@ function recover(session, key, disposition, receiptPath, wanted) {
       r.receipt = receipt; r.status = disposition
     }
     r.at = now()
-    if (['complete', 'reviewed', 'blocked'].includes(r.status)) delete state.recovery.active
+    // Only the item that holds the slot frees it: recording a disposition for another key
+    // used to clear `active`, so the dispatched item was never looked at again (2026-10-04).
+    if (['complete', 'reviewed', 'blocked'].includes(r.status) && state.recovery.active === key) delete state.recovery.active
     writeRecovery(state)
     return r
   } finally { unlock() }
@@ -5683,6 +5692,8 @@ function statusOf(state, session, held) {
   // processes behind a 1.0s hook, 2-5s under load. `--held` reads them off the ledger
   // alone; the app's board and a person's `status` still measure every lane.
   const workOf = (id) => (held && !state.lanes[id]?.session ? { dirty: false, ahead: 0, touchedAt: 0 } : laneWork(id))
+  // Read once: null (inventory unknown) must never be reported as "the chat is gone".
+  const parkLiving = Object.keys(state.parkedWork ?? {}).length ? recoveryLiving() : null
   return {
     main: MAIN,
     // What this repository is, in the three words a caller needs to phrase anything: the
@@ -5768,13 +5779,25 @@ function statusOf(state, session, held) {
     // Discovery is a review prompt only; ordinary claim/cherry-pick/ready owns resumption.
     parkedWork: Object.values(state.parkedWork ?? {}).map((p) => {
       const current = parkedCommit(p.ref)
+      const key = `ref:${p.ref}:${p.commit}`
+      const item = state.recovery?.items?.[key]
+      const recovery = item ? { key, status: item.status, reason: item.reason ?? item.receipt?.reason ?? null, pane: item.pane ?? null, owner: item.owner ?? null, landed: item.readyCommit ?? null } : null
+      const onTrunk = gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok
       return {
         ...p,
+        recovery,
+        parkerGone: p.session && parkLiving ? !parkLiving.has(p.session) : false,
         present: Boolean(current),
         moved: Boolean(current && current !== p.commit),
-        merged: Boolean(gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok),
-        action: gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok
+        merged: Boolean(onTrunk),
+        action: onTrunk
           ? 'already on trunk by ancestry; no recovery needed (a cherry-picked equivalent cannot be inferred)'
+          : recovery?.status === 'complete' && current && current === p.commit
+            ? `nothing left: landed on ${MB} as ${(recovery.landed ?? '').slice(0, 12)}`
+            : recovery?.status === 'reviewed' && current && current === p.commit
+              ? `nothing left: ${String(recovery.reason ?? '').slice(0, 160)}`
+              : recovery?.status === 'blocked' && current && current === p.commit
+                ? `nothing picks this up again by itself: inspect it, land what is still wanted through a claimed lane and ready, then recover --key "${key}" --session <id> --disposition reviewed --receipt <json with reason>`
           : p.reviewRequired
             ? `inspect then park --ref ${p.ref.replace(/^refs\/remotes\//, '')} --lane <empty slot>`
             : `claim a lane, cherry-pick ${p.commit.slice(0, 12)}, then ready`
@@ -6021,8 +6044,19 @@ function doctor() {
   // surface. Keep discovered snapshots unmistakably separate from lanes and releases.
   if (s.parkedWork.length || s.unregisteredParked.length) {
     say('PARKED WORK')
+    // pf-ctl is asked only when some item is still being finished; unknown never reads "gone".
+    const unfinished = (p) => p.recovery && !['complete', 'reviewed', 'blocked'].includes(p.recovery.status)
+    const living = s.parkedWork.some(unfinished) ? recoveryLiving() : null
+    const panes = s.parkedWork.some((p) => unfinished(p) && !p.recovery.owner) ? openPanes() : null
     for (const p of s.parkedWork) {
-      const state = !p.present ? 'ref is gone' : p.moved ? 'ref moved' : p.merged ? 'already on trunk' : p.reviewRequired ? 'review required' : 'registered'
+      const r = p.recovery
+      const gone = r && unfinished(r) ? (r.owner ? living && !living.has(r.owner) : panes && !panes.ids.includes(r.pane)) : false
+      const state = !p.present ? 'ref is gone' : p.moved ? 'ref moved' : p.merged ? 'already on trunk'
+        : r && ['complete', 'reviewed'].includes(r.status) ? `done (${r.status})`
+        : r?.status === 'blocked' ? `blocked: ${String(r.reason ?? '').slice(0, 120)}`
+        : r ? (gone ? `its finishing chat ${r.pane ?? r.owner} is gone; the next retry marks it blocked for inspection` : `being finished by ${r.pane ?? r.owner}`)
+        : p.parkerGone ? 'the chat that parked it is gone; nobody is working on it'
+        : p.reviewRequired ? 'review required' : 'registered'
       say(`  ${p.ref} (${p.commit.slice(0, 12)}): ${state}; ${p.action}`)
     }
     for (const p of s.unregisteredParked) say(`  ${p.ref} (${p.commit.slice(0, 12)}): unregistered; ${p.action}`)

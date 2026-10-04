@@ -155,6 +155,35 @@ git(parked.repo, 'update-ref', 'refs/heads/intent-wip', git(parked.repo, 'rev-pa
 parked.run('retry'); parked.run('retry')
 check('moved ref stays pinned and blocked without another pane', parked.requests().length === 1 && parked.state().recovery.items[parkedKey].status === 'blocked' && parked.state().recovery.items[parkedKey].commit === pinned)
 
+// Parked work whose chat is gone must read as such in doctor, and a recovery item that lost
+// its `active` slot must be revisited (measured 2026-10-04: a settings-rework ref dispatched
+// 2026-09-30 to a pane long gone sat `dispatched` forever; doctor said "registered").
+const orphan = fixture('orphan')
+const wip = (name) => {
+  writeFileSync(join(orphan.dir, `${name}.txt`), name); git(orphan.dir, 'add', `${name}.txt`); git(orphan.dir, 'commit', '-qm', name)
+  const sha = git(orphan.dir, 'rev-parse', 'HEAD'); git(orphan.repo, 'branch', `${name}-wip`, sha); git(orphan.dir, 'reset', '--hard', 'master'); return sha
+}
+wip('one'); const twoSha = wip('two')
+orphan.patch((s) => { delete s.lanes.a })
+orphan.run('park', '--session', 'gone-chat', '--ref', 'one-wip', '--lane', 'a'); orphan.run('park', '--session', 'gone-chat', '--ref', 'two-wip', '--lane', 'b')
+const doctorLine = (ref) => orphan.run('doctor').out.split('\n').find((l) => l.includes(`refs/heads/${ref}`)) ?? ''
+check('A: doctor says the chat that parked it is gone', ['one-wip', 'two-wip'].every((r) => doctorLine(r).includes('the chat that parked it is gone')), orphan.run('doctor').out)
+orphan.run('retry')
+const k1 = orphan.state().recovery.active
+check('B: retry dispatches exactly one request', orphan.requests().length === 1 && Boolean(k1), JSON.stringify(orphan.state().recovery))
+const k2 = `ref:refs/heads/two-wip:${twoSha}`
+orphan.patch((s) => { s.recovery.items[k2] = { ref: 'refs/heads/two-wip', commit: twoSha, lane: null, status: 'dispatched', pane: 's9-gone', owner: null, at: 0 } })
+const orphanReceipt = join(orphan.repo, '.git', 'orphan-review.json')
+writeFileSync(orphanReceipt, JSON.stringify({ reason: 'content already equivalent on trunk' }))
+const rec = orphan.run('recover', '--key', k2, '--session', 'auditor', '--disposition', 'reviewed', '--receipt', orphanReceipt)
+check('C: reviewing another item leaves the active one active', rec.code === 0 && orphan.state().recovery.active === k1, rec.err + JSON.stringify(orphan.state().recovery))
+const dTwo = doctorLine('two-wip')
+check('D: doctor shows the reviewed item as done with its reason', dTwo.includes('done (reviewed)') && dTwo.includes('content already equivalent'), dTwo)
+orphan.patch((s) => { delete s.recovery.active; s.recovery.items[k1].at = 0 })
+orphan.run('retry')
+check('E: an item that lost its slot is revisited and blocked', orphan.state().recovery.items[k1].status === 'blocked' && orphan.requests().length === 1, JSON.stringify(orphan.state().recovery.items[k1]))
+check('F: doctor shows the blocked item', doctorLine('one-wip').includes('blocked:'), doctorLine('one-wip'))
+
 const failed = fixture('failed-open')
 writeFileSync(join(failed.dir, 'intent.txt'), 'preserved'); failed.patch((s) => { delete s.lanes.a })
 delete failed.env.LANE_COMPLETION_LOG; delete failed.env.PF_CTL_NO_APP
