@@ -30,7 +30,7 @@ function Remove-PreviousPaneForge {
                     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall') {
     Get-ChildItem $hive -ErrorAction SilentlyContinue | ForEach-Object {
       $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-      if ($p.DisplayName -eq 'PaneForge' -and $p.QuietUninstallString) {
+      if ($p.DisplayName -in @('PaneForge', 'PaneForge Classic') -and $p.QuietUninstallString) {
         Say "Removing the installed PaneForge $($p.DisplayVersion) ..."
         try { Start-Process 'cmd.exe' -ArgumentList '/c', $p.QuietUninstallString -Wait -WindowStyle Hidden } catch {}
       }
@@ -78,16 +78,17 @@ try {
     $exe = Join-Path $dest 'PaneForge.exe'
     if (-not (Test-Path $exe)) { throw "The download did not contain PaneForge.exe" }
 
-    $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PaneForge.lnk'
+    $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PaneForge Classic.lnk'
     $sh = New-Object -ComObject WScript.Shell
     $s = $sh.CreateShortcut($lnk)
     $s.TargetPath = $exe
     $s.WorkingDirectory = $dest
+    $s.Description = 'PaneForge Classic'
     $s.Save()
 
     # Launching now would only put the "blocked an app that may be unsafe" dialog on
     # screen again. The shortcut is there for the moment SAC is off.
-    Say 'Files are in place (shortcut on the Desktop). Turn Smart App Control off, then open PaneForge.'
+    Say 'Files are in place (shortcut on the Desktop). Turn Smart App Control off, then open PaneForge Classic.'
   }
   else {
     $exe = Join-Path $tmp 'PaneForge-Setup.exe'
@@ -99,7 +100,7 @@ try {
     # because we are launching it rather than Explorer.
     $p = Start-Process $exe -ArgumentList '/S' -PassThru -Wait
     if ($p.ExitCode -ne 0) { throw "The installer exited with code $($p.ExitCode)." }
-    Say 'Installed. PaneForge is on the Desktop and in the Start Menu, and should be opening now.'
+    Say 'Installed. PaneForge Classic is on the Desktop and in the Start Menu, and should be opening now.'
   }
 }
 finally {

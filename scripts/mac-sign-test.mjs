@@ -25,11 +25,13 @@ import {
   copyFileSync,
   symlinkSync,
   existsSync,
-  statSync
+  statSync,
+  readFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 let failures = 0
@@ -42,6 +44,21 @@ function ok(what, cond, detail = '') {
 }
 
 const mod = await import('./mac-sign.mjs')
+// Use the installed builder's real naming/plist code: its executableName also
+// controls the .app filename, while extendInfo controls the actual Mach-O name.
+const require = createRequire(import.meta.url)
+require('app-builder-lib')
+const { AppInfo } = require('app-builder-lib/out/appInfo.js')
+const { MacPackager } = require('app-builder-lib/out/macPackager.js')
+const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const config = metadata.build
+const appInfo = new AppInfo({metadata, config}, undefined, config.mac)
+const appPlist = {}
+await MacPackager.prototype.applyCommonInfo.call({appInfo, config,
+  platformSpecificBuildOptions: config.mac, getIconPath: async () => null}, appPlist, '/not-used')
+ok('the Mac artifact is PaneForge Classic.app', appInfo.productFilename === 'PaneForge Classic')
+ok('Classic display name is independent of its executable', appPlist.CFBundleDisplayName === 'PaneForge Classic' && appPlist.CFBundleExecutable === 'PaneForge')
+ok('the old bundle identity is preserved', appInfo.id === 'com.robert.paneforge')
 ok('the hook exports a default function', typeof mod.default === 'function')
 ok('and signAdHoc for the test to drive', typeof mod.signAdHoc === 'function')
 

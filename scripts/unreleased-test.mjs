@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { behind, ENOUGH } from './unreleased.mjs'
+import { behind, ENOUGH, installedClassicPlist } from './unreleased.mjs'
 
 const work = join(tmpdir(), 'pf-unreleased-test')
 rmSync(work, { recursive: true, force: true })
@@ -64,4 +64,16 @@ is(three.changes[2], 'a pane says which client it is for', '...the sentence itse
 // old copy for ever.
 is(behind('9.9.9', work).changes.length, 4, 'an unknown version reads the whole history, never nothing')
 
+const apps = join(work, 'Applications');
+function bundle(name, id) {
+ const plist = join(apps, name, 'Contents/Info.plist');mkdirSync(join(apps, name, 'Contents'), {recursive:true});
+ writeFileSync(plist, `<key>CFBundleIdentifier</key><string>${id}</string>`);return plist;
+}
+const legacy = bundle('PaneForge.app', 'com.robert.paneforge');
+is(installedClassicPlist(apps), legacy, 'legacy Classic is readable before migration');
+bundle('PaneForge.app', 'ai.paneforge.next.prototype');
+is(installedClassicPlist(apps), null, 'native PaneForge version never counts as the Classic release');
+const classic = bundle('PaneForge Classic.app', 'com.robert.paneforge');
+is(installedClassicPlist(apps), classic, 'Classic release is readable after migration');
+rmSync(work, {recursive:true, force:true});
 console.log(`unreleased: ${checks} checks passed`)

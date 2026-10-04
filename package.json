@@ -2,7 +2,7 @@
   "name": "claude-orchestrator",
   "version": "0.8.236",
   "private": true,
-  "description": "PaneForge",
+  "description": "PaneForge Classic",
   "author": "Robert",
   "license": "MIT",
   "repository": {
@@ -415,7 +415,8 @@
   },
   "build": {
     "appId": "com.robert.paneforge",
-    "productName": "PaneForge",
+    "productName": "PaneForge Classic",
+    "executableName": "PaneForge",
     "files": [
       "out/**/*",
       "package.json",
@@ -482,13 +483,15 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PaneForge",
+      "shortcutName": "PaneForge Classic",
       "include": "build/installer.nsh"
     },
     "afterPack": "scripts/mac-sign.mjs",
     "mac": {
+      "executableName": "PaneForge Classic",
       "category": "public.app-category.developer-tools",
       "extendInfo": {
+        "CFBundleExecutable": "PaneForge",
         "NSMicrophoneUsageDescription": "PaneForge records what you dictate into a pane and types it at the agent's prompt. Nothing is recorded until you press the microphone.",
         "NSDesktopFolderUsageDescription": "PaneForge opens agents in your project folders. It only looks in the folder you chose as your projects root.",
         "NSDocumentsFolderUsageDescription": "PaneForge opens agents in your project folders. It only looks in the folder you chose as your projects root.",
@@ -512,10 +515,10 @@
         }
       ],
       "identity": null,
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "PaneForge-${version}-${arch}.${ext}"
     },
     "dmg": {
-      "title": "PaneForge"
+      "title": "PaneForge Classic"
     }
   },
   "optionalDependencies": {

@@ -5843,7 +5843,7 @@ export default function App(): JSX.Element {
         <div className="brand">
           <span className="brand-name">
             <AppLogo size={17} />
-            <span className="brand-word">PaneForge</span>
+            <span className="brand-word">PaneForge Classic</span>
           </span>
           <span className="icons">
             <button
@@ -6883,7 +6883,7 @@ export default function App(): JSX.Element {
             <div className="ph-logo">
               <AppLogo size={44} />
             </div>
-            <h1>PaneForge</h1>
+            <h1>PaneForge Classic</h1>
             <p>{keyLabel('Start only the sessions you need. Ctrl T, tick a few projects, Enter.')}</p>
             <div className="ph-agents">
               {agents

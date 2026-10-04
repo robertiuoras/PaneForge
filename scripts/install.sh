@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO="robertiuoras/PaneForge"
-APP="/Applications/PaneForge.app"
+APP="/Applications/PaneForge Classic.app"
 ASSET="PaneForge-arm64.zip"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -28,7 +28,7 @@ fi
 # still there - its own bundle cannot be replaced underneath it.
 if pgrep -x PaneForge >/dev/null 2>&1; then
   say "Closing the PaneForge that is already running ..."
-  osascript -e 'quit app "PaneForge"' >/dev/null 2>&1 || true
+  osascript -e 'quit app id "com.robert.paneforge"' >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     pgrep -x PaneForge >/dev/null 2>&1 || break
     sleep 0.5
@@ -46,15 +46,21 @@ curl -fL --progress-bar -o "$tmp/app.zip" "$url" || die "Download failed: $url"
 
 say "Unpacking ..."
 ditto -x -k "$tmp/app.zip" "$tmp/out" || die "Could not unpack the download."
-[ -d "$tmp/out/PaneForge.app" ] || die "The download did not contain PaneForge.app."
+source="$tmp/out/PaneForge Classic.app"
+[ -d "$source" ] || source="$tmp/out/PaneForge.app"
+[ -d "$source" ] || die "The download did not contain PaneForge Classic."
+identity=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$source/Contents/Info.plist")
+[ "$identity" = "com.robert.paneforge" ] || die "The download is not PaneForge Classic."
 
 # Every place a PaneForge can end up, not just /Applications: a bundle dragged to the
 # per-user ~/Applications, and the one left in ~/Downloads by an earlier zip - which is
 # the copy Spotlight and the Dock keep finding after an "update", so the version people
 # then report is the old one. The staged half-updates under Application Support go too;
 # `macUpdate.ts` adopts anything it finds there on the next launch.
-for old in "$APP" "$HOME/Applications/PaneForge.app" "$HOME/Downloads/PaneForge.app"; do
+for old in "$APP" "$HOME/Applications/PaneForge Classic.app" "$HOME/Downloads/PaneForge Classic.app"; do
   if [ -e "$old" ]; then
+    old_identity=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$old/Contents/Info.plist")
+    [ "$old_identity" = "com.robert.paneforge" ] || die "Preserving an unrelated application at $old."
     say "Removing the previous copy at $old ..."
     rm -rf "$old"
   fi
@@ -62,12 +68,12 @@ done
 rm -rf "$HOME/Library/Application Support/claude-orchestrator/mac-update" 2>/dev/null || true
 
 say "Installing to $APP ..."
-ditto "$tmp/out/PaneForge.app" "$APP"
+ditto "$source" "$APP"
 
 # The app is not notarised (that needs a paid Apple developer account), so
 # Gatekeeper would otherwise refuse the first launch outright.
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 
 version=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "?")
-say "PaneForge $version installed. Opening it."
+say "PaneForge Classic $version installed. Opening it."
 open "$APP"

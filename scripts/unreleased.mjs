@@ -22,6 +22,20 @@ import { parse, subjects, versionTags } from './release-notes.mjs'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+/** Classic owns the Electron release history, regardless of its visible bundle name. */
+export function installedClassicPlist(applications = '/Applications') {
+  for (const name of ['PaneForge Classic.app', 'PaneForge.app']) {
+    const plist = join(applications, name, 'Contents/Info.plist');
+    try {
+      const text = readFileSync(plist, 'utf8');
+      const id = text.match(/<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/)?.[1]
+        || execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
+      if (id === 'com.robert.paneforge') return plist;
+    } catch { /* inspect the other known location */ }
+  }
+  return null;
+}
+
 /**
  * How many user-visible changes are worth an install.
  *
@@ -38,8 +52,8 @@ const VISIBLE = new Set(['feat', 'fix', 'perf'])
 /** The version of the PaneForge a person actually launches, or null. */
 export function installedVersion() {
   if (process.platform === 'darwin') {
-    const plist = '/Applications/PaneForge.app/Contents/Info.plist'
-    if (!existsSync(plist)) return null
+    const plist = installedClassicPlist()
+    if (!plist) return null
     try {
       return execFileSync('defaults', ['read', plist, 'CFBundleShortVersionString'], {
         encoding: 'utf8'
