@@ -729,6 +729,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',
+    // Two booleans (Telegram credentials present, Discord installed); no value leaves.
+    'settings:facts',
     'discord:status', 'shell:pathKind', 'clipboard:fixtureActive', 'git:info',
     'git:diffFiles', 'git:diffPatch', 'lanes:board', 'lanes:work',
     // Read-only worktree paths, already exposed by lanes:board to paired clients.

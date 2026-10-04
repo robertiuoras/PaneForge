@@ -32,7 +32,7 @@ import { closeByOf, type CloseBy } from '../shared/closeWhenDone'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { freshReplay } from '../shared/freshReplay'
-import { DiscordPresence } from './discordPresence'
+import { DiscordPresence, discordInstalled } from './discordPresence'
 import { countPresence, needsTokens, newerSettings, presenceAllowed, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
@@ -87,7 +87,7 @@ import { gitCached, gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import { routeCodexStart, withDefaultModel } from '../shared/startModel'
-import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
+import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard, SettingsFacts } from '../shared/types'
 import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
 import { hideCopyFolder } from './hideCopy'
 import { gitRun, isRead } from './gitRun'
@@ -3282,6 +3282,14 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
  * the lines it stored, or the reason it refused - all of it read back off the pipe.
  */
 ipcMain.handle('discord:status', () => presence.status())
+
+// What this machine has, so Settings can leave out the rows about what it has not. Both
+// are readings of something OUTSIDE the app - an env file, another program - so they are
+// taken each time the dialog opens rather than held for the life of the process.
+ipcMain.handle('settings:facts', (): SettingsFacts => ({
+  telegram: !!telegramCreds(),
+  discord: discordInstalled()
+}))
 // What is waiting on GitHub, asked only when the dialog that shows it is opened. The
 // folders come from the renderer because the desk it draws includes mirrored panes,
 // whose repositories are the other machine's and are skipped by the lookup itself.
