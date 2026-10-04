@@ -5043,11 +5043,14 @@ const sha8 = (sha) => String(sha).slice(0, 8)
  * `verdict` is `treeVerdict`'s answer.
  */
 function pushRefusal(sha, verdict) {
-  const fix = `node scripts/lane.mjs ready --repo ${MAIN} --session <your session id>`
+  // Master's own copy, by absolute path: a lane folder's copy can be older and lack this gate.
+  const tool = `node ${join(MAIN, 'scripts', 'lane.mjs')}`
+  const ready = `${tool} ready --repo ${MAIN} --session <your session id>`
+  const autoship = `${tool} autoship --repo ${MAIN} --session <your session id>`
   if (verdict?.ok) return null
   if (verdict)
-    return `PaneForge refused this push: ${MB} at ${sha8(sha)} fails its own test suite - ${verdict.reason}. Fix it on your lane and run \`${fix}\`.`
-  return `PaneForge refused this push: nothing has run the test suite on ${MB} at ${sha8(sha)}, and an untested ${MB} blocks every finished lane. Commit on your lane and run \`${fix}\`, which tests the exact tree it pushes.`
+    return `PaneForge refused this push: ${MB} at ${sha8(sha)} fails its own test suite - ${verdict.reason}. Fix it on your lane and run \`${ready}\`.`
+  return `PaneForge refused this push: nothing has run the test suite on ${MB} at ${sha8(sha)}, and an untested ${MB} blocks every finished lane. Commit on your lane and run \`${ready}\`, which tests the exact tree it pushes; if ${MB} already holds the merged work (an older copy merged it and its push was refused), run \`${autoship}\` instead, which re-tests ${MB} as it stands and pushes it.`
 }
 
 /**
