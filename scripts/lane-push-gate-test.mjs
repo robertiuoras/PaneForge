@@ -17,6 +17,9 @@
 //      the hook because the merged tree was tested)
 //   4. pushing a lane-* branch is never gated
 //   5. a hook that is not PaneForge's is never overwritten
+//   6. master and origin/master each have a commit the other lacks (the other machine pushed
+//      while this one held an unpushed merge): a gated release lands origin/master the way a
+//      lane lands and ships all three changes; a real conflict is named, nothing moves
 //
 //   node scripts/lane-push-gate-test.mjs
 
@@ -192,6 +195,48 @@ const commitIn = (dir, file, text, msg) => {
   writeFileSync(hook, mine, { mode: 0o755 })
   lane(repo, 'status')
   ok('a hook that is not PaneForge\'s is left alone', readFileSync(hook, 'utf8') === mine)
+}
+
+// ---------------------------------------------------------------- 6. master and origin each have work
+// 2026-10-04: the main folder held an unpushed `merge lane b`, the other machine pushed six
+// commits, and every release answered "origin will not take a push" for good: ready could not
+// help because the refusal came before any lane landed.
+/** The other machine: a clone of origin that commits `file` and pushes it. */
+const otherMachine = (origin, name, file, text) => {
+  const clone = join(root, `other-${name}`)
+  git(root, 'clone', '-q', origin, clone)
+  git(clone, 'config', 'user.email', 'other@example.com')
+  git(clone, 'config', 'user.name', 'other')
+  commitIn(clone, file, text, `the other machine: ${file}`)
+  git(clone, 'push', '-q', 'origin', 'master')
+}
+{
+  const { repo, origin } = makeRepo()
+  const a = claimA(repo)
+  otherMachine(origin, 'clean', 'theirs.txt', 'from the other machine\n')
+  commitIn(repo, 'ours.txt', 'unpushed on this computer\n', 'merge lane b')
+  commitIn(a.dir, 'feature.txt', 'harmless\n', 'a harmless lane commit')
+  const r = lane(repo, 'ready', '--session', 'sess-a')
+  const tip = originTip(origin)
+  const show = (f) => run(origin, 'show', `${tip}:${f}`).out
+  ok('diverged master with a gated push: no refusal about the push', !/will not take a push/.test(r.out), r.out)
+  ok('...origin/master has the other machine\'s, this computer\'s and the lane\'s change', show('theirs.txt') === 'from the other machine' && show('ours.txt') === 'unpushed on this computer' && show('feature.txt') === 'harmless', r.out)
+  ok('...master equals origin/master', git(repo, 'rev-parse', 'master') === tip, r.out)
+  ok('...and the main folder has no unsaved edits left over', git(repo, 'status', '--porcelain') === '', git(repo, 'status', '--porcelain'))
+}
+{
+  const { repo, origin } = makeRepo()
+  const a = claimA(repo)
+  otherMachine(origin, 'conflict', 'app.txt', 'theirs\n')
+  commitIn(repo, 'app.txt', 'ours\n', 'merge lane b')
+  commitIn(a.dir, 'feature.txt', 'harmless\n', 'a harmless lane commit')
+  const originBefore = originTip(origin)
+  const mainBefore = git(repo, 'rev-parse', 'master')
+  const r = lane(repo, 'ready', '--session', 'sess-a')
+  ok('conflicting divergence: the refusal names app.txt and says somebody has to merge', /app\.txt/.test(r.out) && /by hand/.test(r.out), r.out)
+  ok('...origin/master did not move', originTip(origin) === originBefore, r.out)
+  ok('...master is exactly where it was, no merge commit left', git(repo, 'rev-parse', 'master') === mainBefore, r.out)
+  ok('...and the main folder is clean', git(repo, 'status', '--porcelain') === '', git(repo, 'status', '--porcelain'))
 }
 
 process.exit(failed ? 1 : 0)

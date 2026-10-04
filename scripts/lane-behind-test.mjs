@@ -11,8 +11,10 @@
 // as a dead credential. Two machines pushing one trunk means BEHIND is the normal state,
 // so the release takes origin's commits itself when doing so is a straight fast-forward.
 //
-// A genuinely diverged trunk still refuses - that one needs a person - and the last check
-// below is the one that must not regress.
+// A diverged trunk still refuses when the push is not re-tested (this repo has no test
+// script, so its push is not gated) - merging untested code under a lock is not done - and
+// the last check below is the one that must not regress. A gated push merges origin in and
+// tests the result: scripts/lane-push-gate-test.mjs case 6.
 //
 // Real git repos in the temp folder, a real bare origin, real lane.mjs, no stubs.
 //

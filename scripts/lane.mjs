@@ -3350,6 +3350,20 @@ function syncTags() {
 }
 
 /**
+ * Is the trunk diverged from origin: commits here that origin lacks AND commits there that
+ * this machine lacks? Fetches first; false whenever that cannot be told.
+ */
+function trunkDiverged() {
+  if (!hasOrigin()) return false
+  if (!gitSafe(MAIN, 'fetch', 'origin', MB).ok) return false
+  const count = (range) => {
+    const r = gitSafe(MAIN, 'rev-list', '--count', range)
+    return r.ok ? Number(r.out.trim()) : 0
+  }
+  return count(`origin/${MB}..${MB}`) > 0 && count(`${MB}..origin/${MB}`) > 0
+}
+
+/**
  * Take origin's commits on the trunk when they are a straight fast-forward.
  *
  * Never a merge and never a rebase: this runs with a release lock held and a clean main
@@ -5013,7 +5027,11 @@ function restoreSame(same) {
  * mark and goes with the next release, like git being busy always has.
  */
 function landLane(id, branch) {
-  const message = `merge lane ${id}`
+  return landBranch(branch, `merge lane ${id}`)
+}
+
+/** What landLane does for a lane, for any branch or ref and any merge message. */
+function landBranch(branch, message) {
   const head = gitSafe(MAIN, 'rev-parse', '--verify', 'HEAD')
   const tip = gitSafe(MAIN, 'rev-parse', '--verify', `${branch}^{commit}`)
   if (!head.ok || !tip.ok) return { busy: (head.ok ? tip : head).out }
@@ -5358,10 +5376,30 @@ function ship(kind, session, { gated = false } = {}) {
       // happens to pull. Measured on taskdriver.ai 2026-08-28: two lanes finished, the
       // last merge 192 minutes earlier, main three commits behind origin, and every
       // `autoship` answered "origin will not take a push, releasing would strand".
-      // A fast-forward is the whole fix, and it is only ever taken when it is a
-      // fast-forward: a genuinely DIVERGED trunk still falls through to the refusal
-      // below, because that one does need a person.
+      // A fast-forward is the whole fix for a trunk that is purely behind.
+      //
+      // A DIVERGED trunk used to need a person, because merging was inventing untested
+      // code under a lock. Measured 2026-10-04: the main folder held an unpushed
+      // `merge lane b` (an old engine merged it and origin's pre-push gate refused the
+      // push), the other machine pushed six commits, and from then on every autoship and
+      // every ready answered "origin will not take a push" for good - `ready` could not
+      // help, because this refusal comes before any lane lands. A GATED release now
+      // re-tests the exact merged tree (pushedTreeFailure) before anything is pushed and
+      // puts the trunk back when it is red, so for that push the merge is no longer
+      // untested: origin's commits are landed here the way a lane lands (landBranch: built
+      // off to the side, the folder only fast-forwards, unsaved edits are never touched).
+      // beforeMerge is read after this, so a red suite goes back to just after it, unpushed.
+      // Still refused as before: a diverged trunk when the push is not re-tested (a
+      // person's own ship, a repo with no suite), and when git is busy. Real conflicts stop
+      // the release with the files named.
       fastForwardMain()
+      if (gated && pushGateApplies() && trunkDiverged()) {
+        const m = landBranch(`origin/${MB}`, `merge origin/${MB}`)
+        if (m.conflict)
+          throw new Error(
+            `origin/${MB} and this computer's ${MB} each have work the other lacks and they do not merge cleanly (${m.conflict}), so nothing was released; somebody has to merge them by hand.`
+          )
+      }
       // --no-verify: this probe is about credentials and fast-forward only. With the hook,
       // taskdriver.ai's pre-push proof judged main's UNMERGED head, so a red main whose
       // ready lane was the repair was refused on every try (2026-09-28, 6cf7e0b8 red, lane
