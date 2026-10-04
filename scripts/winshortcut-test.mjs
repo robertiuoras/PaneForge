@@ -15,6 +15,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import vm from 'node:vm'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-winshortcut-test')
@@ -30,6 +31,21 @@ buildSync({
   outfile
 })
 const { desktopShortcutVerdict } = createRequire(import.meta.url)(outfile)
+
+// Execute the disk-side path builder without Electron or writing a Desktop link.
+const disk = buildSync({
+  absWorkingDir: root, entryPoints: ['src/main/winShortcut.ts'], bundle: true,
+  format: 'cjs', platform: 'node', write: false, external: ['electron']
+}).outputFiles[0].text
+const module = { exports: {} }
+vm.runInNewContext(disk, {
+  module, exports: module.exports,
+  require: name => name === 'electron' ? {app: {getPath: () => '/fake/Desktop'}} : createRequire(import.meta.url)(name)
+})
+assert.equal(module.exports.desktopShortcutPath(), join('/fake/Desktop', 'PaneForge Classic.lnk'), 'repair and installer use the Classic shortcut name')
+const config = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+assert.equal(config.build.nsis.shortcutName, 'PaneForge Classic')
+assert.equal(config.build.executableName, 'PaneForge', 'the executable identity remains compatible')
 
 const INSTALLED = 'C:\\Users\\Gamer\\AppData\\Local\\Programs\\claude-orchestrator\\PaneForge.exe'
 const facts = (over = {}) => ({

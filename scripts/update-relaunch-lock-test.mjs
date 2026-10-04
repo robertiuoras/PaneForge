@@ -93,7 +93,9 @@ await build({
 const order = []
 globalThis.__pfApp = { isPackaged: true, getVersion: () => '0.8.218', releaseSingleInstanceLock: () => order.push(['release']) }
 globalThis.__pfExists = () => true
-globalThis.__pfRead = () => '<key>CFBundleShortVersionString</key><string>0.8.217</string>'
+let classicLocation = '/Applications/PaneForge Classic.app'
+globalThis.__pfExists = file => file.startsWith(classicLocation || '/absent') || file.startsWith('/Applications/PaneForge.app/')
+globalThis.__pfRead = file => `<key>CFBundleIdentifier</key><string>${file.startsWith(classicLocation || '/absent') ? 'com.robert.paneforge' : 'ai.paneforge.next.prototype'}</string><key>CFBundleShortVersionString</key><string>0.8.217</string>`
 globalThis.__pfHeadless = () => false
 globalThis.__pfProfile = () => ''
 globalThis.__pfSpawn = (...args) => {
@@ -106,8 +108,34 @@ try {
   const { handOffToInstalled } = await import(`${pathToFileURL(outfile).href}?${Date.now()}`)
   const result = handOffToInstalled()
   assert.equal(result.verdict, 'go', 'fake build-folder process should hand off')
+  assert.equal(result.installed, '/Applications/PaneForge Classic.app')
   assert.deepEqual(order.map(([event]) => event), ['release', 'spawn', 'unref'],
     'release must precede opening installed app')
+  assert.equal(order[1][2][1], '/Applications/PaneForge Classic.app', 'handoff opens the Classic bundle by path');
+  order.length = 0;
+  classicLocation = '/Applications/PaneForge.app';
+  assert.equal(handOffToInstalled().installed, classicLocation, 'former Classic path still works before migration');
+  classicLocation = null;
+  order.length = 0;
+  assert.equal(handOffToInstalled().verdict, 'no installed copy', 'the native PaneForge never receives a Classic handoff');
+  assert.equal(order.length, 0);
+  // Run the pre-fix resolver against the same post-migration bundle identities.
+  const diskSource = readFileSync(join(root, 'src/main/strayLaunch.ts'), 'utf8');
+  const legacyDisk = diskSource.replace(/function installedCopy\(\)[\s\S]*?\n}\n/, `function installedCopy() {
+    if (process.platform !== 'darwin') return null
+    const path = '/Applications/PaneForge.app'
+    const plist = join(path, 'Contents', 'Info.plist')
+    if (!existsSync(plist)) return null
+    try { const version = plistVersion(readFileSync(plist, 'utf8')); return version ? {path, version} : null } catch { return null }
+  }\n`);
+  const legacyOut = join(out, 'stray-launch-names-legacy.mjs');
+  await build({stdin: {contents: legacyDisk, resolveDir: join(root, 'src/main'), loader: 'ts'}, outfile: legacyOut,
+    bundle: true, format: 'esm', platform: 'node', plugins: [{name: 'legacy-test-stubs', setup(b) {
+      b.onResolve({filter: /^(electron|node:child_process|node:fs|\.\/profile)$/}, args => ({path: args.path, namespace: 'stub'}));
+      b.onLoad({filter: /.*/, namespace: 'stub'}, args => ({contents: stubs[args.path], loader: 'js'}));
+    }}]});
+  const legacyModule = await import(pathToFileURL(legacyOut).href);
+  assert.equal(legacyModule.handOffToInstalled().installed, '/Applications/PaneForge.app', 'pre-fix resolver incorrectly opened native PaneForge');
 } finally {
   Object.defineProperty(process, 'execPath', execPath)
   for (const key of ['__pfApp', '__pfExists', '__pfRead', '__pfHeadless', '__pfProfile', '__pfSpawn']) delete globalThis[key]

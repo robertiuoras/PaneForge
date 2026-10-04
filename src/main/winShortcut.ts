@@ -16,7 +16,7 @@ export function desktopShortcutPath(): string {
   // `app.getPath('desktop')` rather than `~/Desktop`: a machine with OneDrive's folder
   // backup on has its real Desktop under the OneDrive root, and writing to the other one
   // puts the shortcut somewhere nobody is looking.
-  return join(app.getPath('desktop'), 'PaneForge.lnk')
+  return join(app.getPath('desktop'), 'PaneForge Classic.lnk')
 }
 
 /**
@@ -42,7 +42,7 @@ $s = (New-Object -ComObject WScript.Shell).CreateShortcut('${q(lnk)}')
 $s.TargetPath = '${q(exe)}'
 $s.WorkingDirectory = '${q(join(exe, '..'))}'
 $s.IconLocation = '${q(exe)},0'
-$s.Description = 'PaneForge'
+$s.Description = 'PaneForge Classic'
 $s.Save()`
   execFile(
     'powershell.exe',

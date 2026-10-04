@@ -499,7 +499,7 @@ function createWindow(): void {
     ...(glass ? { transparent: true as const } : {}),
     // The suffix is the only thing separating two identical windows on the taskbar
     // when a test build is running next to the live one.
-    title: `PaneForge${titleSuffix()}`,
+    title: `PaneForge Classic${titleSuffix()}`,
     autoHideMenuBar: true,
     // macOS draws a full-width title strip above the window's content, and PaneForge's own
     // chrome starts under it - two stacked bars, the top one holding nothing but the word
