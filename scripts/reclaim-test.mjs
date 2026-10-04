@@ -344,6 +344,22 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('a kept pane under pressure keeps every OTHER refusal', idleSleepPlan([pane({ id: 'k', pinned: true, busy: true, lastKeyboard: NOW - 9 * HOUR })], cfg, NOW, true, 'over').length, 0)
     eq('and closing a kept pane stays refused under pressure', idleClosePlan(kept(), { ...cfg, idleCloseMinutes: 5 }, NOW).length, 0)
   }
+  // A pane MID-TURN, read off the process table rather than off its own screen. A frame
+  // whose bottom rows are a tool's output reads as finished; a tree holding a core is not
+  // idle whatever the screen says (Robert, 2026-09-04: "it should never sleep"). 'tight'
+  // throughout: nothing sleeps at 'ok' any more, so 'ok' would pass this for the wrong reason.
+  {
+    const SLEEPS = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
+    const quiet = { id: 'q', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR }
+    const sleeps = (o, level = 'tight') => ids(idleSleepPlan([pane({ ...quiet, ...o })], SLEEPS, NOW, true, level))
+    eq('a quiet pane with nothing measured still sleeps', sleeps({}), 'q')
+    eq('...and one measured idle sleeps too', sleeps({ cpuPct: 0.4 }), 'q')
+    eq('but one whose tree is holding a core does not', sleeps({ cpuPct: 140 }), '')
+    eq('...nor one just over the floor', sleeps({ cpuPct: 6 }), '')
+    eq('...not even when the desk is over', sleeps({ cpuPct: 140 }, 'over'), '')
+    eq('a null reading is "nobody measured", never "idle"', sleeps({ cpuPct: null }), 'q')
+    eq('the close clock is unchanged by the reading', ids(idleClosePlan([pane({ ...quiet, lastFocus: NOW - 8 * HOUR, cpuPct: 140 }), pane({ id: 'pad', lastKeyboard: NOW })], { ...DEFAULT_RECLAIM, idleCloseMinutes: 120 }, NOW)), 'q')
+  }
   // A pane that FELL asleep is on the close clock like any other: 5 of 7 panes sat asleep
   // for ten hours on 2026-09-02 because this refused them. Robert: "id rather them to
   // close than sleep". (One a restart brought back asleep is the exception since
