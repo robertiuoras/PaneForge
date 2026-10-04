@@ -51,7 +51,7 @@ run('npx', [
 
 if (process.platform === 'darwin') {
   step('Done')
-  console.log(`Built: ${join(root, outDir, 'mac-arm64', 'PaneForge.app')}
+  console.log(`Built: ${join(root, outDir, 'mac-arm64', 'PaneForge Classic.app')}
 Drag it into /Applications. On first launch macOS will say it cannot check the app:
 right-click it and choose Open once, and that never comes back.`)
   process.exit(0)

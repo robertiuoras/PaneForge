@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { installedClassicPlist } from './unreleased.mjs'
 
 const git = (root, args) =>
   (spawnSync('git', args, { cwd: root, encoding: 'utf8' }).stdout || '').trim()
@@ -20,8 +21,8 @@ const git = (root, args) =>
 // The version of the app a person actually double-clicks, on the machine this runs on.
 export function installedVersion() {
   if (process.platform === 'darwin') {
-    const plist = '/Applications/PaneForge.app/Contents/Info.plist'
-    if (!existsSync(plist)) return null
+    const plist = installedClassicPlist()
+    if (!plist) return null
     const r = spawnSync('defaults', ['read', plist, 'CFBundleShortVersionString'], { encoding: 'utf8' })
     return r.status === 0 ? (r.stdout || '').trim() || null : null
   }

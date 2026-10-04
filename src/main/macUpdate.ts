@@ -79,7 +79,7 @@ export function bundlePath(): string {
   const exec = process.execPath
   const bundle = dirname(dirname(dirname(exec)))
   if (!bundle.endsWith('.app')) return ''
-  if (!/\/(PaneForge|PaneForge-[^/]*)\.app$/.test(bundle)) return ''
+  if (!/\/(PaneForge|PaneForge Classic|PaneForge-[^/]*)\.app$/.test(bundle)) return ''
   // A copy running out of a build folder is never swapped: the swap replaces the RUNNING
   // bundle, so a stale dist/ copy pressing Restart now would install the update into
   // dist/ and relaunch from there - and the next `npm run build` overwrites the desk
