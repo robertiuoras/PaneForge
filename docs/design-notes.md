@@ -332,6 +332,8 @@ The rule is on the tree, not the caller: a push of the trunk needs a green suite
 a person's `ship` and a version release (asked for by Robert) record `pushOk` instead. A git
 hook (`installPushGate`, `lane.mjs prepush`) holds Codex, Antigravity and terminal pushes
 too, which no Claude PreToolUse hook can see. A hook that is not ours is never overwritten.
+The hook runs `node`, else the runtime that wrote it under `ELECTRON_RUN_AS_NODE=1`: the app
+runs lane.mjs inside PaneForge itself, so a push its ship spawns may have no `node` on PATH.
 Pinned by `test:pushgate`.
 
 ### Every automatic release is a dev release (2026-08-09)
