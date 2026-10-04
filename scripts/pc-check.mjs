@@ -27,9 +27,11 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const names = process.argv.slice(2)
-if (!names.length) {
+// A flag is not a suite: `pc-check.mjs --help` went to the PC as `test-all.mjs --help` and
+// queued a whole two-hour suite slot (2026-10-04).
+if (!names.length || names.some((n) => n.startsWith('-'))) {
   console.error('usage: node scripts/pc-check.mjs <typecheck|test|all|suite...>')
-  process.exit(2)
+  process.exit(names.some((n) => n === '--help' || n === '-h') ? 0 : 2)
 }
 const aliases = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts ?? {}
 const commands = names.flatMap((n) =>

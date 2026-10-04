@@ -46,6 +46,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { randomUUID, createHash } from 'node:crypto'
 import {
   appendFileSync,
+  chmodSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -4530,7 +4531,7 @@ function autoshipRun(kind = 'auto', session = 'auto') {
     }
   }
   try {
-    return ship(kind, session)
+    return ship(kind, session, { gated: true })
   } catch (e) {
     // A release that cannot go out must never break the hook that asked for it.
     return { shipped: false, reason: e.message }
@@ -4989,7 +4990,204 @@ function restoreSame(same) {
   }
 }
 
-function ship(kind, session) {
+/**
+ * Does a push of the trunk need a passing suite on the tree it pushes? Only PaneForge's own
+ * repo with a real test script: the same rule `suiteFailure` holds a release to. The
+ * Taskdriver PC has its own proof, and a repo with no suite is not held to one.
+ */
+function pushGateApplies() {
+  if (!OWN || TASKDRIVER_PC) return false
+  try {
+    const script = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).scripts?.test
+    return !!script && !/no test specified/i.test(script)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * What the ledger knows about a tree's test suite: `{ ok: true }`, `{ ok: false, reason }`,
+ * or null when nothing ever ran it. Every record kind that names a tree or a commit counts,
+ * because a verdict on a tree is a verdict wherever it was earned. Green wins over red: a red
+ * is confirmed twice before it is written, and a later green run of the same tree is newer.
+ */
+function treeVerdict(state, tree) {
+  const records = []
+  const add = (r) => {
+    if (r && typeof r === 'object' && 'ok' in r) records.push(r)
+  }
+  const onTree = (r) => {
+    if (r?.tree === tree) add(r)
+  }
+  const onCommit = (r) => {
+    if (!r || !('ok' in r) || !r.commit) return
+    const t = gitSafe(MAIN, 'rev-parse', `${r.commit}^{tree}`)
+    if (t.ok && t.out === tree) add(r)
+  }
+  onTree(state.pushSuite)
+  onTree(state.pcSuite)
+  for (const r of Object.values(state.pcLaneSuite ?? {})) onTree(r)
+  onCommit(state.suite)
+  for (const r of Object.values(state.laneSuite ?? {})) onCommit(r)
+  if (state.pushOk?.tree === tree) return { ok: true }
+  if (records.some((r) => r.ok)) return { ok: true }
+  const red = records.find((r) => !r.ok)
+  return red ? { ok: false, reason: red.reason ?? 'its suite failed' } : null
+}
+
+/** One word for a person about a sha. */
+const sha8 = (sha) => String(sha).slice(0, 8)
+
+/**
+ * The refusal sentence for a trunk push at `sha`, or null when its tree has a green suite.
+ * `verdict` is `treeVerdict`'s answer.
+ */
+function pushRefusal(sha, verdict) {
+  const fix = `node scripts/lane.mjs ready --repo ${MAIN} --session <your session id>`
+  if (verdict?.ok) return null
+  if (verdict)
+    return `PaneForge refused this push: ${MB} at ${sha8(sha)} fails its own test suite - ${verdict.reason}. Fix it on your lane and run \`${fix}\`.`
+  return `PaneForge refused this push: nothing has run the test suite on ${MB} at ${sha8(sha)}, and an untested ${MB} blocks every finished lane. Commit on your lane and run \`${fix}\`, which tests the exact tree it pushes.`
+}
+
+/**
+ * The git pre-push hook's judge (`lane.mjs prepush`, stdin is git's own list of refs about to
+ * move). Exits the process: 0 lets git push, 1 stops it with one sentence on stderr.
+ */
+function prepush() {
+  let input = ''
+  try {
+    input = readFileSync(0, 'utf8')
+  } catch {
+    input = ''
+  }
+  if (!pushGateApplies()) process.exit(0)
+  const zero = /^0+$/
+  for (const line of input.split('\n')) {
+    const [, sha, remoteRef] = line.trim().split(/\s+/)
+    if (remoteRef !== `refs/heads/${MB}` || !sha || zero.test(sha)) continue
+    const tree = gitSafe(MAIN, 'rev-parse', `${sha}^{tree}`)
+    const verdict = tree.ok ? treeVerdict(read(), tree.out) : null
+    const refusal = pushRefusal(sha, verdict)
+    if (refusal) {
+      console.error(refusal)
+      process.exit(1)
+    }
+  }
+  process.exit(0)
+}
+
+const PUSH_GATE_MARK = 'paneforge-push-gate'
+
+/** Where git looks for the pre-push hook of this repo (shared by every worktree), or null. */
+function prePushPath() {
+  const p = gitSafe(MAIN, 'rev-parse', '--git-path', 'hooks/pre-push')
+  return p.ok && p.out ? resolve(MAIN, p.out) : null
+}
+
+/**
+ * The hook itself. `runtime` is what ran the install: the app runs this file as
+ * `ELECTRON_RUN_AS_NODE=1 <PaneForge>`, and a `git push` it spawns may have no `node` on
+ * PATH, so the hook falls back to that same runtime rather than refusing every push.
+ */
+function pushGateBody(engine, runtime) {
+  return `#!/bin/sh
+# ${PUSH_GATE_MARK}: written by PaneForge's scripts/lane.mjs. A push of the trunk needs a
+# passing test-suite verdict for that exact tree (docs/agents/lanes-and-releases.md).
+top=$(git rev-parse --show-toplevel)
+for e in '${engine}' "$top/scripts/lane.mjs"; do
+  if [ -f "$e" ] && grep -q prepush "$e"; then
+    if command -v node >/dev/null 2>&1; then exec node "$e" prepush --repo "$top" "$@"; fi
+    if [ -x '${runtime}' ]; then ELECTRON_RUN_AS_NODE=1 exec '${runtime}' "$e" prepush --repo "$top" "$@"; fi
+  fi
+done
+echo "PaneForge refused this push: it could not run the check in scripts/lane.mjs (no copy of it, or no Node to run it with)." >&2
+exit 1
+`
+}
+
+/** `ours`, `foreign`, or `missing` for the pre-push hook file. */
+function prePushState(path) {
+  if (!existsSync(path)) return { kind: 'missing' }
+  let body = ''
+  try {
+    body = readFileSync(path, 'utf8')
+  } catch {
+    return { kind: 'foreign' }
+  }
+  if (!body.includes(PUSH_GATE_MARK)) return { kind: 'foreign' }
+  const engine = /^for e in '([^']*)'/m.exec(body)?.[1]
+  // A hook from before the runtime fallback has no `-x` line: it counts as out of date.
+  const runtime = /^\s*if \[ -x '([^']*)' \]/m.exec(body)?.[1]
+  return { kind: 'ours', engine, runtime }
+}
+
+/**
+ * Put the pre-push hook in place so a plain `git push` of the trunk from anywhere (a chat in
+ * the main folder, Codex, a terminal) meets the same rule `ship` holds itself to. A hook that
+ * is not ours is never touched, and ours is only rewritten when the copy of this file it
+ * names is gone - two checkouts must not take turns rewriting it.
+ */
+function installPushGate() {
+  if (!pushGateApplies()) return
+  const path = prePushPath()
+  if (!path) return
+  const st = prePushState(path)
+  if (st.kind === 'foreign') return
+  if (st.kind === 'ours' && st.engine && st.runtime && existsSync(st.runtime)) {
+    try {
+      if (existsSync(st.engine) && readFileSync(st.engine, 'utf8').includes('prepush')) return
+    } catch {
+      /* rewrite below */
+    }
+  }
+  const engine = fileURLToPath(import.meta.url).replace(/\\/g, '/')
+  const runtime = process.execPath.replace(/\\/g, '/')
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, pushGateBody(engine, runtime), { encoding: 'utf8', mode: 0o755 })
+  try {
+    chmodSync(path, 0o755)
+  } catch {
+    /* Windows has no mode bits; Git for Windows runs the hook anyway */
+  }
+}
+
+/**
+ * Why the merged tree about to be pushed may not go: null when its suite is green (or
+ * unknown to be needed), a sentence when red, not run, or still waiting its turn on the PC.
+ * Nothing has been pushed whichever it says.
+ */
+function pushedTreeFailure(state) {
+  const head = gitSafe(MAIN, 'rev-parse', 'HEAD^{tree}')
+  if (!head.ok) return `${MB}'s merged tree could not be read, so nothing was pushed.`
+  const tree = head.out
+  const redSentence = (reason) =>
+    `${MB} fails its own test suite with the finished work merged in, so nothing was pushed - ${reason}. Fix it and it goes out by itself.`
+  const known = treeVerdict(read(), tree)
+  if (known) return known.ok ? null : redSentence(known.reason)
+  if (onPc()) {
+    const v = pcSuite(MAIN, read().pushSuite, (rec) => remember(state, ['pushSuite'], rec))
+    if (!v) return null
+    if (v.pending) return pcWaiting('test suite', v.pending)
+    if (v.cannot)
+      return `${MB}'s test suite could not ${v.cannot} the PC, so nothing was pushed - ${v.why}. That is the remote runner, not the code.`
+    return redSentence(v.red)
+  }
+  const commit = gitSafe(MAIN, 'rev-parse', 'HEAD')
+  const reason = laneVerdict(state, MAIN, commit.ok ? commit.out : null)
+  if (!reason) return null
+  if (reason.startsWith('could not run'))
+    return `${MB}'s test suite could not run with the finished work merged in, so nothing was pushed - ${reason}. That is not a code verdict.`
+  return redSentence(reason)
+}
+
+/** Record that a person (or a version release) chose to push this exact tree without its suite. */
+function recordPushOk(state, why) {
+  const t = gitSafe(MAIN, 'rev-parse', 'HEAD^{tree}')
+  if (t.ok) remember(state, ['pushOk'], { tree: t.out, at: now(), why })
+}
+
+function ship(kind, session, { gated = false } = {}) {
   if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
   // Version mode creates another commit after the exact-tree proof. Taskdriver's
   // merge workflow must not push that newly changed, unverified tree.
@@ -5141,6 +5339,22 @@ function ship(kind, session) {
       }
     }
 
+    // The same question for the SUITE, on the tree that is about to be pushed. Master's suite
+    // was read before any lane landed, so the merge result - the only tree that ever reaches
+    // origin - was never tested: c2a39f8b (2026-10-04) merged a lane, passed the typecheck and
+    // went out with two red suites. A person's own `ship` skips it by design but leaves a mark
+    // saying so, which is what lets the pre-push hook tell it from a stray `git push`.
+    const pushes = RELEASE !== 'none' && pushGateApplies()
+    if (pushes && gated) {
+      const red = pushedTreeFailure(state)
+      if (red) {
+        gitSafe(MAIN, 'reset', '--hard', beforeMerge)
+        throw new Error(red)
+      }
+    } else if (pushes) {
+      recordPushOk(state, 'a person ran ship')
+    }
+
     // A set of individually checked lanes can produce a different merge tree.
     // Fail closed here, with the local merge retained for a PC recheck, before
     // any push can expose unverified combined work.
@@ -5246,6 +5460,7 @@ function ship(kind, session) {
       // are missing. (Happened for real on v0.3.42, 2026-07-28.)
       const tagOnOrigin = gitSafe(MAIN, 'ls-remote', '--tags', 'origin', `refs/tags/v${pkg.version}`)
       if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
+        if (pushes) recordPushOk(state, 'version release')
         git(MAIN, 'push')
         git(MAIN, 'push', 'origin', `v${pkg.version}`)
         const resumedBuilt = publishFallback(pkg.version, () => beatRelease(session))
@@ -5290,6 +5505,7 @@ function ship(kind, session) {
     }
     git(MAIN, 'commit', '-m', `release: v${next}`)
     git(MAIN, 'tag', `v${next}`)
+    if (pushes) recordPushOk(state, 'version release')
     git(MAIN, 'push')
     git(MAIN, 'push', 'origin', `v${next}`)
     return finish(next, publishFallback(next, () => beatRelease(session)))
@@ -5886,6 +6102,14 @@ function doctor() {
         : `Lanes branch off ${MB}. Finishing one does nothing else - this repo neither tags nor pushes.`
   )
   say()
+  if (pushGateApplies()) {
+    const hook = prePushPath()
+    const st = hook ? prePushState(hook) : { kind: 'missing' }
+    if (st.kind !== 'ours')
+      say(
+        `Nothing stops a plain \`git push\` of ${MB} from sending work no test has run: the push check is ${st.kind === 'foreign' ? 'another tool\'s hook, which is left alone' : 'not installed yet (any lane command installs it)'}.`
+      ), say()
+  }
 
   // Said before anything else, because nothing below goes out while it is true.
   {
@@ -6731,6 +6955,13 @@ try {
   if (!PROFILE.enabled && cmd !== 'status') {
     console.log(`${basename(MAIN)} has lanes turned off in its .lanes.json - nothing done.`)
     process.exit(0)
+  }
+  if (cmd === 'prepush') prepush()
+  // Never allowed to break the command that was asked for.
+  try {
+    installPushGate()
+  } catch {
+    /* a hook that cannot be written is reported by doctor */
   }
   const session = arg('session')
   const sayBuilt = (b) =>

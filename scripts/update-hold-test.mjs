@@ -29,7 +29,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { DESK_QUIET_MS, HOLD_LOG_INTERVAL_MS, agentsMidTurn, deskBusy, decideInstall, shouldLogHold, idleInstallBlocker } =
+const { DESK_QUIET_MS, HOLD_LOG_INTERVAL_MS, agentsMidTurn, deskBusy, decideInstall, shouldLogHold, idleInstallBlocker, idleHoldLine, selfInstallOff } =
   await import(pathToFileURL(outfile).href)
 
 let failures = 0
@@ -189,6 +189,23 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
   // person taken out the same call names what the panes would still hold it on.
   const busy = { sessions: [{ ...quiet, runSince: T - 60_000 }, { ...quiet, runSince: T - 5000 }], personIdleMs: 60_000 }
   ok(/computer 1 min/.test(why(busy)) && why({ ...busy, personIdleMs: Infinity }) === '2 pane(s) mid-turn', 'the panes half is still readable behind the person half')
+
+  // 2026-10-04: the PC sat 23h (10-03 11:44am to 10-04 10:49am) with 0.8.234-0.8.236 downloaded
+  // behind 47 lines of "waiting for a quiet desk: restore after update is off". A setting is
+  // not a moment: no quiet desk ends it, so the line must not say it is waiting for one, and
+  // it hid what the panes would have held it on, so nobody could tell whether the night was
+  // quiet enough. The line names every half.
+  const line = (patch) => idleHoldLine({ ...base, ...patch })
+  ok(line({}) === null, 'a quiet desk has no hold line')
+  ok(selfInstallOff(true) === null && /restore/.test(selfInstallOff(false)), 'restore after update off is the hold no quiet desk lifts')
+  const off = line({ restoreAfterUpdate: false })
+  ok(!!off && !/waiting for a quiet desk/.test(off), 'restore off does not claim to be waiting for a quiet desk')
+  ok(!!off && /restore after update is off/.test(off) && /Restart now/.test(off), 'restore off says what holds it and what still installs it')
+  ok(!!off && /panes: quiet/.test(off), 'restore off on a quiet desk says the panes would not have held it')
+  ok(/panes: 2 pane\(s\) mid-turn/.test(line({ restoreAfterUpdate: false, ...busy })), 'restore off on a busy desk names the panes half too')
+  ok(/panes: 2 pane\(s\) mid-turn/.test(line({ gameActive: true, ...busy })), 'a game on screen names the panes half too')
+  ok(/^waiting for a quiet desk: someone used this computer 1 min ago; panes: 2 pane\(s\) mid-turn$/.test(line(busy)), 'the person hold keeps its panes half')
+  ok(line({ sessions: [{ ...quiet, runSince: T - 60_000 }] }) === 'waiting for a quiet desk: 1 pane(s) mid-turn', 'a panes-only hold is said once, not twice')
 }
 
 // A ready build installs from exactly two places: Restart now, and the idle check gated on
@@ -201,9 +218,9 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
   ok(!handler.includes('whenClear'), 'Restart now is never silently queued for later')
   ok(!/function autoInstall|readyTick|consumeInstallRetry|onUpdateIgnored/.test(main), 'no stale-build listener or failed-install retry can start an update')
   const idle = main.slice(main.indexOf('function idleInstallCheck('), main.indexOf('\n}\n', main.indexOf('function idleInstallCheck(')))
-  ok(idle.length > 0 && idle.indexOf('idleInstallBlocker(') > 0 && idle.indexOf('idleInstallBlocker(') < idle.indexOf('doInstall()'), 'the idle install asks idleInstallBlocker before it installs')
+  ok(idle.length > 0 && idle.indexOf('idleHoldLine(') > 0 && idle.indexOf('idleHoldLine(') < idle.indexOf('doInstall()'), 'the idle install asks idleHoldLine (idleInstallBlocker) before it installs')
   ok(/phase !== 'ready'/.test(idle) && /installStarted/.test(idle), 'the idle install only acts on a ready build that is not already installing')
-  ok(/personIdleMs: Infinity/.test(idle) && /; panes: \$\{panes \?\? 'quiet'\}/.test(idle), 'a hold on the person also logs what the panes would hold it on')
+  ok(/updateLog\('install', why\)/.test(idle), 'the hold is logged in idleHoldLine\'s words, every half of it')
   // Restart now, "Restart now anyway" (game:installAnyway, also a click) and the idle check.
   const callers = main.split('\n').filter((l) => /doInstall\(\)/.test(l) && !/function doInstall/.test(l))
   ok(callers.length === 3, `doInstall() has exactly its three callers: two clicks and the idle check (found ${callers.length})`)

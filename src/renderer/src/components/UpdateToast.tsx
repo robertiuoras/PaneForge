@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UpdateState } from '@shared/types'
-import { stagedHours, stagedTooLong, stagedWaitingWords } from '@shared/updateStale'
+import { readyWords, stagedHours, stagedTooLong, stagedWaitingWords } from '@shared/updateStale'
+import { selfInstallOff } from '@shared/updateHold'
 import { installFailedWords, installerUrl } from '@shared/installWedge'
 import CardX from './CardX'
 import { useNow } from './Elapsed'
@@ -26,10 +27,18 @@ export default function UpdateToast(): JSX.Element | null {
   // now, but the frame between the click and that still belonged to a card that looked
   // like it had ignored the press, which is what "it lags and then closes" was.
   const [restarting, setRestarting] = useState(false)
+  // Whether the idle install can happen at all. Off, the card must not promise it: the PC's
+  // promised it for 23 hours with reopening panes after an update turned off (2026-10-04).
+  const [selfInstall, setSelfInstall] = useState(true)
 
   useEffect(() => {
     api.updateState().then(setState)
     return api.onUpdate(setState)
+  }, [])
+  useEffect(() => {
+    const read = (c: { restoreAfterUpdate: boolean }): void => setSelfInstall(selfInstallOff(c.restoreAfterUpdate) === null)
+    api.getConfig().then(read)
+    return api.onConfig(read)
   }, [])
 
   const restart = (): void => {
@@ -96,9 +105,9 @@ export default function UpdateToast(): JSX.Element | null {
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
           {waited && state.readyAt
-            ? stagedWaitingWords(state.current, state.version, stagedHours(state.readyAt, now))
+            ? stagedWaitingWords(state.current, state.version, stagedHours(state.readyAt, now), selfInstall)
             : ready
-              ? `You are on ${state.current}. Choose Restart now when you are ready, or Later: it installs the next time you quit, or by itself once this computer has sat untouched for 10 minutes.`
+              ? readyWords(state.current, selfInstall)
               : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
       </div>

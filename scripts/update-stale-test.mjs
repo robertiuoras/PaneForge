@@ -32,7 +32,8 @@ const {
   updateIgnored,
   stagedHours,
   stagedTooLong,
-  stagedWaitingWords
+  stagedWaitingWords,
+  readyWords
 } = await import(pathToFileURL(outfile).href)
 
 const fail = []
@@ -234,7 +235,7 @@ try {
   ok(stagedHours(NOW - 24 * HOUR, NOW) === 24, 'the sentence counts whole hours')
   ok(stagedHours(NOW - HOUR - 1000, NOW) === 1, '...and never says nought hours')
 
-  const words = stagedWaitingWords('0.8.206', '0.8.207', 24)
+  const words = stagedWaitingWords('0.8.206', '0.8.207', 24, true)
   ok(words.includes('24 hours') && words.includes('0.8.207'), 'the card names the build and the wait')
   ok(words.includes('Restart now'), '...and what ends the wait, in the words of the button underneath it')
   ok(
@@ -245,6 +246,13 @@ try {
     /never while you are working/.test(words),
     'it also says what the app will NOT do, because that is the promise being kept'
   )
+  // 2026-10-04: with restore after update off the idle install can never fire, and the card
+  // still promised "by itself once this computer has sat untouched" for 23 hours.
+  const never = stagedWaitingWords('0.8.233', '0.8.236', 27, false)
+  ok(!/by itself once/.test(never) && /not install by itself/.test(never), 'with restore off the waiting card does not promise a self-install')
+  ok(/Restart now/.test(never) && /quit/.test(never), '...and still says what does install it')
+  ok(/by itself once/.test(readyWords('0.8.233', true)), 'the first card promises the self-install when it can happen')
+  ok(!/by itself once/.test(readyWords('0.8.233', false)) && /not install by itself/.test(readyWords('0.8.233', false)), 'and does not when restore after update is off')
 }
 
 // Render the actual card with controlled hook state and clock, then invoke its buttons.
@@ -296,6 +304,16 @@ try {
     ok(!!card, 'a different build is still allowed to show its own reminder')
     card.props.children[0].props.onDismiss()
     ok(render() === null, 'the close button also dismisses an aged reminder')
+    // The card's fourth hook is whether the idle install can happen at all (restore after
+    // update on). Off, neither the first card nor the reminder may promise it.
+    const hint = (c) => String(c.props.children[1].props.children[1].props.children)
+    fixture.update = { ...fixture.update, version: '0.8.209', readyAt: fixture.now }
+    fixture.values[3] = false
+    card = render()
+    ok(!!card && !/by itself once/.test(hint(card)) && /not install by itself/.test(hint(card)), 'the card says it will not install by itself while restore after update is off')
+    fixture.values[3] = true
+    card = render()
+    ok(!!card && /by itself once/.test(hint(card)), 'and promises it again once the setting is back on')
   } finally {
     globalThis.window = previousWindow
     delete globalThis.__updateToastFixture

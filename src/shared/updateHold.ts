@@ -134,16 +134,29 @@ function mins(ms: number): number {
   return Math.max(1, Math.ceil(ms / 60_000))
 }
 
-/** Why a downloaded update may not install by itself right now, or null when it may. */
-export function idleInstallBlocker(o: {
+/**
+ * The hold no quiet desk lifts: a setting, not a moment. Null when the idle install can
+ * happen at all. The update card reads it too, so it never promises an install by itself
+ * that this would refuse (2026-10-04: the PC's card and log promised one for 23 hours).
+ */
+export function selfInstallOff(restoreAfterUpdate: boolean): string | null {
+  return restoreAfterUpdate ? null : 'restore after update is off, so the panes would not come back'
+}
+
+/** What `idleInstallBlocker` reads. */
+export interface IdleDesk {
   sessions: readonly RunState[]
   now: number
   /** the OS's time since any keyboard or mouse input on this computer */
   personIdleMs: number
   restoreAfterUpdate: boolean
   gameActive: boolean
-}): string | null {
-  if (!o.restoreAfterUpdate) return 'restore after update is off, so the panes would not come back'
+}
+
+/** Why a downloaded update may not install by itself right now, or null when it may. */
+export function idleInstallBlocker(o: IdleDesk): string | null {
+  const off = selfInstallOff(o.restoreAfterUpdate)
+  if (off) return off
   if (o.gameActive) return 'a game is on screen'
   if (o.personIdleMs < DESK_QUIET_MS) return `someone used this computer ${mins(o.personIdleMs)} min ago`
   const live = o.sessions.filter((s) => s.status !== 'exited')
@@ -156,4 +169,23 @@ export function idleInstallBlocker(o: {
   const last = Math.max(0, ...live.map((s) => Math.max(s.lastOutput ?? 0, s.lastKeyboard ?? 0)))
   if (o.now - last < DESK_QUIET_MS) return `a pane was active ${mins(o.now - last)} min ago`
   return null
+}
+
+/**
+ * The updater.log line for a held idle install, or null when it may install.
+ *
+ * Only the first blocker used to be written, and the first one hid the rest: 0.8.231/0.8.232
+ * each sat ~6h behind "someone used this computer" lines (2026-10-01), and the PC sat 23h
+ * behind 47 "waiting for a quiet desk: restore after update is off" lines (2026-10-03
+ * 11:44am to 10-04 10:49am) that never said whether the panes would have let it go. So a
+ * hold on the setting, a game or the person also names the panes' half, and the setting -
+ * which no quiet desk ends - is not called a wait for one.
+ */
+export function idleHoldLine(o: IdleDesk): string | null {
+  const why = idleInstallBlocker(o)
+  if (!why) return null
+  const panes = idleInstallBlocker({ ...o, restoreAfterUpdate: true, gameActive: false, personIdleMs: Infinity }) ?? 'quiet'
+  const off = selfInstallOff(o.restoreAfterUpdate)
+  if (off) return `not installing by itself: ${off}; it installs on Restart now or a quit; panes: ${panes}`
+  return why === panes ? `waiting for a quiet desk: ${why}` : `waiting for a quiet desk: ${why}; panes: ${panes}`
 }

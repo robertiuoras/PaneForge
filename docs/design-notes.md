@@ -317,6 +317,25 @@ again and the mark is dropped and the release waits for you, by name. Nothing to
 it except mark ready again - but it means a release never stalls silently on a chat that
 said done and kept typing (`scripts/release-gate-test.mjs` is that failure, pinned).
 
+### A push of master is judged on the tree it pushes (2026-10-04)
+
+Two ways a red tree reached origin/master with no test run on what was pushed. (1) `ship()`
+checked master's suite BEFORE merging ready lanes, re-ran only the typecheck on the merged
+tree, and pushed: master 106963ac passed `pane-answer-test` and `close-done-test`, the cron
+ship merged lane b (c2a39f8b) and both failed there (paneanswer `ReferenceError: steer is
+not defined`, closedone `a mirrored pane is armed on the device that owns it`). (2) 21baf0ff
+and e2c68e0a were plain `git push` of master from a chat in the main checkout, with no
+retry-log entry: there was no pre-push hook at all.
+
+The rule is on the tree, not the caller: a push of the trunk needs a green suite record for
+`HEAD^{tree}` (`treeVerdict`). The engine meets it with `pushedTreeFailure` after the merge;
+a person's `ship` and a version release (asked for by Robert) record `pushOk` instead. A git
+hook (`installPushGate`, `lane.mjs prepush`) holds Codex, Antigravity and terminal pushes
+too, which no Claude PreToolUse hook can see. A hook that is not ours is never overwritten.
+The hook runs `node`, else the runtime that wrote it under `ELECTRON_RUN_AS_NODE=1`: the app
+runs lane.mjs inside PaneForge itself, so a push its ship spawns may have no `node` on PATH.
+Pinned by `test:pushgate`.
+
 ### Every automatic release is a dev release (2026-08-09)
 
 Robert's ask, verbatim in intent: stop broken builds reaching the app he is sitting in.
