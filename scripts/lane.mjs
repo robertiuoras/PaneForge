@@ -3590,9 +3590,10 @@ function submitPcJob(dir, words) {
  * a waiter, so a job only ticks look at is not cancelled as orphaned after 10 minutes. Still
  * in line: pending, and the next tick asks again. Ended: the wait below returns at once with
  * its output (rbuild's 60 s is only the cap), so a finished job's verdict still lands.
+ * `once` asks the same way from a caller that does wait, before it picks a job to wait on.
  */
-function waitPcJob(id, seconds = PC_WAIT_S) {
-  if (!suiteWaits()) {
+function waitPcJob(id, seconds = PC_WAIT_S, once = !suiteWaits()) {
+  if (once) {
     const asked = rbuildOnce(['--resume', id], 180)
     // Anything but an ended job is still in line to a tick, rbuild refusing included (another
     // process is mid-upload of it): a chat's own full wait settles the rest, as it always did.
@@ -3722,9 +3723,10 @@ function failNames(text) {
  *
  * `known` must be a fresh read, not a `state` loaded before a 15-minute wait: two chats
  * trying at once would each queue the same tree. `sendOnly` queues the job (or finds the
- * cached answer) without waiting; `waitS` is the wait budget.
+ * cached answer) without waiting; `once` reads a finished job's answer without waiting on
+ * one still in line (`waitPcJob`); `waitS` is the wait budget.
  */
-function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {}) {
+function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_WAIT_S } = {}) {
   const tree = workingTree(dir)
   const mine = tree && known?.tree === tree ? known : null
   if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
@@ -3744,7 +3746,7 @@ function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {})
       if (tree) save({ tree, id, at: now(), ...(confirming && { confirming, firstRed }) })
     }
     if (sendOnly) return { pending: id }
-    const r = waitPcJob(id, waitS)
+    const r = waitPcJob(id, waitS, once || !suiteWaits())
     if (r.pending) return { pending: id }
     if (r.status === 0) {
       if (tree) save({ tree, ok: true, at: now() })
@@ -4373,13 +4375,20 @@ function readyLaneFix(state) {
   const ask = (id, opts) =>
     pcSuite(laneDir(id), read().pcLaneSuite?.[id], (rec) => remember(state, ['pcLaneSuite', id], rec), opts)
   for (const id of lanes) ask(id, { sendOnly: true })
+  // A lane whose job has already finished answers before any wait starts. Waiting in merge
+  // order kept a green lane behind the one ahead of it: 2026-10-04 lane c's job passed at
+  // 2:45pm, the release spent its whole budget on lane b's job still in line, then only
+  // queued c, and nothing read c's verdict. A tick's waits below are this same read already.
+  if (suiteWaits()) {
+    for (const id of lanes) if (!ask(id, { once: true })) return { lane: id, tried }
+  }
   // One wait budget for all of them, not one each: five queued lanes were 75 minutes a try.
-  // Past it, a lane only reads a cached answer and the next try waits on its job.
+  // Past it, a lane only reads an answer that is already there and the next try waits on its job.
   const until = now() + PC_WAIT_S * 1000
   let pending = false
   for (const id of lanes) {
     const left = Math.round((until - now()) / 1000)
-    const v = ask(id, left > 0 ? { waitS: Math.max(60, left) } : { sendOnly: true })
+    const v = ask(id, left > 0 ? { waitS: Math.max(60, left) } : { once: true })
     if (!v) return { lane: id, tried }
     if (v.pending) pending = true
   }
