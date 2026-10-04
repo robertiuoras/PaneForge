@@ -394,6 +394,18 @@ export interface ReclaimPane {
    */
   backJob?: string | null
   /**
+   * Share of one core this pane's whole process tree used over the last sample, when
+   * the machine has measured it (`shared/usage.ts`). Null/undefined is "nobody measured",
+   * not 0, and never refuses.
+   *
+   * The SLEEP clock's only other reading of "is this agent working" is `busy`, the run
+   * clock, which is fed by the busy footer on the pane's own screen. A frame whose bottom
+   * rows are a tool's output rather than the CLI's spinner reads as finished, and a pane
+   * thirty minutes into one tool call then looks quiet. A tree burning a core is not idle
+   * whatever the screen says. Robert, 2026-09-04: "it should never sleep".
+   */
+  cpuPct?: number | null
+  /**
    * A process closing this pane would stop is holding a listening socket - a dev server,
    * a preview, anything a browser can reach (`shared/serving.ts`, `Session.serving`).
    *
@@ -914,11 +926,21 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
  * Every other refusal is shared verbatim, `asleep` included - a sleeping pane is the
  * outcome, not a candidate.
  */
+/**
+ * Share of one core above which a pane's tree is doing something, for the sleep clock.
+ * An agent CLI sitting at its composer is under 1%; one running a tool holds a core or
+ * more. Five leaves room for a spinner repainting.
+ */
+export const BUSY_CPU_PCT = 5
+
 function sleepable(p: ReclaimPane, personHere = true, pressure: SleepPressure = 'ok'): boolean {
   // A sleeping pane is the OUTCOME of this clock, never a candidate for it. An exited
   // pane has already given its process back and has nothing left to sleep. `keepable`
   // deliberately accepts both for the close clock, so these refusals live here.
   if (p.asleep || p.state === 'exited') return false
+  // A tree using a core is working, whatever the pane's screen says. Unknown never
+  // refuses, or this clock would switch itself off on a desk whose sampler is asleep.
+  if ((p.cpuPct ?? 0) > BUSY_CPU_PCT) return false
   // Held off the clock, handed back under pressure. `keepable` reads `pinned` itself, so
   // the pressure case has to blank it to get the rest of the refusal set.
   if (pressure !== 'ok') return keepable({ ...p, pinned: false }, personHere)

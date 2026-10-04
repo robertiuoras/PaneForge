@@ -83,6 +83,8 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   ancestry") when the chat now holding the lane runs `ready` or ends, but only if its pinned
   commit (and receipt commit) is in trunk, it was not pinned for uncommitted changes
   (`dirty`), and the checkout has no hand edits (`closeShippedRecovery`, `test:lanecompletion`).
+  `doctor` says when parked work is done, blocked, or left by a chat that is gone, and a recovery
+  item that lost the active slot is revisited and blocked, not left dispatched (`test:lanecompletion`).
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).

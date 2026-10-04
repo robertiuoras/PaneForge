@@ -360,7 +360,9 @@ function reclaimPaneOf(
   lastFocus?: number,
   pinned?: boolean,
   /** what the sampler saw this pane still running, when it has an answer */
-  backJob?: string | null
+  backJob?: string | null,
+  /** what the sampler measured the pane's whole tree using, when it has an answer */
+  cpuPct?: number | null
 ): ReclaimPane {
   return {
     id: s.id,
@@ -389,6 +391,9 @@ function reclaimPaneOf(
     // A Claude background agent still running inside the CLI dies with a close or a sleep
     // exactly as a background shell does. See `Session.subagent`.
     backJob: backJob ?? s.subagent ?? null,
+    // What its whole tree is USING: the one reading of "this agent is working" that does
+    // not come off the pane's own screen. See `ReclaimPane.cpuPct`.
+    cpuPct,
     // ...and a server any of it is running, which is quiet on purpose. Read in main off
     // the process table, so a hidden window still knows. See `ReclaimPane.serving`.
     serving: s.serving ?? null,
@@ -2717,7 +2722,8 @@ export default function App(): JSX.Element {
         activeRef.current,
         focusLeftAt.current[s.id],
         pinnedRef.current[s.id],
-        usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+        usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+        usageRef.current?.panes[s.id]?.cpuPct
       )
     )
     const deskClock = deskNow(Date.now(), awayRef.current)
@@ -3078,7 +3084,8 @@ export default function App(): JSX.Element {
             activeRef.current,
             focusLeftAt.current[s.id],
             pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+            usageRef.current?.panes[s.id]?.cpuPct
           )
         ),
         cfg,
@@ -3133,7 +3140,8 @@ export default function App(): JSX.Element {
             activeRef.current,
             focusLeftAt.current[s.id],
             pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+            usageRef.current?.panes[s.id]?.cpuPct
           )
         ),
         cfg,
@@ -4908,7 +4916,8 @@ export default function App(): JSX.Element {
             activeId,
             focusLeftAt.current[s.id],
             pinned[s.id],
-            usage?.panes[s.id]?.jobs?.[0]?.label
+            usage?.panes[s.id]?.jobs?.[0]?.label,
+            usage?.panes[s.id]?.cpuPct
           )
         )
       for (const s of sessions) {

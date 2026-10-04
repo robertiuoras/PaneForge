@@ -2921,6 +2921,8 @@ export class SessionManager extends EventEmitter {
     // 84ms into it). After the resume turn ends nothing is owed and the pane closes.
     // Startup output and an unsent composer are not a completed agent response either.
     if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
+    // A prompt given up on never started the job: stay open, GuardDeck's card tells the person (2026-10-04, c206ac70).
+    if (meta.promptUnsent) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     if (meta.agent !== 'shell') {
       this.onCloseWhenDone?.(meta.id)

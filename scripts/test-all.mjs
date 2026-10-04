@@ -141,6 +141,7 @@ const TESTS = [
   ['faultnotify', 'fault-notify-test.mjs'],
   ['spawnguard', 'spawn-guard-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
+  ['busywindow', 'busy-window-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['cursorup', 'cursor-up-realign-test.mjs'],
