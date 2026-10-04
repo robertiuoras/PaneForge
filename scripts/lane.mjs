@@ -5054,15 +5054,23 @@ function prePushPath() {
   return p.ok && p.out ? resolve(MAIN, p.out) : null
 }
 
-function pushGateBody(engine) {
+/**
+ * The hook itself. `runtime` is what ran the install: the app runs this file as
+ * `ELECTRON_RUN_AS_NODE=1 <PaneForge>`, and a `git push` it spawns may have no `node` on
+ * PATH, so the hook falls back to that same runtime rather than refusing every push.
+ */
+function pushGateBody(engine, runtime) {
   return `#!/bin/sh
 # ${PUSH_GATE_MARK}: written by PaneForge's scripts/lane.mjs. A push of the trunk needs a
 # passing test-suite verdict for that exact tree (docs/agents/lanes-and-releases.md).
 top=$(git rev-parse --show-toplevel)
 for e in '${engine}' "$top/scripts/lane.mjs"; do
-  if [ -f "$e" ] && grep -q prepush "$e"; then exec node "$e" prepush --repo "$top" "$@"; fi
+  if [ -f "$e" ] && grep -q prepush "$e"; then
+    if command -v node >/dev/null 2>&1; then exec node "$e" prepush --repo "$top" "$@"; fi
+    if [ -x '${runtime}' ]; then ELECTRON_RUN_AS_NODE=1 exec '${runtime}' "$e" prepush --repo "$top" "$@"; fi
+  fi
 done
-echo "PaneForge refused this push: no copy of scripts/lane.mjs that can check it was found." >&2
+echo "PaneForge refused this push: it could not run the check in scripts/lane.mjs (no copy of it, or no Node to run it with)." >&2
 exit 1
 `
 }
@@ -5078,7 +5086,9 @@ function prePushState(path) {
   }
   if (!body.includes(PUSH_GATE_MARK)) return { kind: 'foreign' }
   const engine = /^for e in '([^']*)'/m.exec(body)?.[1]
-  return { kind: 'ours', engine }
+  // A hook from before the runtime fallback has no `-x` line: it counts as out of date.
+  const runtime = /^\s*if \[ -x '([^']*)' \]/m.exec(body)?.[1]
+  return { kind: 'ours', engine, runtime }
 }
 
 /**
@@ -5093,7 +5103,7 @@ function installPushGate() {
   if (!path) return
   const st = prePushState(path)
   if (st.kind === 'foreign') return
-  if (st.kind === 'ours' && st.engine) {
+  if (st.kind === 'ours' && st.engine && st.runtime && existsSync(st.runtime)) {
     try {
       if (existsSync(st.engine) && readFileSync(st.engine, 'utf8').includes('prepush')) return
     } catch {
@@ -5101,8 +5111,9 @@ function installPushGate() {
     }
   }
   const engine = fileURLToPath(import.meta.url).replace(/\\/g, '/')
+  const runtime = process.execPath.replace(/\\/g, '/')
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, pushGateBody(engine), { encoding: 'utf8', mode: 0o755 })
+  writeFileSync(path, pushGateBody(engine, runtime), { encoding: 'utf8', mode: 0o755 })
   try {
     chmodSync(path, 0o755)
   } catch {

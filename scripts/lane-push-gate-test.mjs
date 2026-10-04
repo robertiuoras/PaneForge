@@ -8,7 +8,8 @@
 //
 // Asserted, each in its own throwaway repo with a bare origin and the REAL lane.mjs:
 //   1. any lane command installs `.git/hooks/pre-push`; a hand push of an untested master
-//      commit is refused and origin/master does not move
+//      commit is refused and origin/master does not move, also with no `node` on PATH (how
+//      the app's own pushes run), and a hook written before that fallback gets rewritten
 //   2. a lane that is green alone but red once merged (the c2a39f8b shape): `ready` pushes
 //      nothing, local master goes back, the lane keeps its ready mark, the reason names it
 //   3. a green lane ships: origin/master gets the lane's change (the engine's own push passes
@@ -114,6 +115,31 @@ const commitIn = (dir, file, text, msg) => {
   const push = run(repo, 'push')
   ok('a hand push of an untested master is refused', push.code !== 0 && /refused/.test(push.err), `${push.code} ${push.err}`)
   ok('...and origin/master did not move', originTip(origin) === before)
+
+  // The app runs lane.mjs as `ELECTRON_RUN_AS_NODE=1 <PaneForge>`, so the `git push` its ship
+  // spawns can have no `node` on PATH. The hook must still run the check, not die with 127.
+  const env = { ...process.env }
+  for (const k of Object.keys(env)) if (/^path$/i.test(k)) delete env[k]
+  const sep = process.platform === 'win32' ? ';' : ':'
+  const nodeNames = process.platform === 'win32' ? ['node.exe', 'node.cmd', 'node'] : ['node']
+  env.PATH = (process.env.PATH ?? process.env.Path ?? '')
+    .split(sep)
+    .filter((d) => d && !nodeNames.some((n) => existsSync(join(d, n))))
+    .join(sep)
+  const gitBin = join(git(repo, '--exec-path'), process.platform === 'win32' ? 'git.exe' : 'git')
+  const bare = spawnSync(gitBin, ['push'], { cwd: repo, env, encoding: 'utf8' })
+  ok(
+    'with no node on PATH the hook still runs the check and refuses for the real reason',
+    bare.status !== 0 && /nothing has run the test suite/.test(bare.stderr ?? ''),
+    `${bare.status} ${bare.stderr}`
+  )
+  ok('...and origin/master did not move', originTip(origin) === before)
+
+  // A hook written before that fallback existed is brought up to date by the next lane command.
+  const old = (existsSync(hook) ? readFileSync(hook, 'utf8') : '').replace(/^\s*if command -v node[^\n]*\n/m, '').replace(/^\s*if \[ -x [^\n]*\n/m, '')
+  writeFileSync(hook, old, { mode: 0o755 })
+  lane(repo, 'status')
+  ok('a hook from before the no-node fallback is rewritten', existsSync(hook) && readFileSync(hook, 'utf8').includes('ELECTRON_RUN_AS_NODE'))
 }
 
 // ---------------------------------------------------------------- 2. green alone, red merged
