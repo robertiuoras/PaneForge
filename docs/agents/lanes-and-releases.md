@@ -149,7 +149,8 @@ Install once, update from app. Unsupported: skip not retry (`shared/pickRelease.
 a normal quit, or an IDLE DESK (2026-09-24, Robert): `idleInstallCheck` every 60s asks
 `idleInstallBlocker` (`shared/updateHold.ts`) - nobody touched the computer 10 min, no pane
 printed/typed 10 min, none mid-turn/asking/drafting/back job, restore after update on, no
-game. No countdown/escalation/retry (`test:updatehold`). A staged build on a busy desk may
+game. No countdown/escalation/retry (`test:updatehold`). Restore off = no self-install ever:
+the card stops promising one (`selfInstallOff`), the hold line names every half (`idleHoldLine`). A staged build on a busy desk may
 still sit for days: the rule working. `src/main` never consumes
 `onUpdateIgnored`/`READY_HOLD_MS`. `phaseAt`; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS`
 45min, `PROBE_BUDGET_MS` 5min, `POLL_WATCHDOG_MS` 6min; quit gated `stagedInstallable()`.

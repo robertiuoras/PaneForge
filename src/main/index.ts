@@ -39,7 +39,7 @@ import { promptReview, promptsForSession, recordPromptReview, removePromptReview
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { pidAlive, waitForExit } from '../shared/installWedge'
-import { idleInstallBlocker, shouldLogHold } from '../shared/updateHold'
+import { idleHoldLine, shouldLogHold } from '../shared/updateHold'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -4843,14 +4843,12 @@ function idleInstallCheck(): void {
     restoreAfterUpdate: getConfig().restoreAfterUpdate,
     gameActive: isGameActive()
   }
-  const why = idleInstallBlocker(desk)
+  // Every half that holds it, in one line: a hold on the person, a game or the restore
+  // setting used to hide what the panes would hold it on (`idleHoldLine`).
+  const why = idleHoldLine(desk)
   if (why) {
     if (shouldLogHold(now, idleHoldLoggedAt)) {
-      // The person check comes first and used to hide the panes' half: 0.8.231/0.8.232 each
-      // sat ~6h behind twelve "someone used this computer" lines, and only the pane lines
-      // logged in between showed the two halves never cleared together (2026-10-01 review).
-      const panes = why.startsWith('someone used') ? idleInstallBlocker({ ...desk, personIdleMs: Infinity }) : null
-      updateLog('install', `waiting for a quiet desk: ${why}${why.startsWith('someone used') ? `; panes: ${panes ?? 'quiet'}` : ''}`)
+      updateLog('install', why)
       idleHoldLoggedAt = now
     }
     return
