@@ -223,6 +223,9 @@ const TESTS = [
   ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
+  // A release never merges in the main folder: hooks writing there mid-merge lost 21 files
+  // of other chats' work into a dangling commit (claude-memory, 2026-10-04).
+  ['lanelivemerge', 'lane-livemerge-test.mjs'],
   // One test run per tree, a timed-out run killed whole, and the run outlives a killed clock
   // tick and leaves its verdict (2026-10-02/03). ~2.5 min on the PC.
   ['lanesuiterun', 'lane-suite-run-test.mjs'],

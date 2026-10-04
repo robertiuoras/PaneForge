@@ -217,7 +217,10 @@ try {
   const tgz = day ? join(archives, day, 'demo-c.tgz') : ''
   ok('the finished lane\'s ignored files were archived', Boolean(tgz) && existsSync(tgz) && statSync(tgz).size > 0, day)
   if (tgz && existsSync(tgz)) {
-    const inside = execFileSync('tar', ['-tzf', tgz], { encoding: 'utf8' })
+    // The same tar lane.mjs runs: GNU tar first on a Git Bash PATH reads `C:` as a host.
+    const systemTar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+    const tar = process.platform === 'win32' && existsSync(systemTar) ? systemTar : 'tar'
+    const inside = execFileSync(tar, ['-tzf', tgz], { encoding: 'utf8' })
     ok('the archive holds the copied .env', /(^|\r?\n)(\.\/)?\.env\r?\n/.test(inside), inside)
     ok('...and no dependencies', !/node_modules/.test(inside), inside)
   }

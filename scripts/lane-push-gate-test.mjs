@@ -11,7 +11,8 @@
 //      commit is refused and origin/master does not move, also with no `node` on PATH (how
 //      the app's own pushes run), and a hook written before that fallback gets rewritten
 //   2. a lane that is green alone but red once merged (the c2a39f8b shape): `ready` pushes
-//      nothing, local master goes back, the lane keeps its ready mark, the reason names it
+//      nothing, local master goes back, the lane keeps its ready mark, the reason names it,
+//      and an unsaved edit in the main folder is kept (`reset --hard` there wiped it)
 //   3. a green lane ships: origin/master gets the lane's change (the engine's own push passes
 //      the hook because the merged tree was tested)
 //   4. pushing a lane-* branch is never gated
@@ -149,11 +150,15 @@ const commitIn = (dir, file, text, msg) => {
   const before = originTip(origin)
   const mainBefore = git(repo, 'rev-parse', 'master')
   commitIn(a.dir, 'BROKEN', 'x\n', 'a lane commit that breaks the suite')
+  // Somebody's unsaved edit in the main folder, in a file the lane does not bring.
+  const draft = 'one\nsomebody is still writing this\n'
+  writeFileSync(join(repo, 'app.txt'), draft)
   const r = lane(repo, 'ready', '--session', 'sess-a')
   ok('a red merged tree is not pushed: origin/master did not move', originTip(origin) === before, r.out)
   ok('local master is back where it was, without the broken file', git(repo, 'rev-parse', 'master') === mainBefore && !existsSync(join(repo, 'BROKEN')), r.out)
   ok('the lane keeps its ready mark', Boolean(ledger(repo).ready?.[a.lane]), JSON.stringify(ledger(repo).ready))
   ok('the reason names the failing suite', /broken/.test(r.out), r.out)
+  ok('and the unsaved edit in the main folder is still there', readFileSync(join(repo, 'app.txt'), 'utf8') === draft, r.out)
 }
 
 // ---------------------------------------------------------------- 3 and 4. green ships
