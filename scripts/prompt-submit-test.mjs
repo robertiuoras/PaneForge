@@ -688,6 +688,34 @@ const ANSWERING =
     return { pane, p, t0, at: Date.now() }
   }
 
+  // THE USAGE-LIMIT MENU. Claude Code's "What do you want to do?" selector (option 3 spends
+  // credits) is an open selector, not a composer: a paste into it can pick an option. The
+  // prompt stays out of it, and pf tell says `queued` with the reason in about 2 s, not 40.
+  // No SessionStart hook is declared for these panes: this case is about the menu, not the
+  // start-up wait.
+  deskHooks(false)
+  for (const via of ['screen', 'meta']) {
+    const name = `sess-limit-menu-${via}`
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(pane.id)
+    const MENU = '\x1b[2J\x1b[H What do you want to do?\r\n❯ 1. Stop and wait for limit to reset\r\n  2. Upgrade your plan\r\n  3. Switch to usage credits\r\n\r\nEnter to confirm · Esc to cancel\r\n'
+    live.proc.say(via === 'screen' ? MENU : IDLE)
+    if (via === 'meta') live.meta.ask = { question: 'What do you want to do?', options: [{ n: 1, label: 'Stop and wait for limit to reset' }, { n: 3, label: 'Switch to usage credits' }] }
+    await sleep(700)
+    const t0 = Date.now()
+    const outcome = await manager.tellPane(pane.id, 'continue the work', 20_000)
+    const took = Date.now() - t0
+    ok(outcome?.kind === 'queued' && /a question or a setting is open/.test(outcome.reason) && took < 3500,
+      `tell: a limit menu open (${via}) answers queued with the question words within ~3 s`, `${JSON.stringify(outcome)} after ${took}ms`)
+    await sleep(300)
+    ok(!live.proc.writes.some((w) => w.includes('\x1b[200~')),
+      `tell: nothing is pasted into the open limit menu (${via})`, JSON.stringify(live.proc.writes))
+    manager.kill(pane.id, 'user')
+  }
+  deskHooks(true)
+
   // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
   // The hold ends at PF_PROMPT_STARTUP_MS of process age, by design. PC job 0f0f73e5 spent
   // 6.6s between minting the pane id and returning from open(), so the first look found a
@@ -1387,8 +1415,18 @@ const ANSWERING =
         const c = await slowCli(label, [{ at: 0, ms: 1500 }])
         let hooks = false
         for (const until = Date.now() + 1200; Date.now() < until; await sleep(100)) hooks ||= claudeStartup(c.proc.pid, c.born) === 'hooks'
-        // Only the hook reading: the app's other `ps` (ages of processes) is not it.
-        const reads = spy.mock.calls.filter((c) => c.arguments[0] === 'powershell' || (c.arguments[0] === 'ps' && (String(c.arguments[1]).includes('ppid=,') && !String(c.arguments[1]).includes('etime'))))
+        // Only the hook reading (`hookTable`): the app's other process-list readings are not it -
+        // the ages of processes, and the strays sampler's 30 s table (`pid=,ppid=,lstart=,comm=`,
+        // `CreationDate` on Windows), which lands in this window whenever the earlier cases'
+        // running time puts its tick here.
+        const hookTable = (c) => {
+          const [cmd, args] = c.arguments
+          if (cmd === 'ps') return String(args).includes('pgid=')
+          if (cmd !== 'powershell' || !Array.isArray(args)) return false
+          const script = Buffer.from(String(args[args.indexOf('-EncodedCommand') + 1] ?? ''), 'base64').toString('utf16le')
+          return script.includes('[Console]::OutputEncoding') && script.includes('ProcessId,ParentProcessId,CommandLine |')
+        }
+        const reads = spy.mock.calls.filter(hookTable)
         const n = reads.length
         const first = reads.map((c) => `${c.arguments[0]} ${String(c.arguments[1]).slice(0, 60)}`).join(' | ')
         spy.mock.restore()

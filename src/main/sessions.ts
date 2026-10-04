@@ -4752,6 +4752,15 @@ export class SessionManager extends EventEmitter {
           Date.now() - live.contentAt < PERSON_QUIET_MS
       })
       if (decision === 'abandon') return decision
+      // AN OPEN SELECTOR TAKES NO PASTE. Claude Code's usage-limit menu ("What do you want to
+      // do? 1. Stop and wait ... 3. Switch to usage credits") reads as a quiet, idle pane, and a
+      // paste into it can pick an option - option 3 spends money. The return was already held
+      // back; the PASTE was not. Waiting here also lets `pf tell` say `queued` within ~2 s
+      // (WAIT_QUESTION is an early answer) instead of after its whole 40 s window.
+      if (!owner && live.meta.agent === 'claude' && blocked(live)) {
+        waitingFor = WAIT_QUESTION
+        return 'wait'
+      }
       // A STEER, NOT A WAIT. Codex 0.160 takes an Enter mid-turn as more input for the turn
       // it is running and writes it to its rollout within seconds (measured twice by hand,
       // 2026-10-03); waiting for that turn to end is what lost s42-mus4a344's tell after a

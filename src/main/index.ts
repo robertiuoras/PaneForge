@@ -48,7 +48,7 @@ import { createProject, listAllProjects, listArchivedClients, listProjects, list
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
-import { owedCount } from './queuedPrompts'
+import { owedCount, owedPrompts } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig, setConfigStrict } from './config'
 import { composerOf } from './composerRead'
@@ -2717,7 +2717,8 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-function closePane(id: string, by: CloseBy): Promise<{ closed: boolean; reason?: string }> | void {
+type CloseAnswer = { closed: boolean; reason?: string; dropped?: { text: string; at: number }[] }
+function closePane(id: string, by: CloseBy): Promise<CloseAnswer> | CloseAnswer | void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2742,8 +2743,14 @@ function closePane(id: string, by: CloseBy): Promise<{ closed: boolean; reason?:
   // ask with the truth.
   const known = allSessions().some((s) => s.id === id)
   const card = cardAfterClose(id)
-  card(manager.kill(id, by))
+  // kill() empties the pane's queued prompts, so they are read first: `pf close` names what
+  // it dropped (2026-10-03: five prompts to s103 were lost while it printed only "closed").
+  const owed = owedPrompts(id)
+  const closed = manager.kill(id, by)
+  card(closed)
   if (!known) send('sessions:changed', allSessions())
+  // An id this desk does not have is already gone, which is what a close wants.
+  return { closed: closed || !known, dropped: closed ? owed.map(({ text, at }) => ({ text, at })) : [] }
 }
 ipcMain.handle('sessions:kill', (_e, id: string, by?: unknown) => closePane(id, closeByOf(Boolean(_e?.processId), by)))
 

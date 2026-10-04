@@ -52,6 +52,18 @@ const WIDENS =
 const STOPS = /^(?:no|n|cancel|skip|quit|exit|abort|stop|reject|deny|don'?t)\b|tell (?:claude|codex|it)|something (?:else|different)|go back|leave (?:it|as)|keep (?:the |my |its )?(?:current|existing|it as)/i
 
 /**
+ * An option that spends money: buys usage, switches to paid credits, upgrades a plan.
+ *
+ * Claude Code's usage-limit menu is `1. Stop and wait for limit to reset` and then ways
+ * to pay to keep going ("Switch to usage credits"). The stop is refused above, so without
+ * this the arrow (`anyQuestion`) or a label led by "Use" would press a paid option on
+ * somebody's behalf. Matched as words anywhere in the label: a false match leaves a
+ * question for a person, a miss spends their money.
+ */
+const SPENDS =
+  /\b(?:credits?|extra usage|overage|upgrade|pay|paid|payment|purchase|buy|billing|billed|subscribe|subscription|charged?|api key)\b/i
+
+/**
  * An option that means "go on with what you were doing".
  *
  * Anchored at the start on purpose. A label is a sentence and the word "yes" appears in
@@ -326,9 +338,9 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
   // are two decisions, and only the first of them is this app's.
   if (ask.permission) return null
 
-  // The two refusals come first and apply to every rule below. Nothing a later rule finds
-  // may reach an option that widens permission or that stops and asks for a sentence.
-  const usable = ask.options.filter((o) => !WIDENS.test(o.label) && !STOPS.test(o.label))
+  // The refusals come first and apply to every rule below. Nothing a later rule finds may
+  // reach an option that widens permission, stops and asks for a sentence, or spends money.
+  const usable = ask.options.filter((o) => !WIDENS.test(o.label) && !STOPS.test(o.label) && !SPENDS.test(o.label))
   if (!usable.length) return null
 
   // The CLI's own recommendation, when it made exactly one. This is the tool stating the

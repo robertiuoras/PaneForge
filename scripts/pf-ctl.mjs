@@ -27,7 +27,7 @@
  *   node scripts/pf-ctl.mjs devices
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs continue <chat-id> --prompt-file <file> [--json]   next prompt to one conversation, reopening it if closed
- *   node scripts/pf-ctl.mjs close <title-or-id>
+ *   node scripts/pf-ctl.mjs close <title-or-id> [--json]   names any queued prompts the close dropped; --json prints one line
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
  *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> --pane <exact-local-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
@@ -993,8 +993,9 @@ if (cmd === 'list') {
   for (const p of state?.peers ?? [])
     console.log([p.id, p.name, p.status, String(p.panes?.length ?? p.sessions ?? 0)].join('\t'))
 } else if (cmd === 'close') {
-  const ref = rest[0]
-  if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
+  const json = rest.includes('--json')
+  const ref = rest.find((a) => a !== '--json')
+  if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id> [--json]')
   // A card number or label is refused in `resolve`, with the id to close instead. An
   // `@device/` id from `pf list` names a chat on the other computer whether or not this desk
   // mirrors it, the way it does for tell (`chatToTell`): the help said so, and a listed chat
@@ -1012,7 +1013,20 @@ if (cmd === 'list') {
     const still = list.some((x) => x.id === s.id) || (s.listed && (await listedRows(list)).some((x) => x.id === s.id))
     if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   }
-  console.log(`closed ${s.id} (${s.title})`)
+  const dropped = Array.isArray(answer?.dropped) ? answer.dropped : []
+  if (json) {
+    console.log(JSON.stringify({ id: s.id, title: s.title, closed: true, dropped: dropped.map(({ text, at }) => ({ text, at })) }))
+  } else {
+    console.log(`closed ${s.id} (${s.title})`)
+    if (dropped.length) {
+      console.log(`  ${dropped.length} queued prompt${dropped.length === 1 ? ' was' : 's were'} never typed and ${dropped.length === 1 ? 'is' : 'are'} now dropped:`)
+      for (const { text } of dropped) {
+        const one = String(text).replace(/\s+/g, ' ').trim()
+        console.log(`    - ${one.length > 120 ? `${one.slice(0, 120)}…` : one}`)
+      }
+      console.log(`  resend with: pf continue ${s.resumeId || s.id} --prompt-file <file>`)
+    }
+  }
 } else if (cmd === 'watch-job') {
   const pane = flag(rest, '--pane')
   const job = rest[0], owner = flag(rest, '--owner')

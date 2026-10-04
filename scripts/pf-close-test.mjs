@@ -181,6 +181,34 @@ await check('an id closes the arrived, working chat - an id never moves - and sa
   }
 })
 
+await check('closing a chat that had queued prompts names them, and --json carries the full text', async () => {
+  const long = `second prompt ${'x'.repeat(230)}`
+  const first = 'first prompt, short'
+  const dropped = [{ text: first, at: 1000 }, { text: long, at: 2000 }]
+  const a = await app(desk(), undefined, { kill: () => ({ closed: true, dropped }) })
+  try {
+    const r = await pf(a.dir, 'close', 's36-fresh')
+    assert.equal(r.code, 0, r.out)
+    const lines = r.out.split('\n')
+    assert.equal(lines[0], 'closed s36-fresh (Just opened)')
+    assert.equal(lines[1], '  2 queued prompts were never typed and are now dropped:')
+    assert.equal(lines[2], `    - ${first}`)
+    assert.equal(lines[3], `    - ${long.slice(0, 120)}…`)
+    assert.equal(lines[4], '  resend with: pf continue s36-fresh --prompt-file <file>')
+  } finally {
+    a.close()
+  }
+  const b = await app(desk(), undefined, { kill: () => ({ closed: true, dropped }) })
+  try {
+    const r = await pf(b.dir, 'close', 's36-fresh', '--json')
+    assert.equal(r.code, 0, r.out)
+    assert.equal(r.out.split('\n').length, 1, r.out)
+    assert.deepEqual(JSON.parse(r.out), { id: 's36-fresh', title: 'Just opened', closed: true, dropped })
+  } finally {
+    b.close()
+  }
+})
+
 await check('tell, type, close-when-done and move refuse a number before touching anything', async () => {
   const cases = [
     [['tell', '7', 'commit', 'and', 'stop'], 'pf tell s7-busy commit and stop'],

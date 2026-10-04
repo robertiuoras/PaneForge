@@ -192,6 +192,11 @@ export function owedCount(id: string): number {
   return owedTo(load(), id).length
 }
 
+/** The prompts a pane is still owed, oldest first - what closing it will drop. */
+export function owedPrompts(id: string): QueuedPrompt[] {
+  return owedTo(load(), id)
+}
+
 /** Typed intent must not be pasted again or have a later prompt appended to it. */
 export function typedOwed(id: string): QueuedPrompt[] {
   return owedTo(load(), id).filter((row) => row.typed !== undefined)
