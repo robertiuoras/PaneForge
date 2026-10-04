@@ -187,6 +187,26 @@ ok('a default that stops and asks for a sentence is not taken', () => {
   assert.equal(pickAnswer(noYes, ANY), null)
 })
 
+ok('an option that spends money is never pressed, however it is worded or marked', () => {
+  // Claude Code's usage-limit menu (2026-10-03): `1. Stop and wait for limit to reset`
+  // is refused as a stop, so whatever is left is a way to PAY to keep going. A label led
+  // by "Use" reads as a go-ahead, and the arrow or a marker would carry the rest.
+  const limit = (sel, third) => ask(sel, 'Stop and wait for limit to reset', 'Upgrade your plan', third)
+  for (const third of ['Switch to usage credits', 'Use usage credits', 'Use extra usage', 'Continue with extra usage (recommended)']) {
+    for (const cfg of [ON, ANY]) {
+      for (const sel of [1, 2, 3]) {
+        assert.equal(pickAnswer(limit(sel, third), cfg), null, `"${third}" sel=${sel} anyQuestion=${cfg.anyQuestion}`)
+      }
+    }
+  }
+  for (const label of ['Yes, buy more credits', 'Proceed and pay for overage', 'Continue with your API key (billed per token)', 'Yes, subscribe', 'Purchase more usage']) {
+    assert.equal(pickAnswer(ask(1, label, 'No'), ON), null, label)
+    assert.equal(pickAnswer(ask(1, label, 'No'), ANY), null, label)
+  }
+  // Not a money word: an ordinary go-ahead still goes.
+  assert.equal(pickAnswer(ask(1, 'Yes, use the plan above', 'No'), ON)?.n, 1)
+})
+
 // ---------------------------------------------------------------------------
 // The BEST option, not the first one. Every agent CLI here marks its own preference in
 // the label when it has one, and that marker is a statement from the tool rather than a
