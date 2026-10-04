@@ -11,6 +11,7 @@ try {
   const methods = source.slice(source.indexOf('  answerStatus('), source.indexOf('  draftOf('))
   const ownershipWrite = source.slice(source.indexOf('  write(id: string,'), source.indexOf('    // Before a byte moves:', source.indexOf('  write(id: string,')))
   const releaseHold = source.slice(source.indexOf('  private releaseDraftHold('), source.indexOf('  private async confirmDraft(')).replace('  private releaseDraftHold(', '  releaseDraftHold(')
+  const waits = source.slice(source.indexOf('const WAIT_TURN ='), source.indexOf('\n', source.indexOf('const WAIT_QUESTION =')))
   const queueVerdict = source.slice(source.indexOf('    const queuedLive = this.sessions.get(id)'), source.indexOf('    // The busy read is of the LAST THING PAINTED', source.indexOf('    const verdict = (live: Live,')))
   const fixture = `
 import { PaneAnswers } from ${JSON.stringify(resolve('src/main/paneAnswers.ts'))}
@@ -20,6 +21,7 @@ import { stripAnsi as strip } from ${JSON.stringify(resolve('src/shared/ansi.ts'
 import { isTerminalReply } from ${JSON.stringify(resolve('src/shared/terminalProtocol.ts'))}
 import { queuedPromptDecision } from ${JSON.stringify(resolve('src/shared/autoclear.ts'))}
 type WriteOrigin='app'|'desk'
+${waits}
 const REPAINT_GRACE_MS=100
 const app={getPath:()=>${JSON.stringify(work)}}
 let owed=0
@@ -40,7 +42,7 @@ export class Harness {
   write(id,text){const l=this.sessions.get(id);this.writes.push(text);const fed=feedDraft(l.draft,text);l.draft=fed.state;if(fed.submitted.some(x=>x.trim())){l.draftConfirmation={prompt:fed.submitted.join('\\n'),since:clock,afterPaint:0};l.meta.drafting=true}if(text==='\\r')l.meta.lastKeyboard=clock}
   emitSessions(){}
   ${releaseHold}
-  queueVerdict(id, composerIdle=false){const proof='turn',live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
+  queueVerdict(id, composerIdle=false){let waitingFor='';const proof='turn',steer=false,blocked=()=>false,live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
   cancelCodexQueued(){throw Error('No cancellation expected')}
   ${ownershipWrite.replace('  write(', 'ownershipWrite(')}
   }
