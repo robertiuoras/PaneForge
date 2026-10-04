@@ -56,7 +56,8 @@ function bundle() {
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
       `export { makeInvite, readInvite, INVITE_MINUTES } from ${JSON.stringify(join(root, 'src/main/remote/invite.ts').replace(/\\/g, '/'))}`,
-      `export { isSelfPeer, dropSelf, liveWatch } from ${JSON.stringify(join(root, 'src/main/remote/peers.ts').replace(/\\/g, '/'))}`
+      `export { isSelfPeer, dropSelf, liveWatch } from ${JSON.stringify(join(root, 'src/main/remote/peers.ts').replace(/\\/g, '/'))}`,
+      `export { RemoteOpeners, promptInBox, unsentLine } from ${JSON.stringify(join(root, 'src/main/remote/openers.ts').replace(/\\/g, '/'))}`
     ].join('\n'),
     'utf8'
   )
@@ -156,6 +157,9 @@ function backend() {
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
       sendPrompt: (id, text) => submitted.push([id, text]),
+      // What `pf composer` reads off this desk's own pane: the screen's input box, as the
+      // real `sessions:draft` answers. Unknown id = null, as for a pane that is not running.
+      draft: async (id) => (sessions.some((x) => x.id === id) ? { text: `typed in ${id}`, certain: true, from: 'screen' } : null),
       tellPane: async (ref, text) => {
         told.push([ref, text])
         const s = sessions.find((x) => x.id === ref)
@@ -371,6 +375,206 @@ async function main() {
       const out = has(c) ? await c.tellPane('s7-abc', 'check the build') : null
       ok('a tell while that computer is not connected fails and names it', out?.kind === 'failed' && out.id === '@OWNER/s7-abc' && /Desk PC/.test(out.reason), JSON.stringify(out))
     }
+    // `pf close @<device>/<id>`: closed once the owner's own list drops the chat, never on
+    // the strength of this desk hiding the row, and a list that keeps it is a refusal.
+    {
+      const goneOf = (c, id, ms) => (typeof c.gone === 'function' ? c.gone(id, ms) : Promise.resolve(null))
+      const c = guestOf()
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new' }, send: () => {} }
+      c.receive({ t: 'sessions', list: [{ id: 's7-abc', title: 'Blender film', status: 'idle', cwd: '/x' }] })
+      let settled = 'pending'
+      const closing = goneOf(c, 's7-abc', 2000).then((v) => (settled = v))
+      c.receive({ t: 'sessions', list: [{ id: 's7-abc', title: 'Blender film', status: 'idle', cwd: '/x' }] })
+      await wait(20)
+      ok('a list that still has the chat leaves the close unconfirmed', settled === 'pending', String(settled))
+      c.receive({ t: 'sessions', list: [] })
+      ok("the owner's list without the chat confirms the close", (await closing) === true)
+      c.receive({ t: 'sessions', list: [{ id: 's8-def', title: 'Kept', status: 'idle', cwd: '/x' }] })
+      ok('a chat the owner keeps reads as not closed when the wait runs out', (await goneOf(c, 's8-def', 120)) === false)
+    }
+    // `pf composer @<device>/<id>` (s54, 2026-10-03, "is not running"): asked of the owner,
+    // behind a capability, and an older owner or a dead link is said in plain words.
+    {
+      const draftOf = (c, id) => (typeof c.draftOf === 'function' ? c.draftOf(id) : Promise.resolve(null))
+      const old = guestOf()
+      const sent = []
+      old.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'old', promptSubmit: true, tellReceipt: true }, send: (m) => sent.push(m) }
+      const out = await draftOf(old, 's7-abc')
+      ok(
+        'an owner too old to read its input boxes is not asked, and the answer says to update it',
+        sent.length === 0 && out?.unavailable === 'Desk PC runs an older PaneForge that cannot say what is typed in its chats; update PaneForge there',
+        JSON.stringify({ sent, out })
+      )
+      const off = await draftOf(guestOf(), 's7-abc')
+      ok('a draft read while that computer is not connected says so', /Desk PC is not connected/.test(off?.unavailable ?? ''), JSON.stringify(off))
+      const c = guestOf()
+      const asked = []
+      c.conn = { ready: true, peer: { id: 'OWNER', name: 'Desk PC', platform: 'win32', version: 'new', draftRead: true }, send: (m) => asked.push(m) }
+      const pending = draftOf(c, 's7-abc')
+      ok('a draft read goes out as one draft request with the bare id', asked[0]?.t === 'draft' && asked[0]?.id === 's7-abc' && typeof asked[0]?.rid === 'number', JSON.stringify(asked))
+      c.receive({ t: 'drafted', rid: asked[0]?.rid, draft: { text: 42 } })
+      const bad = await pending
+      ok('an answer that is not a draft is said to be unreadable, never printed as the box', /could not be read/.test(bad?.unavailable ?? ''), JSON.stringify(bad))
+    }
+  }
+
+  // ------------------------------------------------- the opener on this desk is told
+  // 2026-10-03 17:09Z: the Mac opened a Claude chat on the PC with --close-when-done
+  // --report-to <a Mac chat>. Its 2870-char first prompt never went in, and the Mac chat that
+  // opened it was never told: the PC looked for that chat among its own and found none. The
+  // link is kept HERE, and read off the PC's pane list, which every PaneForge sends.
+  {
+    const RemoteOpeners = mod.RemoteOpeners
+    ok('the opener links are a module', typeof RemoteOpeners === 'function')
+    if (typeof RemoteOpeners === 'function') {
+      const prompt = 'Finish the preserved work in claude-memory.\nThen run the checks and report.'
+      const pane = (extra = {}) => ({ id: 's54-musnckna', title: 'Finish preserved work', status: 'working', cwd: 'C:\\x\\claude-memory', createdAt: 1, owedPrompt: true, ...extra })
+      const world = (list) => {
+        const told = []
+        const notes = []
+        const boxes = []
+        return {
+          told,
+          notes,
+          boxes,
+          deps: {
+            panesOf: (device) => (device === 'pc1' ? list() : null),
+            boxOf: async (id, text) => (boxes.push([id, text]), world.box),
+            tell: (opener, text) => told.push([opener, text]),
+            finished: (opener, note) => notes.push([opener, note])
+          }
+        }
+      }
+      const info = { machine: 'the PC', title: 'Finish preserved work', project: 'claude-memory', prompt }
+      // Typed but never taken, and NOT in the input box - the real incident: the line says so.
+      {
+        let list = [pane()]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 2000)
+        ok('nothing is said while the first prompt is still on its way', w.told.length === 0, JSON.stringify(w.told))
+        list = [pane({ promptUnsent: 5000 })]
+        await o.sweep(w.deps, 6000)
+        ok('a prompt marked unsent a moment ago is not yet reported (a Claude one can still land)', w.told.length === 0, JSON.stringify(w.told))
+        await o.sweep(w.deps, 125000)
+        await o.sweep(w.deps, 140000)
+        ok('the opener is told once when the first prompt never went in', w.told.length === 1 && w.told[0][0] === 's59-mus31kfv', JSON.stringify(w.told))
+        ok(
+          'and it says what is true about the input box: empty, so send it again',
+          w.told[0]?.[1] === 'Your first prompt to @pc1/s54-musnckna (Finish preserved work) on the PC never went in, and that chat\'s input box is empty, so it has to be sent again.',
+          JSON.stringify(w.told)
+        )
+        ok('the input box is read with the prompt it should hold', w.boxes[0]?.[0] === '@pc1/s54-musnckna' && w.boxes[0]?.[1] === prompt, JSON.stringify(w.boxes))
+        ok('while that chat is open it holds the digest back', o.workingFor('s59-mus31kfv', w.deps.panesOf) === 1 && o.openFor('s59-mus31kfv', w.deps.panesOf) === 1)
+        // Closed over there under close-when-done: its report crossed as a Review row first.
+        o.review('@pc1/s54-musnckna', '## Done\nMerged the preserved work and the checks pass.\n## Next steps\nNone')
+        list = []
+        await o.sweep(w.deps, 160000)
+        ok(
+          'the close leaves the same note a local opener gets, with the report that came back',
+          w.notes.length === 1 && w.notes[0][0] === 's59-mus31kfv' &&
+            JSON.stringify(w.notes[0][1]) === JSON.stringify({ id: '@pc1/s54-musnckna', title: 'Finish preserved work', project: 'claude-memory', summary: 'Done Merged the preserved work and the checks pass.', personSteps: [] }),
+          JSON.stringify(w.notes)
+        )
+        ok('and the link is over', o.workingFor('s59-mus31kfv', w.deps.panesOf) === 0 && o.openFor('s59-mus31kfv', w.deps.panesOf) === 0)
+      }
+      // Claude prompts marked unsent have landed 44-97 s later, and the other computer then clears
+      // the flag: told at once, the opener sent it again (a double prompt).
+      {
+        let list = [pane({ promptUnsent: 5000 })]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 20000)
+        await o.sweep(w.deps, 95000)
+        list = [pane({ owedPrompt: false })]
+        await o.sweep(w.deps, 110000)
+        await o.sweep(w.deps, 200000)
+        ok('a prompt that lands at +90s is never reported', w.told.length === 0, JSON.stringify(w.told))
+        // A turn that began after the stamp means it went in, even with the flag still up.
+        list = [pane({ promptUnsent: 300000, runSince: 310000 })]
+        await o.sweep(w.deps, 500000)
+        ok('nor one whose turn has started since the stamp', w.told.length === 0, JSON.stringify(w.told))
+      }
+      // "Your first prompt" is the first one: later unsent prompts in a chat that has had turns
+      // are not compared with it, even when its replies end in a question (never `finished`).
+      {
+        let list = [pane()]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'other'
+        await o.sweep(w.deps, 2000)
+        list = [pane({ owedPrompt: false, status: 'waiting' })]
+        await o.sweep(w.deps, 20000)
+        list = [pane({ owedPrompt: false, status: 'waiting', promptUnsent: 50000 })]
+        await o.sweep(w.deps, 200000)
+        ok('a later unsent prompt is not called the first one', w.told.length === 1 && /^A prompt typed into/.test(w.told[0][1]) && w.boxes[0][1] === '', JSON.stringify([w.told, w.boxes]))
+      }
+      // Linking again (close-when-done armed after the open) adds to the link, never wipes it.
+      {
+        let list = [pane({ promptUnsent: 5000 })]
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', info, 1000)
+        world.box = 'empty'
+        await o.sweep(w.deps, 130000)
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', { ...info, prompt: '' }, 140000)
+        await o.sweep(w.deps, 160000)
+        ok('the same stamp is not told twice after a second link', w.told.length === 1, JSON.stringify(w.told))
+        o.link('@pc1/s54-musnckna', 's59-mus31kfv', { ...info, prompt: '' }, 170000)
+        list = [pane({ promptUnsent: 180000 })]
+        await o.sweep(w.deps, 320000)
+        ok('and the first prompt is still known to it', w.boxes[1]?.[1] === prompt, JSON.stringify(w.boxes))
+      }
+      // A chat linked with no prompt known: whatever its box holds cannot be called this prompt.
+      ok('no prompt known: a box with text reads as unknown, not as holding it', mod.promptInBox('some text typed', '') === 'unknown')
+      ok('no prompt known: an empty box is still empty', mod.promptInBox('', '') === 'empty')
+      // A box of one word is inside any prompt: too little to be it.
+      ok('a box holding "y" does not read as holding the prompt', mod.promptInBox('y', prompt) === 'other')
+      ok('nor one holding "Then"', mod.promptInBox('Then', prompt) === 'other')
+      ok('a short prompt can still be held whole', mod.promptInBox('ship it', 'ship it') === 'holds')
+      // The prompt really is in the box; a computer that cannot be asked is said to be unknown.
+      ok('a box holding the prompt reads as holding it', mod.promptInBox('Finish the preserved work in claude-memory. Then run the', prompt) === 'holds')
+      ok('a collapsed paste reads as holding it', mod.promptInBox('[Pasted text #1 +40 lines]', prompt) === 'holds')
+      ok('an empty box reads as empty', mod.promptInBox('  ', prompt) === 'empty')
+      ok('a box with other words reads as other', mod.promptInBox('Try "write a test"', prompt) === 'other')
+      const head = { id: '@pc1/s5', title: 'T', machine: 'the PC' }
+      ok('holds: it is still in that chat\'s input box', mod.unsentLine(head, 'holds', true) === 'Your first prompt to @pc1/s5 (T) on the PC never went in; it is still in that chat\'s input box.')
+      ok(
+        'unknown: says it could not be checked and how to look',
+        mod.unsentLine(head, 'unknown', true) === 'Your first prompt to @pc1/s5 (T) on the PC never went in; whether it is still in that chat\'s input box could not be checked (pf composer @pc1/s5 reads it).'
+      )
+      // The PC not connected says nothing either way; a close seen with no report still tells.
+      {
+        let list = null
+        const w = world(() => list)
+        const o = new RemoteOpeners()
+        o.link('@pc1/s7', 's59-mus31kfv', { ...info, title: 'Other' }, 1000)
+        await o.sweep(w.deps, 2000)
+        ok('a computer that is not connected closes nothing and holds the digest', w.notes.length === 0 && o.workingFor('s59-mus31kfv', w.deps.panesOf) === 1)
+        list = []
+        await o.sweep(w.deps, 3000)
+        ok('a close waits a minute for its report', w.notes.length === 0)
+        await o.sweep(w.deps, 64000)
+        ok(
+          'then the note says no report came back',
+          w.notes.length === 1 && w.notes[0][1].summary === 'it closed on the PC, and no report of what it did came back to this computer.',
+          JSON.stringify(w.notes)
+        )
+      }
+      // Kept across a restart of this app: the PC chat can outlive it.
+      {
+        const file = join(out, 'remote-openers.json')
+        const a = new RemoteOpeners(file)
+        a.link('@pc1/s8', 's59-mus31kfv', info, 1000)
+        const b = new RemoteOpeners(file)
+        ok('a link survives a restart of this app', b.openFor('s59-mus31kfv', () => [{ id: 's8', status: 'idle' }]) === 1)
+      }
+    }
   }
 
   // ------------------------------------------------------------------- invites
@@ -421,7 +625,7 @@ async function main() {
   const code = newCode()
   const port = await freePort()
   const be = backend()
-  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true, tellReceipt: true }
+  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true, tellReceipt: true, draftRead: true }
   const host = new RemoteHost(be.api, () => identity, () => code)
   host.start(port)
   ok('listener comes up', await until(() => host.listening))
@@ -729,6 +933,13 @@ async function main() {
       be.told.some(([id, text]) => id === 's2' && text === 'pick this up') && unmirrored?.kind === 'delivered' && unmirrored.id === '@HOSTID/s2',
       JSON.stringify(unmirrored)
     )
+    // `pf composer` over the real link, the mirror off for s2 as above: the owner's own read.
+    const draftOf = (id) => (typeof client.draftOf === 'function' ? client.draftOf(id) : Promise.resolve(null))
+    ok('the host advertises that it reads input boxes for a guest', client.identity()?.draftRead === true, JSON.stringify(client.identity()))
+    const typedThere = await draftOf('s2')
+    ok("a guest's draft read of an unmirrored chat returns the owner's input box", JSON.stringify(typedThere) === JSON.stringify({ text: 'typed in s2', certain: true, from: 'screen' }), JSON.stringify(typedThere))
+    const noPane = await draftOf('s99-gone')
+    ok('a chat the owner does not have reads as not running (null)', noPane === null, JSON.stringify(noPane))
     client.setWatch(['s1', 's2'])
     ok('both are mirrored again', await until(() => client.list().length === 2))
   }

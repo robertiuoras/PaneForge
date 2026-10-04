@@ -51,10 +51,43 @@ export async function composerOf(
       Array.from(reading.text).every((_, n) => Boolean(buf.getLine(reading.top)?.getCell(n + 2)?.isDim()))) {
       return { ...reading, text: '' }
     }
+    // Claude Code 2.1.288 does the same with its own hint (`Try "write a test for <filepath>"`),
+    // dim, right after the `❯` and with the caret before it - painted first with cursor-forward
+    // between the words, then repainted with plain spaces (s54-musnckna, PC, 2026-10-03). Read
+    // as typed text, an empty box never cleared the app's own unsent-draft flag. Every letter
+    // dim and the caret at the start, or it is a draft: a person's typing is never dim.
+    if (!codexCols && reading?.rows === 1 && reading.text && cursor === reading.top &&
+      claudeHint(buf.getLine(reading.top), buf.cursorX)) {
+      return { ...reading, text: '' }
+    }
     return reading
   } finally {
     term.dispose()
   }
+}
+
+type HeadlessLine = NonNullable<ReturnType<Terminal['buffer']['active']['getLine']>>
+
+/** A `❯` row whose every letter after the marker is dim, with the caret on the first of them. */
+function claudeHint(line: HeadlessLine | undefined, caretX: number): boolean {
+  if (!line) return false
+  let marker = -1
+  for (let x = 0; x < Math.min(line.length, 4); x++) {
+    if (line.getCell(x)?.getChars() === '❯') {
+      marker = x
+      break
+    }
+  }
+  if (marker < 0) return false
+  let first = -1
+  for (let x = marker + 1; x < line.length; x++) {
+    const cell = line.getCell(x)
+    const ch = cell?.getChars() ?? ''
+    if (!ch.trim() || ch === ' ') continue
+    if (!cell?.isDim()) return false
+    if (first < 0) first = x
+  }
+  return first >= 0 && caretX === first
 }
 
 /**

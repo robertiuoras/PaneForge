@@ -27,7 +27,7 @@ const HOUR = 3_600_000
  * A stand-in app whose desk is `panes`; `sessions:kill` takes a pane off it. `peers` is
  * what `remote:state` answers; without it the call answers nothing, like an older app.
  */
-async function app(panes, peers, { queued } = {}) {
+async function app(panes, peers, { queued, kill, draft } = {}) {
   const killed = []
   // Every channel the CLI reached past `sessions:list` / `remote:state`, in order: a refusal
   // must leave this empty - nothing typed, armed, opened or closed.
@@ -55,10 +55,12 @@ async function app(panes, peers, { queued } = {}) {
         if (channel === 'sessions:kill') {
           killed.push(args[0])
           panes = panes.filter((p) => p.id !== args[0])
-          value = true
+          // `kill(id, peers)` stands in for the computer that owns an `@` chat: what the app
+          // answers, after taking the row off that computer's list or leaving it there.
+          value = kill ? kill(args[0], peers) : true
         } else if (channel === 'sessions:closeWhenDone') value = true
         else if (channel === 'sessions:start') started.push(args[0]), value = { id: 's99-new', cwd: args[0].cwd, reportTo: args[0].reportTo }
-        else if (channel === 'sessions:draft') value = { text: 'half a line', certain: true, from: 'screen' }
+        else if (channel === 'sessions:draft') value = draft ? draft(args[0]) : { text: 'half a line', certain: true, from: 'screen' }
         else if (channel === 'agents:list') value = [{ id: 'claude' }, { id: 'codex' }]
         else if (channel === 'pane:tell') value = { kind: 'delivered', id: args[0], title: 'x', at: Date.now(), how: 'typed', receipt: 'test' }
       }
@@ -299,6 +301,81 @@ await check('a label names a pane by its computer; mirrored or listed, closing i
     const byId = await pf(a.dir, 'close', '@mac/s3-m')
     assert.equal(byId.code, 0, byId.out)
     assert.deepEqual(a.killed, ['@mac/s3-m'])
+  } finally {
+    a.close()
+  }
+})
+
+// `pf close @device/id` for a chat `pf list` shows from the other computer but this desk does
+// not mirror: the help said it worked, and it answered "no pane named" (2026-10-03 review).
+// The computer that owns it closes it; pf says closed only when the app says it is gone.
+const dropFrom = (peers, ref) => {
+  for (const p of peers) p.panes = p.panes.filter((x) => `@${p.id}/${x.id}` !== ref)
+}
+
+await check('pf close closes a listed, unmirrored chat on the other computer by its id', async () => {
+  const d = pairedDesk()
+  const a = await app(d.panes, d.peers, { kill: (id, peers) => (dropFrom(peers, id), { closed: true }) })
+  try {
+    const r = await pf(a.dir, 'close', '@mac/s5-m')
+    assert.equal(r.code, 0, r.out)
+    assert.equal(r.out, 'closed @mac/s5-m (Listed chat)')
+    assert.deepEqual(a.killed, ['@mac/s5-m'])
+  } finally {
+    a.close()
+  }
+})
+
+await check('pf close says so when the other computer did not close the chat', async () => {
+  const d = pairedDesk()
+  const reason = 'the Mac did not close it within 3 seconds; run pf list to see whether it is still open'
+  const a = await app(d.panes, d.peers, { kill: () => ({ closed: false, reason }) })
+  try {
+    const r = await pf(a.dir, 'close', '@mac/s5-m')
+    assert.equal(r.code, 1, r.out)
+    assert.equal(r.out, `pf-ctl: @mac/s5-m (Listed chat) was not closed: ${reason}`)
+  } finally {
+    a.close()
+  }
+})
+
+await check('pf close on a chat id no computer lists still says there is no such chat', async () => {
+  const d = pairedDesk()
+  const a = await app(d.panes, d.peers)
+  try {
+    const r = await pf(a.dir, 'close', '@mac/s9-gone')
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /no pane named "@mac\/s9-gone"/)
+    assert.deepEqual(a.acted, [])
+  } finally {
+    a.close()
+  }
+})
+
+// `pf composer @device/id` printed "is not running" (s54, 2026-10-03): the app looked for the
+// chat among its own and found nothing. It is asked of the computer the chat runs on.
+await check('pf composer reads the input box of a listed chat on the other computer', async () => {
+  const d = pairedDesk()
+  const asked = []
+  const a = await app(d.panes, d.peers, { draft: (id) => (asked.push(id), { text: 'Try this later', certain: true, from: 'screen' }) })
+  try {
+    const r = await pf(a.dir, 'composer', '@mac/s5-m')
+    assert.equal(r.code, 0, r.out)
+    assert.equal(r.out, 'Try this later')
+    assert.deepEqual(asked, ['@mac/s5-m'])
+  } finally {
+    a.close()
+  }
+})
+
+await check('pf composer says plainly when the other computer cannot be asked', async () => {
+  const d = pairedDesk()
+  const why = 'the Mac runs an older PaneForge that cannot say what is typed in its chats; update PaneForge there'
+  const a = await app(d.panes, d.peers, { draft: () => ({ unavailable: why }) })
+  try {
+    const r = await pf(a.dir, 'composer', '@mac/s3-m')
+    assert.equal(r.code, 1, r.out)
+    assert.equal(r.out, `pf-ctl: could not read the input box of @mac/s3-m (Mirrored chat): ${why}`)
   } finally {
     a.close()
   }

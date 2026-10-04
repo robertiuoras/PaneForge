@@ -99,7 +99,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, CLAUDE_HOOKS_MAX_MS, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, backgroundTasksFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
@@ -292,6 +292,10 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  * Off Windows the process tree answers first (`hookState`, transcripts.ts): hooks seen to
  * run and end open the gate ~0.5s after the last one, hooks seen still running hold it up to
  * PROMPT_STARTUP_MS, and hooks this desk runs but not started yet hold it too (`hooksAwaited`).
+ * A hook DECLARED in settings.json and SEEN running (every platform) holds the prompt and its
+ * returns past that, up to CLAUDE_HOOKS_MAX_MS (5 min; s54-musnckna: hooks +14s to +71.7s).
+ * Windows finds hooks only by their declared command; a Mac child seen only in another
+ * process group is held to PROMPT_STARTUP_MS like before.
  * A prompt that goes in while the hooks still run is one bracketed paste (see `tick`),
  * and that is delivered: dev probe 2026-09-27, 2.1.283 with a 15s SessionStart hook, typed
  * at +6s - one user row, whole, written the moment the hooks ended. Typed raw, the same
@@ -4664,9 +4668,11 @@ export class SessionManager extends EventEmitter {
         if (owner) owner.accepted = true
         this.releaseDraftHold(this.sessions.get(id), ownHold)
         this.setPromptUnsent(id, false)
-      } else if (end === 'unsent' && owner?.since && owner.proof === 'receipt') {
-        // Typed, every Enter tried, no rollout line: the text is still in Codex's box while
-        // the card reads working (s40-mus3teu4, 2026-10-03). The card says so instead.
+      } else if (end === 'unsent' && (owner?.since || typedTextAt)) {
+        // Typed, every Enter tried, no receipt: the text is still in the box while the card
+        // reads working - Codex with no rollout line (s40-mus3teu4), Claude Code with "6
+        // returns were swallowed" (s54-musnckna, PC, 2026-10-03), any other agent alike.
+        // The card, `pf list` and GuardDeck say so, and an opener on another computer is told.
         this.setPromptUnsent(id, true)
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
@@ -4872,19 +4878,27 @@ export class SessionManager extends EventEmitter {
     // five or six were logged UNSENT and landed 44-97s later, or sat for minutes. So while a
     // young process may still be starting, the confirm waits for the receipt and sends nothing.
     let saidDeferring = false
+    // A start-up hook was SEEN running (`claudeStartup` 'hooks'): from then on the hold - typing
+    // and returns alike - lasts while it runs, up to CLAUDE_HOOKS_MAX_MS rather than the minute.
+    // s54-musnckna (PC, 2026-10-03): hooks +14s to +71.7s, six returns swallowed meanwhile.
+    let hooksSeen = false
     const deferring = (live: Live): boolean => {
       if (proof === 'idle' || live.meta.agent !== 'claude') return false
       const born = live.proc ? procStarted.get(live.proc) : undefined
       const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
-      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid, born, resumed) === 'started') return false
+      const age = born === undefined ? Infinity : Date.now() - born
+      if (born === undefined || age >= CLAUDE_HOOKS_MAX_MS || (age >= PROMPT_STARTUP_MS && !hooksSeen)) return false
+      const now = claudeStartup(live.proc?.pid, born, resumed)
+      if (now === 'hooks') hooksSeen = true
+      if (now === 'started' || (now !== 'hooks' && age >= PROMPT_STARTUP_MS)) return false
       // With no pid file there is no receipt to wait for. One is born 3-19s after spawn on
       // this Mac (2026-10-01; none yet at +10s in the dev proof), so a process past twice
       // the pid-file wait without one - a CLI that writes none for this pid - gets its
       // returns as before rather than a minute of silence.
-      if (!claudeReceiptReadable(live.proc?.pid) && Date.now() - born >= PROMPT_PIDFILE_MS * 2) return false
+      if (now !== 'hooks' && !claudeReceiptReadable(live.proc?.pid) && age >= PROMPT_PIDFILE_MS * 2) return false
       if (!saidDeferring) {
         saidDeferring = true
-        acLog(`${id} return taken while Claude Code is still starting - no more returns until it has (up to ${Math.round((born + PROMPT_STARTUP_MS - Date.now()) / 1000)}s)`)
+        acLog(`${id} return taken while Claude Code is still starting - no more returns until it has (up to ${Math.round((born + (hooksSeen ? CLAUDE_HOOKS_MAX_MS : PROMPT_STARTUP_MS) - Date.now()) / 1000)}s)`)
       }
       // The window to prove it in starts again once the start is over.
       confirmUntil = Math.max(confirmUntil, Date.now() + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES)
@@ -5304,8 +5318,11 @@ export class SessionManager extends EventEmitter {
       const born = live.proc ? procStarted.get(live.proc) : undefined
       const age = born === undefined ? Infinity : Date.now() - born
       const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
-      const now = live.meta.agent === 'claude' && born !== undefined && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
-      const hold = now === 'starting' || now === 'awaiting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
+      const young = age < PROMPT_STARTUP_MS || (hooksSeen && age < CLAUDE_HOOKS_MAX_MS)
+      const now = live.meta.agent === 'claude' && born !== undefined && young ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
+      if (now === 'hooks') hooksSeen = true
+      const hold = now === 'hooks' || (age < PROMPT_STARTUP_MS && (now === 'starting' || now === 'awaiting')) ||
+        (now === 'unknown' && age < PROMPT_PIDFILE_MS)
       if (hold) {
         waitingFor = WAIT_STARTING
         if (!startWait) {

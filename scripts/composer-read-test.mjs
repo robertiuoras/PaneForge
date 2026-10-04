@@ -192,6 +192,27 @@ const parkedOut = await composerOf(parked, 134, 53, 'claude')
 check('s42 parked caret: the box is found', parkedOut !== null)
 eq('s42 parked caret: and it is empty', parkedOut?.text, '')
 
+// The real bytes of s54-musnckna (PC, Claude Code 2.1.288, 119x42, 2026-10-03 17:09Z): the
+// start-up frames up to the moment the app gave up on its prompt, cut before anything typed.
+// Claude paints its empty-box hint dim - first with cursor-forward between the words, then
+// repainted with plain (not dim) spaces - and the caret parked before it. 0.8.233 read
+// `Try "write a test for <filepath>"` as typed text, so the app's own unsent-draft flag
+// never cleared. Both paints are an empty box; the same words typed by a person are not.
+const startup = readFileSync(join(root, 'scripts/fixtures/claude-startup-placeholder.bin'), 'utf8')
+const firstPaint = startup.slice(0, startup.indexOf(`${ESC}[8;42;118t`))
+const readStartup = raw => composerOf(raw, 119, 42, 'claude')
+check('s54 first paint (cursor-forward gaps) is a sane cut', firstPaint.length > 500 && firstPaint.includes(`${ESC}[2mTry${ESC}[1C`))
+eq('s54 first paint: Claude\'s dim hint is an empty box', (await readStartup(firstPaint))?.text, '')
+eq('s54 last paint (plain spaces between dim words): an empty box', (await readStartup(startup))?.text, '')
+const typedOver = (words, caretCol) => `${startup}${ESC}[7;1H❯${NB}${words}${ESC}[K${ESC}[7;${caretCol}H`
+eq('the same words typed by a person are a draft',
+  (await readStartup(typedOver('Try "write a test for <filepath>"', 36)))?.text, 'Try "write a test for <filepath>"')
+eq('a draft that starts with "Try" is a draft', (await readStartup(typedOver('Try again', 12)))?.text, 'Try again')
+eq('a draft typed with Home pressed is still a draft', (await readStartup(typedOver('Try again', 3)))?.text, 'Try again')
+eq('half-dim text is a draft',
+  (await readStartup(`${startup}${ESC}[7;1H❯${NB}Try${ESC}[2m "write a test for <filepath>"${ESC}[22m${ESC}[K${ESC}[7;3H`))?.text,
+  'Try "write a test for <filepath>"')
+
 // No bytes at all is a pane that has printed nothing - nothing to read, and saying so.
 eq('an empty stream is refused', await composerOf('', cols, rows), null)
 
@@ -255,5 +276,19 @@ eq('live screen preserves other dim text with the caret at the start',
 eq('live screen reads a regular repaint of the former hint as a real draft',
   await liveRead(repaintedHint), hint)
 liveCodex.dispose()
+
+// The live reader `pf composer` asks first, on the same real s54 bytes.
+const liveClaude = new Terminal({ cols: 119, rows: 42, allowProposedApi: true })
+register(liveClaude, 'claude', composerText, readers, 'claude-hint')
+const liveClaudeRead = async raw => {
+  await new Promise(resolve => liveClaude.write(`${ESC}[2J${ESC}[H${raw}`, resolve))
+  return readers.get('claude-hint')()
+}
+eq('live screen: s54 first paint is an empty box', await liveClaudeRead(firstPaint), '')
+eq('live screen: s54 last paint is an empty box', await liveClaudeRead(startup), '')
+eq('live screen: the same words typed by a person are a draft',
+  await liveClaudeRead(typedOver('Try "write a test for <filepath>"', 36)), 'Try "write a test for <filepath>"')
+eq('live screen: a draft typed with Home pressed is a draft', await liveClaudeRead(typedOver('Try again', 3)), 'Try again')
+liveClaude.dispose()
 
 console.log(`composer read: ${checks} checks passed`)

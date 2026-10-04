@@ -212,7 +212,7 @@ async function sessions() {
 }
 
 /**
- * The chat `pf tell` / `pf type` hands text to. Its `@device/` id from column 2 of `pf list`
+ * The chat `pf tell` / `pf type` / `pf close` / `pf composer` acts on. Its `@device/` id from column 2 of `pf list`
  * finds a chat on another computer that is not mirrored on this desk too: the app sends a
  * tell for any `@` id over the link to that computer (`remote.owns`), mirrored or not. Only
  * the desk's own list was read, so the very id pf printed answered "no pane named"
@@ -995,13 +995,23 @@ if (cmd === 'list') {
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
-  // A card number or label is refused in `resolve`, with the id to close instead.
-  const s = await resolve(await sessions(), ref)
-  if (!s) fail(1, `no pane named "${ref}"`)
-  await call('sessions:kill', [s.id, 'pf'])
-  // kill() deletes the session and re-emits the list, so absence IS the verification.
-  const still = (await sessions()).some((x) => x.id === s.id)
-  if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
+  // A card number or label is refused in `resolve`, with the id to close instead. An
+  // `@device/` id from `pf list` names a chat on the other computer whether or not this desk
+  // mirrors it, the way it does for tell (`chatToTell`): the help said so, and a listed chat
+  // answered "no pane named" (2026-10-03).
+  const s = await chatToTell(ref)
+  const answer = await call('sessions:kill', [s.id, 'pf'])
+  // A chat on the other computer is closed THERE: the app answers once that computer's list
+  // has dropped it, or says why not. An app from before that answer says nothing, so the
+  // lists are read instead.
+  if (answer && typeof answer === 'object' && 'closed' in answer) {
+    if (answer.closed !== true) fail(1, `${s.id} (${s.title}) was not closed: ${answer.reason || 'the app did not say why'}`)
+  } else {
+    // kill() deletes the session and re-emits the list, so absence IS the verification.
+    const list = await sessions()
+    const still = list.some((x) => x.id === s.id) || (s.listed && (await listedRows(list)).some((x) => x.id === s.id))
+    if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
+  }
   console.log(`closed ${s.id} (${s.title})`)
 } else if (cmd === 'watch-job') {
   const pane = flag(rest, '--pane')
@@ -1061,10 +1071,12 @@ if (cmd === 'list') {
   // is what this prints. Reads only: nothing is typed, submitted or cleared.
   const ref = rest.shift()
   if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <number-title-or-id>')
-  const pane = await resolve(await sessions(), ref)
-  if (!pane) fail(1, `no pane called "${ref}"`)
+  // An `@device/` id is read on the computer that runs the chat, mirrored here or only listed.
+  const pane = await chatToTell(ref)
   const draft = await call('sessions:draft', [pane.id])
   if (!draft) fail(1, `pane ${pane.id} is not running, so it has no composer`)
+  // That computer could not be asked (not connected, or a PaneForge too old to answer).
+  if (typeof draft.unavailable === 'string') fail(1, `could not read the input box of ${pane.id} (${pane.title}): ${draft.unavailable}`)
   // An empty line with `certain` true is the one shape that really means nothing is
   // pending. Everything else is said out loud rather than printed as if it were the
   // screen: a line the app could not follow is a guess, and a pane typed into before

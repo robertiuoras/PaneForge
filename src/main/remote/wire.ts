@@ -67,6 +67,11 @@ export interface PeerIdentity {
    */
   tellReceipt?: boolean
   /**
+   * The owner answers a `draft` request with what is typed in one of its chats' input boxes
+   * (`pf composer @device/id`). Absent = older: the guest says so instead of asking.
+   */
+  draftRead?: boolean
+  /**
    * The build can show its screen in the other machine's pane and answers `screen:*`
    * frames. Absent = older: the viewer says `Update PaneForge on <machine> first` rather
    * than waiting ten seconds for an answer that will never come.
@@ -556,6 +561,7 @@ function identityOf(m: Msg): PeerIdentity {
     ...(typeof m.person === 'boolean' ? { person: m.person } : {}),
     ...(m.promptSubmit === true ? { promptSubmit: true } : {}),
     ...(m.tellReceipt === true ? { tellReceipt: true } : {}),
+    ...(m.draftRead === true ? { draftRead: true } : {}),
     ...(m.screenView === true ? { screenView: true } : {}),
     ...(Array.isArray(m.handoffResume) ? { handoffResume: m.handoffResume.filter((p): p is string => p === 'claude' || p === 'codex') } : {})
   }

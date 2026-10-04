@@ -4713,6 +4713,22 @@ function TerminalPane({
         Array.from(text).every((_, n) => Boolean(b.getLine(cursor)?.getCell(n + 2)?.isDim()))) {
         return ''
       }
+      // ...and main's Claude hint reading (`claudeHint`, main/composerRead.ts): one `❯` row,
+      // every letter after the marker dim, the caret on the first of them.
+      const row = text && !text.includes('\n') && agent === 'claude' ? b.getLine(cursor) : undefined
+      const marker = row ? [0, 1, 2, 3].find((x) => row.getCell(x)?.getChars() === '❯') : undefined
+      if (row && marker !== undefined) {
+        let first = -1
+        let dim = true
+        for (let x = marker + 1; x < row.length && dim; x++) {
+          const cell = row.getCell(x)
+          const ch = cell?.getChars() ?? ''
+          if (!ch.trim() || ch === ' ') continue
+          if (!cell?.isDim()) dim = false
+          else if (first < 0) first = x
+        }
+        if (dim && first >= 0 && b.cursorX === first) return ''
+      }
       return text
     })
     paneRepair.set(sessionId, repair)

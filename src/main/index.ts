@@ -62,10 +62,12 @@ import { errorMessage } from '../shared/paneError'
 import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
 import { ingestToken, postPush, startLimitWaves } from './limitWaves'
 import { cardNumber } from '../../scripts/pf-ctl-lib.mjs'
-import { cardLabel, othersOnDesk, parseLabel } from '../shared/paneLabel'
+import { MACHINE_NAME, cardLabel, othersOnDesk, parseLabel } from '../shared/paneLabel'
 import { paneNumbers } from './paneNumbers'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
+import type { PaneDraft } from './remote/client'
+import { RemoteOpeners, promptInBox, type BoxRead } from './remote/openers'
 import { readInvite } from './remote/invite'
 import { LOCAL_ONLY, PhoneServer, newPhoneCode } from './phone'
 import { installPf } from './pfAccess'
@@ -1286,6 +1288,8 @@ const remote = new Remote({
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   // `pf tell` from the paired machine: queued here, answered with what happened to it.
   tellPane: (id, text) => manager.tellPane(id, text),
+  // `pf composer` from the paired machine: this desk reads its own pane's input box.
+  draft: (id) => paneDraft(id),
   startSession: async (req) => {
     // Give unpinned new Codex work a task-sized model and effort before applying defaults.
     return startComputeAware(withDefaultModel(routeCodexStart(await laneFor(req)), getConfig().defaultModels))
@@ -1367,7 +1371,47 @@ const screenViews = new ScreenViews(
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
 const receivePeerReview = (peer: { id: string; name: string; platform: string }, review: unknown) => {
-  try { storeRemoteReview(review, peer) } catch (err) { console.warn(`remote review rejected - ${(err as Error).message}`) }
+  try {
+    const stored = storeRemoteReview(review, peer)
+    // A chat over there that reports to one here: its report is what the opener is told.
+    remoteOpeners.review(`@${peer.id}/${stored.sessionId}`, stored.report)
+  } catch (err) { console.warn(`remote review rejected - ${(err as Error).message}`) }
+}
+/**
+ * Chats on another computer that report to a chat on THIS desk (`--report-to` with `--on`):
+ * the link is kept here, because the other computer looks for the opener among its own
+ * chats and finds none (2026-10-03 17:09Z). `remote/openers.ts`; swept on the done-close beat.
+ */
+const remoteOpeners = new RemoteOpeners(join(app.getPath('userData'), 'remote-openers.json'))
+/** "the PC" / "the Mac", or what that computer calls itself. */
+function machineWords(s: Pick<Session, 'remote'>): string {
+  const m = s.remote?.machine
+  return m && MACHINE_NAME[m] ? `the ${MACHINE_NAME[m]}` : s.remote?.name || 'the other computer'
+}
+/** The chat on this desk `ref` names (id or title, as `--report-to` takes it), or undefined. */
+function openerHere(ref: string | undefined): string | undefined {
+  if (!ref || ref.startsWith('@')) return undefined
+  return manager.list().find((s) => s.id === ref || s.title === ref)?.id
+}
+/**
+ * Open a pane on another computer. A `--report-to` naming a chat HERE becomes a link kept
+ * here and is not sent: over there it named nobody, or worse, a chat of the same title.
+ */
+function startOnPeer(device: string, req: StartSessionRequest): Promise<Session> {
+  const opener = openerHere(req.reportTo)
+  return remote.startOn(device, opener ? { ...req, reportTo: undefined } : req).then((s) => {
+    if (opener) remoteOpeners.link(s.id, opener, { machine: machineWords(s), title: s.title, project: basename(s.cwd.replace(/\\/g, '/')), prompt: req.prompt ?? '' })
+    return s
+  })
+}
+/** What the other computer's input box shows against the prompt it should hold. */
+function remoteBox(id: string, prompt: string): Promise<BoxRead> {
+  return remote.draftOn(id).then((d) => {
+    if (!d || 'unavailable' in d) return 'unknown'
+    // The drawn screen vouches for an empty box; the keystroke copy only for what it holds.
+    if (d.from === 'screen' || (d.certain && d.text.trim())) return promptInBox(d.text, prompt)
+    return 'unknown'
+  })
 }
 remote.on('reviews', ({ peer, reviews }) => { for (const review of reviews) receivePeerReview(peer, review) })
 remote.on('review', ({ peer, review }) => receivePeerReview(peer, review))
@@ -1905,12 +1949,20 @@ setInterval(() => measureMainTask('done-close', () => {
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
-  for (const opener of finishedDigest.flush((o) => manager.workingChildrenOf(o), (o, text) => {
+  // Chats on another computer that report here: an unsent first prompt, or a close.
+  const panesOn = (device: string): Session[] | null => remote.panesOn(device)
+  void remoteOpeners.sweep({
+    panesOf: panesOn,
+    boxOf: remoteBox,
+    tell: (o, text) => void manager.tellPane(o, text).then((outcome) => console.info(`remote-openers: ${tellLine(outcome)}`)),
+    finished: (o, note) => finishedDigest.add(o, note)
+  }).catch((e: Error) => console.warn(`remote-openers: sweep failed - ${e.message}`))
+  for (const opener of finishedDigest.flush((o) => manager.workingChildrenOf(o) + remoteOpeners.workingFor(o, panesOn), (o, text) => {
     // Told only if the opener is still open; what happened to the line goes to the log.
     if (!manager.list().some((s) => s.id === o || s.title === o)) return false
     void manager.tellPane(o, text).then((outcome) => console.info(`done-close: ${tellLine(outcome)}`))
     return true
-  }, Date.now(), (o) => manager.openChildrenOf(o)))
+  }, Date.now(), (o) => manager.openChildrenOf(o) + remoteOpeners.openFor(o, panesOn)))
     console.info(`done-close: queued for ${opener} what the panes it opened did`)
 }), 15_000).unref()
 /**
@@ -2525,7 +2577,7 @@ async function startOrSend(
     // have happened anyway - and it must SAY so, or the pane simply appears in the wrong
     // place with nothing on screen to explain it.
     const started = await Promise.race([
-      remote.startOn(target.device, { ...req, cwd: target.cwd }),
+      startOnPeer(target.device, { ...req, cwd: target.cwd }),
       new Promise<never>((_ok, no) =>
         setTimeout(() => no(new Error('it did not answer')), REMOTE_START_ACK_MS)
       )
@@ -2645,9 +2697,15 @@ ipcMain.handle('sessions:rename', (_e, id: string, title: string) => {
 })
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
-ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
-  remote.owns(id) ? remote.armCloseWhenDone(id) : manager.armCloseWhenDone(id, reportTo)
-)
+ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) => {
+  if (!remote.owns(id)) return manager.armCloseWhenDone(id, reportTo)
+  // The chat it reports to is on this desk: the link is kept here (`remoteOpeners`).
+  const opener = openerHere(reportTo)
+  const pane = opener ? remote.sessions().find((s) => s.id === id) : undefined
+  const armed = remote.armCloseWhenDone(id)
+  if (armed && opener) remoteOpeners.link(id, opener, { machine: pane ? machineWords(pane) : 'the other computer', title: pane?.title ?? id, project: pane ? basename(pane.cwd.replace(/\\/g, '/')) : '', prompt: '' })
+  return armed
+})
 // How hard a Codex pane thinks. Nothing is typed here: the choice is remembered and the
 // pane acts on it at its next turn boundary. See `shared/effort.ts`.
 ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
@@ -2659,7 +2717,7 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-function closePane(id: string, by: CloseBy): void {
+function closePane(id: string, by: CloseBy): Promise<{ closed: boolean; reason?: string }> | void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2667,8 +2725,15 @@ function closePane(id: string, by: CloseBy): void {
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said
     // out loud, because silence here is a button that looks broken and gets pressed again.
-    if (!remote.closeOn(id)) send('app:error', 'That device is not connected - the pane was not closed.')
-    return
+    if (!remote.closeOn(id)) {
+      send('app:error', 'That device is not connected - the pane was not closed.')
+      return Promise.resolve({ closed: false, reason: 'that computer is not connected, so the chat was not closed' })
+    }
+    // `pf close @device/id` prints what this answers, mirrored chat or only listed: closed
+    // when that computer's own list drops it, not when this desk hid the row.
+    return remote.closedOn(id).then((closed) =>
+      closed ? { closed } : { closed, reason: 'the other computer did not close it within 3 seconds; run pf list to see whether it is still open' }
+    )
   }
   // A client asking to close a pane this desk does not have is a client holding a STALE
   // list - a phone whose event stream was down while the pane was closed. `kill` on an
@@ -3224,7 +3289,15 @@ ipcMain.handle('discord:status', () => presence.status())
  * still the fallback, for a pane with no live renderer (asleep, hidden behind a wedged
  * window, or a window that did not answer), and the answer says WHICH of the two it is.
  */
-ipcMain.handle('sessions:draft', async (_e, id: string) => {
+// A pane on another computer is read THERE (`remote.draftOn`): looked up here, an
+// `@device/` id found nothing and `pf composer` said "is not running" (s54, 2026-10-03).
+ipcMain.handle('sessions:draft', (_e, id: unknown): Promise<PaneDraft | null> => {
+  const ref = String(id ?? '')
+  if (remote.owns(ref)) return remote.draftOn(ref)
+  if (ref.startsWith('@')) return Promise.resolve({ unavailable: 'that chat is on another computer, and this one is not connected to it' })
+  return paneDraft(ref)
+})
+async function paneDraft(id: string): Promise<PaneDraft | null> {
   const kept = manager.draftOf(id)
   if (!kept) return null
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
@@ -3239,7 +3312,7 @@ ipcMain.handle('sessions:draft', async (_e, id: string) => {
     }
   }
   return { ...kept, from: 'keystrokes' as const }
-})
+}
 ipcMain.handle('pulls:list', (_e, cwds: string[], refresh?: boolean) =>
   readPulls(Array.isArray(cwds) ? cwds : [], !!refresh)
 )
@@ -3783,7 +3856,7 @@ ipcMain.handle('remote:keepOpen', (_e, id: string, keep: boolean) =>
 ipcMain.handle('remote:projects', (_e, device: string) => remote.projectsOn(String(device)))
 ipcMain.handle('remote:agents', (_e, device: string) => remote.agentsOn(String(device)))
 ipcMain.handle('remote:start', (_e, device: string, req: StartSessionRequest) =>
-  remote.startOn(String(device), req)
+  startOnPeer(String(device), req)
 )
 // Handing panes the OTHER way: this machine's live panes move to that device and
 // keep going there. The push happens before anything is killed here, and a pane

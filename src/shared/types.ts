@@ -2758,9 +2758,10 @@ export interface Api {
   /**
    * What is typed into a pane and not sent. `from` says which reading answered: `screen`
    * is the terminal buffer itself, `keystrokes` the reconstruction main keeps for a pane
-   * whose window could not be asked - see `sessions:draft` in `main/index.ts`.
+   * whose window could not be asked - see `sessions:draft` in `main/index.ts`. A pane on
+   * another computer is read there; `unavailable` says why that computer could not be asked.
    */
-  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | null>
+  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | { unavailable: string } | null>
   /**
    * Open pull requests and unfinished local work, for the repositories behind the
    * folders given. Read on demand: this is a dialog's question, never a poll.

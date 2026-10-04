@@ -25,6 +25,7 @@ import type { Project, Session, StartSessionRequest, TurnClock } from '../../sha
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
 import type { ReviewRecord } from '../../shared/reviews'
 import type { TellOutcome } from '../../shared/tell'
+import type { PaneDraft } from './client'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Four MiB raw stays comfortably below wire.ts's eight MiB encrypted frame once base64 encoded. */
@@ -40,6 +41,11 @@ export interface HostBackend {
   sendPrompt(id: string, text: string): void
   /** `pf tell` from another computer: queue it here and answer with what happened (`shared/tell.ts`). */
   tellPane(id: string, text: string): Promise<TellOutcome>
+  /**
+   * `pf composer` from another computer: what is typed in this pane's input box, read the way
+   * the local `sessions:draft` reads it. Null = no such pane here.
+   */
+  draft?(id: string): Promise<PaneDraft | null>
   resize(
     id: string,
     cols: number,
@@ -553,6 +559,10 @@ export class RemoteHost extends EventEmitter {
           this.answer(conn, m, this.backend.tellPane(ref, String(m.text ?? '')), 'tell', (outcome) => ({ t: 'told', ref, outcome }))
           return
         }
+        case 'draft':
+          // Read only: what this desk's own reader sees in the pane's input box.
+          this.answer(conn, m, this.backend.draft ? this.backend.draft(id) : null, 'draft', (draft) => ({ t: 'drafted', id, draft: draft ?? null }))
+          return
         case 'resize':
           // A mirror asking to BORROW the size, which is what stops the far end drawing
           // this desk's grid at the wrong scale. Borrowed, never owned: this desk keeps

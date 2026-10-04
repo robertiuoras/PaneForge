@@ -84,6 +84,26 @@ export const OLDER_TELL_REASON =
   'the other computer runs an older PaneForge that sends no receipt; it types the prompt when that chat is ready'
 
 /**
+ * What `sessions:draft` answers for one pane: the text in its input box and where it was
+ * read (the drawn screen, or the keystrokes the app relayed), or why the computer that runs
+ * it could not be asked. Null (no such pane) is answered beside it.
+ */
+export type PaneDraft = { text: string; certain: boolean; from: 'screen' | 'keystrokes' } | { unavailable: string }
+
+/** What `pf composer` says about an owner from before `draftRead` - it is not asked. */
+export const olderDraftReason = (name: string): string =>
+  `${name} runs an older PaneForge that cannot say what is typed in its chats; update PaneForge there`
+
+/** An owner's draft answer, checked where it lands; anything else is said to be unreadable. */
+export function draftFrom(raw: unknown, name: string): PaneDraft | null {
+  if (raw === null) return null
+  const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  if (typeof d.text === 'string' && typeof d.certain === 'boolean' && (d.from === 'screen' || d.from === 'keystrokes'))
+    return { text: d.text, certain: d.certain, from: d.from }
+  return { unavailable: `${name} answered, but its answer could not be read` }
+}
+
+/**
  * An owner's tell answer, checked where it lands and put back under the device's name.
  * Anything this side cannot read is a failure that says so - never a delivery.
  */
@@ -495,6 +515,43 @@ export class RemoteClient extends EventEmitter {
     )
   }
 
+  /**
+   * `pf composer` on one of that machine's panes, mirrored here or not: the owner reads its
+   * own input box (`sessions:draft` there) and answers. Before this, the app looked for an
+   * `@device/` id among this desk's own panes and `pf` said "is not running" (s54, 2026-10-03).
+   */
+  draftOf(localId: string): Promise<PaneDraft | null> {
+    if (!this.conn?.ready) return Promise.resolve({ unavailable: `${this.peer.name} is not connected right now` })
+    if (this.conn.peer.draftRead !== true) return Promise.resolve({ unavailable: olderDraftReason(this.peer.name) })
+    return this.ask<unknown>({ t: 'draft', id: localId }).then(
+      (raw) => draftFrom(raw, this.peer.name),
+      (err: Error) => ({ unavailable: err.message })
+    )
+  }
+
+  /** Checked on every pane list the owner sends; see `gone`. */
+  private listWaits = new Set<() => void>()
+
+  /**
+   * True once a pane list FROM the owner no longer has `localId`; false if `ms` passes first.
+   * Only the owner's own list counts: this desk hides a row it asked to close
+   * (`Remote.closeOn`), and a dropped link empties the list, so neither is proof it closed.
+   */
+  gone(localId: string, ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (!this.available.some((s) => s.id === localId)) finish(true)
+      }
+      const finish = (v: boolean): void => {
+        clearTimeout(timer)
+        this.listWaits.delete(check)
+        resolve(v)
+      }
+      const timer = setTimeout(() => finish(false), ms)
+      this.listWaits.add(check)
+    })
+  }
+
   /** Save Keep open on the machine that actually owns the pane. */
   setKeepOpen(localId: string, keep: boolean): Promise<boolean> {
     return this.ask<boolean>({ t: 'keep', id: localId, keep }, 10_000).catch((err: Error) => {
@@ -670,6 +727,7 @@ export class RemoteClient extends EventEmitter {
     switch (m.t) {
       case 'sessions': {
         this.available = (m.list as Session[]) ?? []
+        for (const check of [...this.listWaits]) check()
         // Only what was picked is attached. A pane nobody asked for is listed and left
         // alone: no scrollback fetched, no live output crossing the network for it.
         this.applyWatch()
@@ -765,6 +823,9 @@ export class RemoteClient extends EventEmitter {
         return
       case 'told':
         this.settle(m, m.outcome)
+        return
+      case 'drafted':
+        this.settle(m, m.draft)
         return
       case 'filesdone':
         this.settle(m, m.result)
