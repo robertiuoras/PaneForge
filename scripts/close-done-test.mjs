@@ -109,7 +109,7 @@ ok(/live\.req\.closeWhenDone = true/.test(sessions), '...by setting the very req
 ok(/reportTo !== id/.test(sessions), '...and a pane is never told about its own closing')
 const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 ok(/ipcMain\.handle\('sessions:closeWhenDone'/.test(main), 'the channel is registered')
-ok(/remote\.owns\(id\) \? remote\.armCloseWhenDone\(id\)/.test(main), 'a mirrored pane is armed on the device that owns it')
+ok(/!remote\.owns\(id\)\) return manager\.armCloseWhenDone[\s\S]{0,400}?remote\.armCloseWhenDone\(id\)/.test(main), 'a mirrored pane is armed on the device that owns it')
 const remoteHost = readFileSync(join(root, 'src/main/remote/host.ts'), 'utf8')
 ok(/case 'closeDone':[\s\S]*armCloseWhenDone\?\.\(id\)/.test(remoteHost), 'the owner applies the remote close request to its own session manager')
 const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
@@ -184,6 +184,12 @@ ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it can
   sweep(owed)
   is([...kills, ...handedToReview], [], '...and a queued prompt that has not landed yet')
   is(told, [], 'the opener is told nothing while the pane is still owed a prompt')
+
+  // c206ac70 (2026-10-04): a prompt given up on never started the job; the pane stays open.
+  const unsent = pane()
+  unsent.meta.promptUnsent = Date.now() - 60_000
+  sweep(unsent)
+  is([...kills, ...handedToReview], [], '...and a pane whose prompt was given up on (promptUnsent) never started its job')
 
   // Quiet but no completed reply on record (startup paint): not done either.
   const unfinished = pane()
