@@ -24,6 +24,11 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   ordinary claimed lane and its normal validation before `ready` (`node scripts/lane-parked-test.mjs`).
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`; `state.passed`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
+- A prompt returning to its original letter checkout may relinquish an unused fallback
+  only when both checkouts are empty and the original is unheld. Startup can reclaim an
+  empty former app owner's checkout only when the all-copy native inventory includes the
+  requesting conversation and excludes the former one. Unknown inventory, external owners,
+  sleeping panes and unfinished work remain protected (`test:lanecleared`).
 - An exact native resume stays in its original checkout. If another chat holds that
   checkout, refuse before allocating a replacement. Preserve dirty files and coordinate
   release at the occupying chat's task boundary. Never use `moveTo` to recover a
