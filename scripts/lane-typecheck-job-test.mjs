@@ -30,6 +30,9 @@ const suiteModeFile = join(root, 'mode-suite')
 // While this file exists a wait on a job still in line takes 10 ms per second of its budget:
 // the 900 s wait a clock tick held the recovery lock through is 9 s here.
 const slowFile = join(root, 'slow')
+// A suite job whose repo is named here answers with that one step every time, ahead of mode-suite:
+// two lanes' jobs at once, one still in line and one finished.
+const repoModesFile = join(root, 'mode-repos.json')
 let failures = 0
 
 function ok(name, pass, detail = '') {
@@ -110,22 +113,25 @@ try {
   const relocated = original.replace(/from '(\.\/[^']+)'/g, (_, p) =>
     `from '${pathToFileURL(resolve(scripts, p)).href}'`)
   writeFileSync(join(engineDir, 'lane.mjs'), relocated)
-  writeFileSync(join(home, '.claude', 'rbuild.mjs'), `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+  writeFileSync(join(home, '.claude', 'rbuild.mjs'), `import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 const args = process.argv.slice(2)
 appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify(args) + '\\n')
 if (args.includes('--no-wait')) {
   const id = randomUUID()
-  appendFileSync(${JSON.stringify(jobsFile)}, JSON.stringify({ id, kind: args.includes('--') ? 'suite' : 'typecheck' }) + '\\n')
+  const repo = args.includes('--repo') ? realpathSync(args[args.indexOf('--repo') + 1]) : null
+  appendFileSync(${JSON.stringify(jobsFile)}, JSON.stringify({ id, repo, kind: args.includes('--') ? 'suite' : 'typecheck' }) + '\\n')
   console.error('rbuild: job ' + id + ' saved. queued behind 25')
   process.exit(75)
 }
 const job = readFileSync(${JSON.stringify(jobsFile)}, 'utf8').trim().split('\\n').map(JSON.parse).find((j) => j.id === args[1])
 const file = job?.kind === 'suite' && existsSync(${JSON.stringify(suiteModeFile)}) ? ${JSON.stringify(suiteModeFile)} : ${JSON.stringify(modeFile)}
-const steps = readFileSync(file, 'utf8').trim().split(',')
+const fixed = job?.kind === 'suite' && job.repo && existsSync(${JSON.stringify(repoModesFile)})
+  ? JSON.parse(readFileSync(${JSON.stringify(repoModesFile)}, 'utf8'))[job.repo] : undefined
+const steps = fixed ? [fixed] : readFileSync(file, 'utf8').trim().split(',')
 // --resume: the job's state now, never a wait - from the step the next wait would take, not using it up.
 if (args[0] === '--resume') process.exit(['queued', 'killed'].includes(steps[0]) ? 75 : steps[0] === 'pass' ? 0 : 1)
-if (steps.length > 1) writeFileSync(file, steps.slice(1).join(','))
+if (!fixed && steps.length > 1) writeFileSync(file, steps.slice(1).join(','))
 const mode = steps[0]
 if (mode === 'queued' && existsSync(${JSON.stringify(slowFile)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(args[2]) * 10)
 if (mode === 'queued') process.exit(75)
@@ -427,6 +433,34 @@ process.exit(1)
   const tFull = calls().slice(tFrom).filter((a) => a[0] === '--wait')
   ok('t: a chat\'s autoship still waits the full budget on the lane job', tFull.some((a) => a[1] === tLane && Number(a[2]) > TICK_S),
     JSON.stringify(tFull))
+
+  // u: master red, two finished lanes, the first one's job still in line and the second's
+  // already passed: the try reads the finished one and lands it, never waiting on the first.
+  // 2026-10-04 lane c's job passed at 2:45pm; the release waited its whole 900 s on lane b's
+  // job, still in line ahead of it, then only queued c again, and c's verdict was never read.
+  mode('queued')
+  const sU = project('suiteahead')
+  const u1 = work(sU.dir, 'chat-u1', 'u1.txt')
+  const u2 = work(sU.dir, 'chat-u2', 'u2.txt')
+  const u2Tip = git(u2.dir, 'rev-parse', 'HEAD')
+  lane(sU.dir, 'ready', '--session', 'chat-u1')
+  lane(sU.dir, 'ready', '--session', 'chat-u2')
+  mode('pass')
+  suiteMode('red,red')
+  writeFileSync(repoModesFile, JSON.stringify({ [real(u1.dir)]: 'queued', [real(u2.dir)]: 'pass' }))
+  const uFrom = calls().length
+  writeFileSync(slowFile, '')
+  const u0 = Date.now()
+  const uOut = lane(sU.dir, 'autoship', '--session', 'chat-u2')
+  const uMs = Date.now() - u0
+  rmSync(slowFile, { force: true })
+  rmSync(repoModesFile, { force: true })
+  const uWaits = calls().slice(uFrom).filter((a) => a[0] === '--wait')
+  const u1Job = JSON.parse(`[${readFileSync(jobsFile, 'utf8').trim().split('\n').join(',')}]`).find((j) => j.repo === real(u1.dir))?.id
+  console.log(`     u: try with the first lane still in line took ${uMs} ms (${uWaits.map((a) => a[2]).join(',') || 'no'} s waits)`)
+  ok('u: the lane whose job already passed lands', contains(sU.remote, u2Tip, 'main'), said(uOut))
+  ok('u: no long wait on the lane still in line', !uWaits.some((a) => a[1] === u1Job && Number(a[2]) > TICK_S), JSON.stringify(uWaits))
+  ok('u: the try ends inside stub time for a short read (not the 900 s wait)', uMs < 6000, `${uMs} ms`)
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

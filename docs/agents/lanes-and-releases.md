@@ -115,7 +115,9 @@ Never cut one while a next step is open.
 push; other refs are never gated. `ship()` run by `autoship` re-tests the merged tree with
 `pushedTreeFailure` before pushing and resets to the pre-merge commit when it is red. A hand
 `ship` and a version release record `pushOk` for their tree and go through. `--no-verify` is
-a deliberate bypass.
+a deliberate bypass. The refusal names master's own `lane.mjs` by absolute path (a lane's copy can be
+older and lack the gate): `ready` for lane work, `autoship` when master already holds the merged
+work.
 
 **Dev-window tour** (`shared/tour.ts`, `TourCard.tsx`, `shared/lookCheck.ts`; `test:tour`,
 `test:look`): each `feat:`/`fix:`/`perf:` commit since the installed build touching `src/`,
