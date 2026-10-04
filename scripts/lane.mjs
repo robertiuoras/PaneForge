@@ -3362,7 +3362,8 @@ function fastForwardMain() {
   if (!gitSafe(MAIN, 'fetch', 'origin', MB).ok) return
   const ahead = gitSafe(MAIN, 'rev-list', '--count', `origin/${MB}..${MB}`)
   if (!ahead.ok || ahead.out.trim() !== '0') return
-  gitSafe(MAIN, 'merge', '--ff-only', `origin/${MB}`)
+  // --no-autostash: a configured merge.autoStash is the save-reset-restore landLane avoids.
+  gitSafe(MAIN, 'merge', '--ff-only', '--no-autostash', `origin/${MB}`)
 }
 
 /**
@@ -4958,6 +4959,108 @@ function restoreSame(same) {
   }
 }
 
+/**
+ * Land one ready lane on the trunk without the main folder ever holding a half-done merge.
+ *
+ * `git merge` in the main folder is not safe there. Other chats and hooks edit that folder's
+ * tracked files while a release runs, and when a merge fails git saves the folder's edits
+ * away, resets every file, and puts the edits back - and if anything writes in between,
+ * the putting back fails and the edits exist only in a commit nothing points at. Measured
+ * 2026-10-04 11:59am on claude-memory's main folder (a plain `git merge`, hooks writing
+ * its ledger): "Index was not unstashed. / Merge with strategy ort failed", 21 files of
+ * other chats' work gone into dangling commit 09deeb523. `merge.ff=only` there does not
+ * reach this path: `--no-ff` on the command line overrides it.
+ *
+ * So the merge commit is built where no file of the main folder is involved, and the main
+ * folder only ever fast-forwards to it - which git refuses, touching nothing, when an edit
+ * there is in a file the lane brings. A clean merge is `merge-tree` + `commit-tree`, objects
+ * only. One with conflicts gets today's real merge (rerere, merge drivers, `autoResolve`) in
+ * a scratch folder that holds just the files the merge writes.
+ *
+ * { landed: true } | { conflict: '<files>' } | { busy: '<why>' } - busy keeps the ready
+ * mark and goes with the next release, like git being busy always has.
+ */
+function landLane(id, branch) {
+  const message = `merge lane ${id}`
+  const head = gitSafe(MAIN, 'rev-parse', '--verify', 'HEAD')
+  const tip = gitSafe(MAIN, 'rev-parse', '--verify', `${branch}^{commit}`)
+  if (!head.ok || !tip.ok) return { busy: (head.ok ? tip : head).out }
+  let made
+  try {
+    const tree = git(MAIN, 'merge-tree', '--write-tree', head.out, tip.out).split('\n')[0]
+    const c = gitSafe(MAIN, 'commit-tree', tree, '-p', head.out, '-p', tip.out, '-m', message)
+    if (!c.ok) return { busy: c.out }
+    made = c.out
+  } catch {
+    // Exit 1 is a conflict; anything else is a git without `merge-tree --write-tree` (older
+    // than 2.38). Either way the real merge decides, off to the side.
+    const r = scratchMerge(head.out, tip.out, message)
+    if (!r.commit) return r
+    made = r.commit
+  }
+  // --no-autostash: a configured merge.autoStash would bring back the save-reset-restore.
+  const ff = gitSafe(MAIN, 'merge', '--ff-only', '--no-autostash', '-q', made)
+  if (ff.ok) return { landed: true }
+  // Git names the files on the line after its sentence; both lines are the reason.
+  const said = ff.out.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2).join(' ')
+  return { busy: `${MB} was not moved onto it: ${said.slice(0, 240)}` }
+}
+
+/**
+ * The real merge of `tip` into `head`, in a throwaway folder with no files checked out: git
+ * writes only the files the merge touches, so a 10,000-file repo costs what the conflict
+ * costs. Returns { commit } | { conflict } | { busy }.
+ */
+function scratchMerge(head, tip, message) {
+  const holder = mkdtempSync(join(tmpdir(), 'pfm-'))
+  const dir = join(holder, 'w')
+  try {
+    const add = gitSafe(MAIN, 'worktree', 'add', '-q', '--no-checkout', '--detach', dir, head)
+    if (!add.ok) return { busy: firstLine(add.out) }
+    const index = gitSafe(dir, 'read-tree', 'HEAD')
+    if (!index.ok) return { busy: firstLine(index.out) }
+    const m = gitSafe(dir, '-c', 'core.longpaths=true', 'merge', '--no-ff', '--no-autostash', '-m', message, tip)
+    if (!m.ok && m.locked) return { busy: firstLine(m.out) }
+    if (!m.ok) {
+      // Same union rule as the lane side, for the release side of the same collision:
+      // two lanes that each added an import cannot both have merged cleanly, and the
+      // second one to arrive here is not a decision anybody needs to make.
+      const open = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+        .out.split('\n')
+        .filter(Boolean)
+      const fixed = autoResolve(dir, open)
+      for (const f of fixed) gitSafe(dir, 'add', '--', f)
+      const stuck =
+        !fixed.length ||
+        gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.trim() ||
+        !gitSafe(dir, 'commit', '--no-edit').ok
+      if (stuck) return { conflict: mergeFiles(m.out) }
+    }
+    const made = gitSafe(dir, 'rev-parse', 'HEAD')
+    return made.ok ? { commit: made.out } : { busy: firstLine(made.out) }
+  } finally {
+    gitSafe(MAIN, 'worktree', 'remove', '--force', dir)
+    rmSync(holder, { recursive: true, force: true })
+    gitSafe(MAIN, 'worktree', 'prune')
+  }
+}
+
+/**
+ * Put the trunk back where it stood before this release merged anything, keeping every edit
+ * other chats and hooks have in the main folder: `--keep` moves only the files the merges
+ * brought and refuses, changing nothing, when one of those has an edit of its own. `--hard`
+ * here wiped every uncommitted edit in the folder. Only while HEAD is still the last merge this
+ * release made: a commit somebody made in the folder since is not this release's to drop.
+ * null, or why it could not.
+ */
+function undoMerges(to, landed) {
+  const head = gitSafe(MAIN, 'rev-parse', 'HEAD').out
+  if (head !== landed)
+    return `${MB} is left on the merge, unpushed, because a commit was made in its folder after it (${head.slice(0, 8)}) and putting ${MB} back would drop it`
+  const r = gitSafe(MAIN, 'reset', '--keep', '-q', to)
+  return r.ok ? null : `${MB} is left on the merge, unpushed, because putting it back would have overwritten an unsaved edit in its folder: ${firstLine(r.out)}`
+}
+
 function ship(kind, session) {
   if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
   // Version mode creates another commit after the exact-tree proof. Taskdriver's
@@ -5038,6 +5141,8 @@ function ship(kind, session) {
     const merged = []
     // Where master stood before any lane landed: a merged tree that does not compile goes back here.
     const beforeMerge = gitSafe(MAIN, 'rev-parse', 'HEAD').out
+    // ...and where the last lane this release landed left it.
+    let landedHead = beforeMerge
     const conflicts = {}
     // Lanes that could not be merged because git was busy, which is not the same thing as
     // a lane that cannot be merged. They keep their ready mark and nothing is recorded
@@ -5061,40 +5166,29 @@ function ship(kind, session) {
         skipped.push({ lane: id, why: `nothing on ${branch} that ${MB} does not already have` })
         continue
       }
-      const m = gitSafe(MAIN, 'merge', '--no-ff', '-m', `merge lane ${id}`, branch)
-      if (!m.ok && m.locked) {
+      // Built off to the side and fast-forwarded onto, never merged in the main folder
+      // (landLane says why).
+      const m = landLane(id, branch)
+      if (m.busy) {
         // Same rule as the lane side: git being busy says nothing about this branch. The
         // lane keeps its ready mark (see `finish`) and goes out of the next release, which
         // is minutes away - rather than being marked conflicted, which is hours away and
         // needs a person. This is the seven-hour stall of 2026-08-02, from the other side.
-        gitSafe(MAIN, 'merge', '--abort')
-        blocked.push(id)
+        // An unsaved edit in the main folder to a file this lane brings is the same: it is
+        // somebody's work in progress, not a disagreement between branches.
+        blocked.push({ lane: id, why: m.busy })
         continue
       }
-      if (!m.ok) {
-        // Same union rule as the lane side, for the release side of the same collision:
-        // two lanes that each added an import cannot both have merged cleanly, and the
-        // second one to arrive here is not a decision anybody needs to make.
-        const open = gitSafe(MAIN, 'diff', '--name-only', '--diff-filter=U')
-          .out.split('\n')
-          .filter(Boolean)
-        const fixed = autoResolve(MAIN, open)
-        for (const f of fixed) gitSafe(MAIN, 'add', '--', f)
-        const stuck =
-          !fixed.length ||
-          gitSafe(MAIN, 'diff', '--name-only', '--diff-filter=U').out.trim() ||
-          !gitSafe(MAIN, 'commit', '--no-edit').ok
-        if (stuck) {
-          // One lane that cannot merge used to stop everyone's release. It does not any
-          // more: the conflict is that lane's problem, it stays marked ready, and it is
-          // reported by name so the next chat in it fixes it. Everything else goes out.
-          gitSafe(MAIN, 'merge', '--abort')
-          noteConflict(conflicts, id, mergeFiles(m.out), state.conflicts)
-          continue
-        }
+      if (m.conflict) {
+        // One lane that cannot merge used to stop everyone's release. It does not any
+        // more: the conflict is that lane's problem, it stays marked ready, and it is
+        // reported by name so the next chat in it fixes it. Everything else goes out.
+        noteConflict(conflicts, id, m.conflict, state.conflicts)
+        continue
       }
       renamed.push(...renumberMigrations(MAIN, 'HEAD^2', 'HEAD^1'))
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
+      landedHead = gitSafe(MAIN, 'rev-parse', 'HEAD').out
     }
 
     // The typecheck above read master BEFORE any lane landed. Two lanes that each compile
@@ -5105,8 +5199,8 @@ function ship(kind, session) {
     if (merged.length && !TASKDRIVER_PC) {
       const red = typecheckFailure(state)
       if (red) {
-        gitSafe(MAIN, 'reset', '--hard', beforeMerge)
-        throw new Error(`the lanes did not compile once merged, so nothing was pushed: ${red}`)
+        const stuck = undoMerges(beforeMerge, landedHead)
+        throw new Error(`the lanes did not compile once merged, so nothing was pushed: ${red}${stuck ? `. ${stuck}` : ''}`)
       }
     }
 
@@ -5161,7 +5255,7 @@ function ship(kind, session) {
       // reason: its work is still not out there.
       const keep = new Set(unproved.map((m) => m.lane))
       fresh.ready = Object.fromEntries(
-        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.includes(id) || keep.has(id))
+        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.some((b) => b.lane === id) || keep.has(id))
       )
       fresh.conflicts = conflicts
       fresh.release = null
@@ -5186,7 +5280,7 @@ function ship(kind, session) {
         s.conflicts = conflicts
         s.release = null
         write(s)
-        return { shipped: false, reason: 'nothing to release', conflicts, skipped }
+        return { shipped: false, reason: 'nothing to release', conflicts, skipped, blocked }
       }
       if (RELEASE === 'merge') {
         const pushed = gitSafe(MAIN, 'push')
@@ -5233,7 +5327,7 @@ function ship(kind, session) {
       s.conflicts = conflicts
       s.release = null
       write(s)
-      return { shipped: false, reason: `nothing new since v${pkg.version}`, conflicts }
+      return { shipped: false, reason: `nothing new since v${pkg.version}`, conflicts, skipped, blocked }
     }
 
     pkg.version = next
@@ -6737,6 +6831,8 @@ try {
       console.log(
         `Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`
       )
+    for (const b of r.blocked ?? [])
+      console.log(`Lane ${b.lane} is NOT out - ${b.why}. It keeps its ready mark and goes with the next release.`)
     for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
     if (r.renamed?.length) console.log(`Renumbered migration files that took a number ${MB} already used: ${r.renamed.join(', ')}`)
     for (const [id, c] of Object.entries(r.conflicts ?? {})) {
@@ -6825,12 +6921,16 @@ try {
       // origin, is named here rather than being left to look like one that went out.
       for (const u of r.unproved ?? [])
         console.log(`Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`)
+      for (const b of r.blocked ?? [])
+        console.log(`Lane ${b.lane} is NOT out - ${b.why}. It keeps its ready mark and goes with the next release.`)
       for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
       if (r.rebased.length) console.log(`Lanes brought up to date: ${r.rebased.join(', ')}`)
       if (r.renamed?.length) console.log(`Renumbered migration files that took a number ${MB} already used: ${r.renamed.join(', ')}`)
       if (r.version) console.log(sayBuilt(r.built))
     } else {
       console.log(`Not shipped: ${r.reason}`)
+      for (const b of r.blocked ?? [])
+        console.log(`Lane ${b.lane} is NOT out - ${b.why}. It keeps its ready mark and goes with the next release.`)
     }
   } else if (cmd === 'promote') {
     const r = promote(argv[1] && !argv[1].startsWith('--') ? argv[1] : '')
