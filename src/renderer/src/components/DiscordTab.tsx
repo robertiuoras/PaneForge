@@ -26,7 +26,7 @@ import {
   type PresenceStatus,
   type RowWhen
 } from '@shared/discordRpc'
-import { Segmented, Switch } from './Controls'
+import { Segmented, Switch, Why } from './Controls'
 
 const api = window.api
 
@@ -140,7 +140,8 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
         checked={config.discordPresence}
         onChange={(v) => onChange({ discordPresence: v })}
         label="Show what your chats are doing on Discord"
-        hint="Puts a short line on your Discord profile saying how many chats are working. Numbers only, unless you pick the look with project names - never a word of what a chat says. Needs the Discord app open. Your other computer, if it is linked to this one, uses the same choices and is counted too."
+        hint="Shows how many chats are working on your Discord profile."
+        why="Puts a short line on your Discord profile saying how many chats are working. Numbers only, unless you pick the look with project names - never a word of what a chat says. Needs the Discord app open. Your other computer, if it is linked to this one, uses the same choices and is counted too."
       />
 
       {config.discordPresence && (
@@ -164,8 +165,8 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                 name="Your own lines"
                 hint={
                   custom
-                    ? 'Written by hand under Advanced. Pick another look and they wait here for when you come back.'
-                    : 'Start from the look you have now and change the words yourself, under Advanced.'
+                    ? 'Written by hand under Advanced.'
+                    : 'Change the words yourself, under Advanced.'
                 }
                 sample={custom ? visibleRows(SAMPLE_BUSY, style) : []}
                 on={custom}
@@ -179,8 +180,11 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
 
           {custom && (
             <div className="hint">
-              Your own lines decide what the card says, so the switches for waiting chats and
-              tokens are put away. Pick one of the other looks to get them back.
+              Your own lines decide the card, so some switches are hidden.
+              <Why>
+                Your own lines decide what the card says, so the switches for waiting chats and
+                tokens are put away. Pick one of the other looks to get them back.
+              </Why>
             </div>
           )}
           <div className="switches">
@@ -189,28 +193,32 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                 checked={style.idle}
                 onChange={(v) => setLook({ idle: v })}
                 label="Say how many are waiting"
-                hint={'Adds how many chats are waiting beside the ones working: "5 running · 2 idle" rather than "5 running".'}
+                hint="Adds the waiting count beside the working count."
+                why={'Adds how many chats are waiting beside the ones working: "5 running · 2 idle" rather than "5 running".'}
               />
             )}
             <Switch
               checked={style.elapsed}
               onChange={(v) => setStyle({ elapsed: v })}
               label="Show how long it has been going"
-              hint="A clock under the lines, counting from the chat that has been working longest - or from when PaneForge opened, while every chat is waiting."
+              hint="A clock under the lines."
+              why="A clock under the lines, counting from the chat that has been working longest - or from when PaneForge opened, while every chat is waiting."
             />
             {!custom && (
               <Switch
                 checked={style.tokens}
                 onChange={(v) => setLook({ tokens: v })}
                 label="Show tokens used today"
-                hint="How much every agent on your computers has used since midnight, from the logs Claude Code and Codex already keep."
+                hint="How much your agents have used since midnight."
+                why="How much every agent on your computers has used since midnight, from the logs Claude Code and Codex already keep."
               />
             )}
             <Switch
               checked={linkOn}
               onChange={setLink}
               label="Show the link button"
-              hint="A button under the card that opens the PaneForge page. Discord shows it to everyone except you, so your own profile will not have it."
+              hint="A button under the card that opens PaneForge's page."
+              why="A button under the card that opens the PaneForge page. Discord shows it to everyone except you, so your own profile will not have it."
             />
           </div>
 
@@ -227,10 +235,11 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
               />
             </div>
             <DiscordPreview style={style} counts={counts} />
-            <div className="hint dim">
+            <div className="hint dim">Made-up numbers, so you can judge a look.</div>
+            <Why>
               Made-up numbers - five of seven chats working - so you can judge a look with
               nothing open. A change reaches Discord within fifteen seconds.
-            </div>
+            </Why>
           </div>
 
           <details
@@ -247,13 +256,14 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                     {addingLine ? 'Never mind' : 'Add a line'}
                   </button>
                 </div>
-                <div className="hint">
+                <div className="hint">Discord shows two lines. The top two count.</div>
+                <Why>
                   Discord draws two lines and no more, so the first two that have something to
                   say are the ones on the card. Move a line up to put it on top, switch one off
                   to hand its place to the one under it. A line whose words come out empty -
                   "on {'{projects}'}" with nothing running - takes no space either. Changing a
                   line here makes the look "Your own lines".
-                </div>
+                </Why>
                 {addingLine && (
                   <div className="pickrow discord-presets">
                     {PRESET_ROWS.map((preset) => (
@@ -361,25 +371,24 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                               ? 'Empty, so it takes no room on the card.'
                               : drawn >= 0
                                 ? `On the card now, as line ${drawn + 1}.`
-                                : `Not on the card right now - ${
-                                    row.when === 'running'
-                                      ? 'this one only shows while a chat is working.'
-                                      : row.when === 'idle'
-                                        ? 'this one only shows while every chat is waiting.'
-                                        : `Discord only draws ${VISIBLE_ROWS} lines and two above it got there first.`
-                                  }`}
+                                : row.when === 'running'
+                                  ? 'Hidden now - shows only while a chat is working.'
+                                  : row.when === 'idle'
+                                    ? 'Hidden now - shows only while every chat waits.'
+                                    : `Hidden now - only ${VISIBLE_ROWS} lines fit, and two above come first.`}
                         </div>
                       </div>
                     )
                   })}
                 </div>
-                <div className="hint">
+                <div className="hint">Click a button to add that bit; click again to remove it.</div>
+                <Why>
                   The buttons on each line build the wording for you - click one to add that
                   bit, click it again to take it back out. The box itself still works if you
                   want to type your own words around them, but nothing here needs it. Discord
                   cuts a line off past 128 characters, so a long project list drops its tail
                   for a "+2 more" rather than being chopped mid-word.
-                </div>
+                </Why>
               </div>
 
               <div className="setting">
@@ -404,11 +413,12 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                     </button>
                   )}
                 </div>
-                <div className="hint">
+                <div className="hint">A button is the only clickable part of the card.</div>
+                <Why>
                   Discord draws the lines as plain text, so a link written into one is not
                   clickable. A button is the only clickable thing a Discord profile card has,
                   and it takes two of them.
-                </div>
+                </Why>
                 {style.buttons.map((b, i) => (
                   <div className={'row-edit' + (b.on ? '' : ' off')} key={b.id}>
                     <div className="re-top">
@@ -443,8 +453,11 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                       onChange={(e) => patchButton(i, { url: e.target.value.trim() })}
                     />
                     <div className="hint dim">
-                      Must start with http:// or https:// - Discord throws the whole card away
-                      over a broken link, not just the button. Text is cut at 32 characters.
+                      Link must start with http:// or https://.
+                      <Why>
+                        Must start with http:// or https:// - Discord throws the whole card away
+                        over a broken link, not just the button. Text is cut at 32 characters.
+                      </Why>
                     </div>
                   </div>
                 ))}
@@ -545,20 +558,22 @@ function DiscordStatus(): JSX.Element {
     <div className="setting">
       {status.countedBy ? (
         <div className="hint">
-          Your Discord profile is showing {status.countedBy}&apos;s count, which already
-          includes the chats on this computer, so this computer stays quiet.
+          Your profile shows {status.countedBy}&apos;s count, which includes this computer.
         </div>
       ) : !status.connected ? (
         <div className="hint">
-          No Discord to talk to. PaneForge looks for it again every minute, so starting
-          Discord is enough - nothing here needs touching.
+          Discord is not open. Start it and PaneForge connects.
+          <Why>
+            No Discord to talk to. PaneForge looks for it again every minute, so starting
+            Discord is enough - nothing here needs touching.
+          </Why>
         </div>
       ) : status.error ? (
         <div className="hint warn">Discord refused the last card: {status.error}</div>
       ) : status.cleared ? (
         <div className="hint">
-          Connected{status.user ? <> as <b>{status.user}</b></> : null} - and told Discord to
-          show nothing, because no chat is open.
+          Connected{status.user ? <> as <b>{status.user}</b></> : null} - showing nothing, no
+          chat is open.
         </div>
       ) : status.acceptedAt ? (
         <div className="hint">
@@ -576,11 +591,12 @@ function DiscordStatus(): JSX.Element {
       ) : (
         <div className="hint">Connected to Discord, waiting to send the first card.</div>
       )}
-      <div className="hint dim">
+      <div className="hint dim">Nobody can see it? Check Discord&apos;s Activity Privacy.</div>
+      <Why>
         Nobody can see it? That is not something this app can tell you, and if the line
         above says accepted, it is one of Discord&apos;s own switches: Discord → Settings →
         Activity Privacy, with both <b>Share your activity</b> and the per-server toggle on.
-      </div>
+      </Why>
     </div>
   )
 }

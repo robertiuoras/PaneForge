@@ -28,6 +28,7 @@ import type {
   AdminStatus,
   Config,
   RestoreMode,
+  SettingsFacts,
   UpdateState,
   VoiceStatus,
   VoiceConfig
@@ -42,7 +43,7 @@ import IncludedAccounts from './IncludedAccounts'
 import VaultDialog from './VaultDialog'
 import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
-import { Segmented, Switch } from './Controls'
+import { Switch, Why } from './Controls'
 // Hints below name shortcuts; on a Mac those live on Cmd, so print them through this.
 import { isMac, isWindows, keyLabel } from '../platform'
 
@@ -55,7 +56,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'voice' | 'discord' | 'system'
+type Tab = 'general' | 'appearance' | 'alerts' | 'agents' | 'system'
 
 /**
  * The rail down the left of the dialog.
@@ -65,19 +66,22 @@ type Tab = 'general' | 'appearance' | 'sounds' | 'agents' | 'voice' | 'discord' 
  * and - the actual reason - room for a WORD about each one, so "Prompts" and "Stash"
  * stop being nouns you have to click to understand.
  *
+ * Five rather than seven (docs/rework/settings.md): Sounds and Discord are what an alert
+ * plays and where it shows, so they sit under Alerts; Voice is how you talk to an agent,
+ * so it sits under Agents. A tab whose whole content is one switch is a click spent
+ * finding out there was nothing there.
+ *
  * `find` is what each tab can be searched by. The box above the rail filters the rail
  * rather than the settings themselves: filtering the settings means hiding controls from
  * inside the groups that explain them, which is how a search feature turns a settings
  * page into a list of orphaned switches.
  */
 const TABS: { id: Tab; label: string; note: string; find: string }[] = [
-  { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
-  { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
-  { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
-  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path account subscription login plan switch' },
-  { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
-  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status profile look style switch waiting tokens link button template project elapsed idle' },
-  { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
+  { id: 'general', label: 'General', note: 'Folders, fonts, mouse', find: 'projects root folder vault obsidian agent font size copy select mouse click cursor repair close tips notes mascot pet' },
+  { id: 'appearance', label: 'Look', note: 'Colours and density', find: 'appearance theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch glass' },
+  { id: 'alerts', label: 'Alerts', note: 'Sounds and notices', find: 'notify notification chime bell alert silence silent telegram game mode disturb sound audio volume mute custom mp3 wav ringtone discord presence rich activity status profile' },
+  { id: 'agents', label: 'Agents', note: 'CLIs, models, voice', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path account subscription login plan key provider openrouter confine answer advice voice dictation microphone mic speech whisper push to talk language' },
+  { id: 'system', label: 'System', note: 'Updates, startup, memory', find: 'update administrator admin uac restore restart reopen version download startup login shortcut transcript history copy project sleep close idle memory finished review dev server paired offload handoff github' }
 ]
 
 /**
@@ -111,7 +115,7 @@ function missingKeyFor(spec: AgentSpec, config: Config): string {
   if (!id || config.providerKeys?.[id]?.trim()) return ''
   const label = KEY_PROVIDERS.find((p) => p.id === id)?.label ?? id
   // No article in front of the name: "a OpenRouter key" is what writing one produces.
-  return `No ${label} key yet - paste one below, or this pane's first turn comes back 401`
+  return `No ${label} key yet - paste one below to start`
 }
 
 function addCustom(config: Config, onChange: (patch: Partial<Config>) => void): void {
@@ -170,11 +174,28 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [rescan, setRescan] = useState(0)
+  // What this machine has, read in main: a row for a thing it does not have is not drawn.
+  // The saved values behind a hidden row still hold.
+  const [facts, setFacts] = useState<SettingsFacts>({ telegram: false, discord: false })
+  const paired = (config.remote?.peers ?? []).length > 0
+  // Rescan, Install and Locate change what is on this machine, but the list the dialog is
+  // handed is only re-read when the window does it, so the grid kept saying "not on PATH"
+  // after a finished install. The dialog re-reads its own copy instead.
+  const [fresh, setFresh] = useState<AgentInfo[] | null>(null)
+  const list = fresh ?? agents
+  // The keys fold opens by itself when something in it is already set.
+  const [keysSet] = useState(
+    () =>
+      KEY_PROVIDERS.some((p) => !!config.providerKeys?.[p.id]?.trim()) ||
+      !!config.paneTrust?.restrictThirdParty
+  )
 
   useEffect(() => {
     api.adminStatus().then(setAdmin)
     api.updateState().then(setUpdate)
     api.voiceStatus().then(setVoice)
+    api.settingsFacts().then(setFacts)
+    if (rescan) api.listAgents().then(setFresh)
     return api.onUpdate(setUpdate)
   }, [rescan])
 
@@ -342,7 +363,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               onChange={(theme) => onChange({ theme })}
             />
           )}
-          {tab === 'sounds' && <SoundsTab config={config} onChange={onChange} />}
           {tab === 'general' && (
             <>
               <div className="setting">
@@ -373,7 +393,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     </button>
                   )}
                 </div>
-                <div className="hint">The vault's notes and [[links]], as a graph you can click into.</div>
+                <div className="hint">Your notes and their links, as a graph you can click.</div>
               </div>
               {showVault && <VaultDialog onClose={() => setShowVault(false)} />}
 
@@ -383,7 +403,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   value={config.defaultAgent}
                   onChange={(v) => onChange({ defaultAgent: v as Agent })}
                   menuWidth={300}
-                  options={agents.map((a) => ({
+                  options={list.map((a) => ({
                     value: a.id,
                     label: a.label,
                     hint: a.available ? a.note : 'not installed',
@@ -410,7 +430,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.copyOnSelect}
                   onChange={(v) => onChange({ copyOnSelect: v })}
                   label="Selecting text in a pane copies it"
-                  hint={keyLabel(
+                  hint={keyLabel('Ctrl+C copies a highlight, Ctrl+V pastes.')}
+                  why={keyLabel(
                     'Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes.'
                   )}
                 />
@@ -418,13 +439,15 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.mouseSelect}
                   onChange={(v) => onChange({ mouseSelect: v })}
                   label="A drag always selects text"
-                  hint="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing. Turn this off to give them the drag back. The wheel scrolls this pane either way."
+                  hint="Off hands the drag back to the agent."
+                  why="Claude Code and Codex ask for the mouse, which leaves a drag selecting nothing. Turn this off to give them the drag back. The wheel scrolls this pane either way."
                 />
                 <Switch
                   checked={config.clickMovesCursor}
                   onChange={(v) => onChange({ clickMovesCursor: v })}
                   label="Click moves the cursor"
-                  hint={
+                  hint="A click on the line you are typing moves the cursor there."
+                  why={
                     'A CLI’s prompt is drawn text, so a click cannot place a caret there - it is sent as the arrow keys that would have reached the same spot. A plain click works along the line you are typing, wrapped rows included, and sends left and right only. ' +
                     (isMac ? 'Option-click' : 'Alt-click') +
                     ' reaches other lines too, and is held behind the modifier because in a plain shell an up-arrow recalls the last command instead of moving.'
@@ -434,61 +457,24 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.autoFixUi}
                   onChange={(v) => onChange({ autoFixUi: v })}
                   label="Repair a pane's display after a resize"
-                  hint={keyLabel(
-                    "Makes the agent repaint its whole frame once the size settles, so a resize cannot leave torn boxes behind. Ctrl+Shift+L does it on demand."
+                  hint={keyLabel('Repaints a torn frame. Ctrl+Shift+L does it now.')}
+                  why={keyLabel(
+                    'Makes the agent repaint its whole frame once the size settles, so a resize cannot leave torn boxes behind. Ctrl+Shift+L does it on demand.'
                   )}
                 />
                 <Switch
-                  checked={config.notifyOnIdle}
-                  onChange={(v) => onChange({ notifyOnIdle: v })}
-                  label="Notify me when a background session goes quiet"
-                  hint="Taskbar flash plus a system notification, only while the app is not focused."
+                  checked={config.confirmClose}
+                  onChange={(v) => onChange({ confirmClose: v })}
+                  label="Ask before closing a running session"
+                  hint="Exited panes always close without asking."
                 />
-                <Switch
-                  checked={config.soundOnIdle}
-                  onChange={(v) => onChange({ soundOnIdle: v })}
-                  label="Play a sound when a session stops or waits for you"
-                  hint="Off unless you turn it on. Covers a finished turn, a turn gone silent, a question and the terminal bell. Which sound each one makes is on the Sounds tab."
-                />
-                <Switch
-                  checked={config.telegramAsk}
-                  onChange={(v) => onChange({ telegramAsk: v })}
-                  label="Send an error that stopped a pane to Telegram"
-                  hint="An error like an expired login or a used-up credit balance stops the run and nothing retries it. A usage limit is not sent here: once it resets, the chats it stopped are continued and one TaskDriver phone notification says how many carried on. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
-                />
-                <Switch
-                  checked={config.bellAlert}
-                  onChange={(v) => onChange({ bellAlert: v })}
-                  label="Say something when a pane rings its bell"
-                  hint="A CLI that rings the terminal bell is asking for a person - a prompt it needs answered, a build that failed. The pane marks itself and plays its sound. Its own switch because a chatty CLI must be mutable without muting the turn chime."
-                />
-                <div className="setting">
-                  <label>Warn me when a running turn goes silent</label>
-                  <Select
-                    value={String(config.silenceAlertMin)}
-                    onChange={(v) => onChange({ silenceAlertMin: Number(v) })}
-                    menuWidth={240}
-                    options={[
-                      { value: '2', label: 'after 2 minutes' },
-                      { value: '5', label: 'after 5 minutes' },
-                      { value: '10', label: 'after 10 minutes' },
-                      { value: '30', label: 'after 30 minutes' },
-                      { value: '0', label: 'never' }
-                    ]}
-                  />
-                  <div className="hint">
-                    Only ever about a pane whose clock is still running: the agent is supposed to be
-                    working and has printed nothing at all. A pane sitting at an idle prompt is
-                    silent all day and never counts.
-                  </div>
-                </div>
                 <div className="setting">
                   <label>Feature notes</label>
                   <div className="setting-row">
                     <span className="hint">
                       {config.hiddenBlurbs?.length
-                        ? `${config.hiddenBlurbs.length} of ${BLURBS.length} hidden. Each one is the line at the top of a feature saying what it is.`
-                        : `All ${BLURBS.length} showing. Each is the line at the top of a feature saying what it is - close one with its × and it stays closed.`}
+                        ? `${config.hiddenBlurbs.length} of ${BLURBS.length} hidden.`
+                        : `All ${BLURBS.length} showing.`}
                     </span>
                     <button
                       className="ghost small"
@@ -498,171 +484,26 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       Show them all again
                     </button>
                   </div>
+                  <Why>
+                    Each is the line at the top of a feature saying what it is - close one with
+                    its × and it stays closed.
+                  </Why>
                 </div>
                 <Switch
-                  checked={config.gameMode.enabled}
-                  onChange={(v) => onChange({ gameMode: { ...config.gameMode, enabled: v } })}
-                  label="Stay out of the way while a game is running"
-                  hint="Windows takes a fullscreen game off the screen whenever a window appears above it, so while one of the games below is running PaneForge opens no windows, flashes nothing and holds its update restart until you are done. The chime still plays."
+                  checked={config.tips?.enabled ?? DEFAULT_TIPS.enabled}
+                  onChange={(v) => onChange({ tips: { ...DEFAULT_TIPS, ...config.tips, enabled: v } })}
+                  label="Show the occasional tip about what this app can do"
+                  hint="Now and then, one card naming something hard to find."
+                  why="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
                 />
-                <Switch
-                  checked={config.gameMode.manual}
-                  onChange={(v) => onChange({ gameMode: { ...config.gameMode, manual: v } })}
-                  label="Do not disturb, right now"
-                  hint="The same silence, on until you turn it off, whether or not a game is running."
-                />
-                <Switch
-                  checked={config.autoLane}
-                  onChange={(v) => onChange({ autoLane: v })}
-                  label="Give a second session in the same project its own lane"
-                  hint="Two agents in one folder overwrite each other's edits, race git and fight over the dev server port. The second session in a repo opens in a lane instead - <project>-a on branch lane-a, then -b, then -c - carrying your .env files, your local settings, and the installed node_modules (hardlinked a few seconds after the pane opens, so it costs no disk and deleting the lane never touches the original). It also gets its own PORT (one past whatever the project's dev script uses, also in PF_LANE_PORT) and the original folder's Claude history, memory and permissions instead of a blank slate. Click the lane chip on the pane to see what is in it and merge it back when the work is done."
-                />
-                <Switch
-                  checked={config.offloadWhenFull !== false}
-                  onChange={(v) => onChange({ offloadWhenFull: v })}
-                  label="Start a pane on a paired device when this machine is full"
-                  hint="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
-                />
-                <div className="setting">
-                  <label>Start new work on the other machine when the project is on GitHub</label>
-                  <div className="pickrow">
-                    {(
-                      [
-                        ['auto', 'Auto'],
-                        ['always', 'Always'],
-                        ['never', 'Never']
-                      ] as const
-                    ).map(([value, word]) => (
-                      <button
-                        key={value}
-                        className={`chip pick${preferRemoteOf(config.autoHandoff) === value ? ' on' : ''}`}
-                        onClick={() =>
-                          onChange({
-                            autoHandoff: {
-                              ...DEFAULT_AUTO_HANDOFF,
-                              ...config.autoHandoff,
-                              preferRemote: value
-                            }
-                          })
-                        }
-                      >
-                        {word}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="hint">
-                    Everything below waits for something to go wrong - this machine running
-                    out of memory, or a pane sitting untouched for a quarter of an hour -
-                    and by then it has already paid for the agent it is about to move. This
-                    is the same answer given at the moment it is free: a pane that has not
-                    started yet has no conversation and nothing on screen to lose, so if the
-                    project is one the other machine also has, the agent can start over
-                    there and this screen gets the picture of it. Auto never does that on
-                    its own: a pane you open starts here, and only a pane already running
-                    is paused or moved when this machine runs short. Always sends every new
-                    pane it can; Never keeps it all here. A folder that is
-                    not on GitHub, one the other machine does not have, a project you have
-                    kept here, and anything driving a browser on this screen all stay,
-                    whichever you pick - and if the other machine does not answer within
-                    eight seconds the pane opens here and says so.
-                  </p>
-                </div>
-                <Switch
-                  checked={config.autoHandoff?.enabled !== false}
-                  onChange={(v) =>
-                    onChange({
-                      autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
-                    })
-                  }
-                  label="Move unfinished work to a paired device when this machine is full"
-                  hint="Ongoing work can move when its project is available on the other device. It waits for the current turn, background work and subagents, then shows a countdown you can stop. Finished or stopped conversations stay here and close into Review when safe. Questions, unsent prompts, local files and work using this screen stay here."
-                />
-                {config.autoHandoff?.enabled !== false && (
-                  <div className="setting">
-                    <label>Panes this machine runs itself</label>
-                    <input
-                      className="search"
-                      type="number"
-                      min={0}
-                      max={64}
-                      step={1}
-                      value={config.autoHandoff?.keepLocal ?? DEFAULT_AUTO_HANDOFF.keepLocal}
-                      onChange={(e) =>
-                        onChange({
-                          autoHandoff: {
-                            ...DEFAULT_AUTO_HANDOFF,
-                            ...config.autoHandoff,
-                            keepLocal: Number(e.target.value)
-                          }
-                        })
-                      }
-                    />
-                    <p className="hint">
-                      Above this many panes, portable unfinished work can move to a paired
-                      device after its turn and background work finish. Completed work stays
-                      here. 0 turns the budget off; without an online paired device nothing moves.
-                    </p>
-                  </div>
-                )}
-                {config.autoHandoff?.enabled !== false &&
-                  (config.autoHandoff?.keepHere ?? []).length > 0 && (
-                    <div className="setting">
-                      <label>Projects that never leave this machine</label>
-                      <div className="keephere">
-                        {(config.autoHandoff?.keepHere ?? []).map((name) => (
-                          <button
-                            key={name}
-                            className="chip keephere-chip"
-                            title={`Stop holding ${name} here - it may be moved to a paired machine again`}
-                            onClick={() =>
-                              onChange({
-                                autoHandoff: {
-                                  ...DEFAULT_AUTO_HANDOFF,
-                                  ...config.autoHandoff,
-                                  keepHere: (config.autoHandoff?.keepHere ?? []).filter(
-                                    (n) => n !== name
-                                  )
-                                }
-                              })
-                            }
-                          >
-                            {name} <span className="keephere-x">✕</span>
-                          </button>
-                        ))}
-                      </div>
-                      <p className="hint">
-                        Added by &quot;Keep it here&quot; on the memory card, for work only this
-                        device can do - its own Keychain, its own scheduled jobs, a browser on
-                        this screen. A project listed here is refused by every rule above: the
-                        budget, the pressure sweep and the idle clock. Press one to take it off
-                        the list. The list is empty, and this row is hidden, until something is
-                        on it.
-                      </p>
-                    </div>
-                  )}
-                {config.autoHandoff?.enabled !== false && (
-                  <Switch
-                    checked={(config.autoHandoff?.offloadIdleMinutes ?? IDLE_OFFLOAD_MINUTES) > 0}
-                    onChange={(v) =>
-                      onChange({
-                        autoHandoff: {
-                          ...DEFAULT_AUTO_HANDOFF,
-                          ...config.autoHandoff,
-                          offloadIdleMinutes: v ? IDLE_OFFLOAD_MINUTES : 0
-                        }
-                      })
-                    }
-                    label="...and move quiet unfinished work even when there is still room"
-                    hint={`After ${IDLE_OFFLOAD_MINUTES} quiet minutes, a portable conversation with recorded unfinished work can move to a paired device. Finished conversations stay here. Questions, background jobs, subagents and the pane you are using prevent a move.`}
-                  />
-                )}
                 <Switch
                   checked={(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled)}
                   onChange={(v) =>
                     onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, enabled: v } })
                   }
                   label="Let the little one keep an eye on this machine"
-                  hint="Everything above happens silently - panes are trimmed, moved and closed by three timers whose only output is a line in a console nobody has open. This is the face on them: it walks to the pane it is talking about, says what was done in a bubble, and offers a press before anything is closed. It answers typed questions about this window too - 'what are the two biggest', 'close the idle ones', 'what is pane 3' - out of readings the app already holds, with no model and no request to anywhere. It never takes focus, never opens a dialog, and it is silent until you press the speaker on its bubble."
+                  hint="A face that says what the app did by itself."
+                  why="Panes are trimmed, moved and closed by timers whose only output is a line in a console nobody has open. This is the face on them: it walks to the pane it is talking about, says what was done in a bubble, and offers a press before anything is closed. It answers typed questions about this window too - 'what are the two biggest', 'close the idle ones', 'what is pane 3' - out of readings the app already holds, with no model and no request to anywhere. It never takes focus, never opens a dialog, and it is silent until you press the speaker on its bubble."
                 />
                 {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
                   <Switch
@@ -671,7 +512,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, roam: v } })
                     }
                     label="...and let it wander over to the pane it means, and run about now and then"
-                    hint="Walking to the card is how it says WHICH pane without you reading an id, and every nine minutes or so it chases a ball along the bottom of the window - only ever while it has nothing to say, is where the app put it, and somebody is looking at this window. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
+                    hint="Off parks it in the bottom-left corner."
+                    why="Walking to the card is how it says WHICH pane without you reading an id, and every nine minutes or so it chases a ball along the bottom of the window - only ever while it has nothing to say, is where the app put it, and somebody is looking at this window. Off parks it in the bottom-left corner; the bubble and everything you can ask it are unchanged."
                   />
                 )}
                 {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
@@ -683,12 +525,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         onChange({ mascot: { ...DEFAULT_MASCOT, ...config.mascot, pet } })
                       }
                     />
-                    <p className="hint">
+                    <Why>
                       Ten of them, and they cost the same: one drawing, in layers, where the
                       movement is which layer is showing rather than anything being redrawn.
                       Only the one you pick is ever on screen, and all of it stops while the
                       window is minimised.
-                    </p>
+                    </Why>
                   </div>
                 )}
                 {(config.mascot?.enabled ?? DEFAULT_MASCOT.enabled) && (
@@ -711,197 +553,91 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         })
                       }
                     />
-                    <p className="hint">
-                      Seconds. Everything it says is a reading - which pane closed, what it
-                      was working on, how long ago - and a reading left on screen stops being
-                      one: it becomes a box over the corner of the window saying something
-                      that was true a while ago. The clock restarts while you are typing at
-                      it, and a countdown before a pane is closed is never taken away early,
-                      because the press that stops the close is on it. 0 leaves everything up
-                      until you press it away.
-                    </p>
+                    <span className="hint">Seconds. 0 leaves it up until you press it away.</span>
+                    <Why>
+                      Everything it says is a reading - which pane closed, what it was working
+                      on, how long ago - and a reading left on screen stops being one: it
+                      becomes a box over the corner of the window saying something that was
+                      true a while ago. The clock restarts while you are typing at it, and a
+                      countdown before a pane is closed is never taken away early, because the
+                      press that stops the close is on it.
+                    </Why>
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {tab === 'alerts' && (
+            <>
+              <div className="switches">
                 <Switch
-                  checked={config.tips?.enabled ?? DEFAULT_TIPS.enabled}
-                  onChange={(v) => onChange({ tips: { ...DEFAULT_TIPS, ...config.tips, enabled: v } })}
-                  label="Show the occasional tip about what this app can do"
-                  hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
+                  checked={config.notifyOnIdle}
+                  onChange={(v) => onChange({ notifyOnIdle: v })}
+                  label="Notify me when a background session goes quiet"
+                  hint={(isMac ? 'Dock bounce' : 'Taskbar flash') + ' and a notification, while you are elsewhere.'}
                 />
                 <Switch
-                  checked={(config.reclaim?.idleSleepMinutes ?? 0) > 0}
-                  onChange={(v) =>
-                    onChange({
-                      reclaim: {
-                        ...DEFAULT_RECLAIM,
-                        ...config.reclaim,
-                        enabled: true,
-                        idleSleepMinutes: v ? IDLE_SLEEP_MINUTES : 0
-                      }
-                    })
-                  }
-                  label="Put quiet panes to sleep when this machine is low on memory"
-                  hint="Off: a finished pane closes into Review instead, and one that is not finished stays awake. Turn on to rest quiet panes when memory is short - a resting pane has its agent stopped and keeps its card, its screen and its conversation, and a press wakes it. Never the pane you are in, one that is working or running something, or one holding a question."
+                  checked={config.bellAlert}
+                  onChange={(v) => onChange({ bellAlert: v })}
+                  label="Say something when a pane rings its bell"
+                  hint="A CLI asking for a person marks its pane."
+                  why="A CLI that rings the terminal bell is asking for a person - a prompt it needs answered, a build that failed. The pane marks itself and plays its sound. Its own switch because a chatty CLI must be mutable without muting the turn chime."
                 />
-                <Switch
-                  checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
-                  onChange={(v) =>
-                    onChange({
-                      reclaim: {
-                        ...DEFAULT_RECLAIM,
-                        ...config.reclaim,
-                        enabled: true,
-                        idleCloseMinutes: v ? IDLE_CLOSE_MINUTES : 0
-                      }
-                    })
-                  }
-                  label="Close a pane nobody has touched for a while"
-                  hint={`A pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes closes into Review, because an idle agent costs its ~190 MB the whole time it sits there: its reply stays readable in Review and Continue brings the conversation back. Never the pane you are in, one you have not read yet, one that is working or running something, or one holding a question. Off, a pane only closes when this machine is out of memory.`}
-                />
-                {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
-                  <div className="setting">
-                    <label>Close after (minutes)</label>
-                    <input
-                      className="search"
-                      type="number"
-                      min={1}
-                      max={1440}
-                      step={1}
-                      value={config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES}
-                      onChange={(e) =>
-                        onChange({
-                          reclaim: {
-                            ...DEFAULT_RECLAIM,
-                            ...config.reclaim,
-                            enabled: true,
-                            idleCloseMinutes: Number(e.target.value)
-                          }
-                        })
-                      }
-                    />
-                  </div>
-                )}
-                <Switch
-                  checked={config.deadDev?.enabled !== false}
-                  onChange={(v) =>
-                    onChange({ deadDev: { ...DEFAULT_DEAD_DEV, ...config.deadDev, enabled: v } })
-                  }
-                  label="Close a dev server that is serving nothing"
-                  hint={`A dev server that has lost its port - a second copy started while the first still had it, or one whose window went away - keeps a compiler, a file watcher and a few hundred MB running while nothing can reach it. On, a server holding no connection at all for a minute and a half gets a ${config.deadDev?.countdownSeconds ?? DEFAULT_DEAD_DEV.countdownSeconds}-second card in the corner naming the project and the port, and is closed if nobody says otherwise. It never touches one that anything is connected to, and never one that launchd or a Windows service keeps alive, because that one comes straight back.`}
-                />
-                <Switch
-                  checked={config.autoCloseDone !== false}
-                  onChange={(v) => onChange({ autoCloseDone: v })}
-                  label="Close a pane once its work is finished"
-                  hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after a minute of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
-                />
-                <Switch
-                  checked={config.modelAdvice !== false}
-                  onChange={(v) => onChange({ modelAdvice: v })}
-                  label="Suggest a lighter or stronger model for a new chat's first ask"
-                  hint="Only the very first thing you type into a fresh Claude Code chat, before anything has been asked of it. A quick lookup or a small edit gets offered a lower effort, or a cheaper model when the ask is really just a question; a hard, multi-file or repeated-failure ask gets offered a stronger one. It only ever suggests - nothing switches until you press Switch, and it never says anything mid-conversation, where a model change would resend the whole chat."
-                />
-                <Switch
-                  checked={config.autoAnswer?.enabled === true}
-                  onChange={(v) =>
-                    onChange({
-                      autoAnswer: { ...DEFAULT_AUTO_ANSWER, ...config.autoAnswer, enabled: v }
-                    })
-                  }
-                  label="Answer an agent's question for me when the answer is obvious"
-                  hint="A CLI that asks 'may I do this?' stops until somebody presses return, and at the desk that press is usually a formality. This reads the options and presses the one that plainly means go on - a single 'Yes'-shaped answer and nothing else. It never picks an option that widens permission ('and don't ask again'), never picks one that stops or asks for a sentence back, and leaves anything with no obvious answer on screen as buttons. A question is only answered after it has sat still for a moment, so you can still reach it first, and only once - a press that does not take is left alone rather than repeated."
-                />
-                {config.autoAnswer?.enabled === true && (
+                <div className="setting">
+                  <label>Warn me when a running turn goes silent</label>
+                  <Select
+                    value={String(config.silenceAlertMin)}
+                    onChange={(v) => onChange({ silenceAlertMin: Number(v) })}
+                    menuWidth={240}
+                    options={[
+                      { value: '2', label: 'after 2 minutes' },
+                      { value: '5', label: 'after 5 minutes' },
+                      { value: '10', label: 'after 10 minutes' },
+                      { value: '30', label: 'after 30 minutes' },
+                      { value: '0', label: 'never' }
+                    ]}
+                  />
+                  <Why>
+                    Only ever about a pane whose clock is still running: the agent is supposed to be
+                    working and has printed nothing at all. A pane sitting at an idle prompt is
+                    silent all day and never counts.
+                  </Why>
+                </div>
+                {facts.telegram && (
                   <Switch
-                    checked={config.autoAnswer?.anyQuestion === true}
-                    onChange={(v) =>
-                      onChange({
-                        autoAnswer: {
-                          ...DEFAULT_AUTO_ANSWER,
-                          ...config.autoAnswer,
-                          anyQuestion: v
-                        }
-                      })
-                    }
-                    label="...and take the CLI's own default for the rest"
-                    hint="A question with several real answers ('which of these three shapes?') is a decision you are being asked to make, so by default it waits for you. On, the app takes the row the CLI's own arrow is already on - its preference, not one invented here - and keeps the run moving. The two refusals above still hold."
+                    checked={config.telegramAsk}
+                    onChange={(v) => onChange({ telegramAsk: v })}
+                    label="Send an error that stopped a pane to Telegram"
+                    hint="An error nothing will retry reaches your phone."
+                    why="An error like an expired login or a used-up credit balance stops the run and nothing retries it. A usage limit is not sent here: once it resets, the chats it stopped are continued and one TaskDriver phone notification says how many carried on. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
                   />
                 )}
-                {config.autoAnswer?.enabled === true && (
-                  <Switch
-                    checked={config.autoAnswer?.holdWhileWatching !== false}
-                    onChange={(v) =>
-                      onChange({
-                        autoAnswer: {
-                          ...DEFAULT_AUTO_ANSWER,
-                          ...config.autoAnswer,
-                          holdWhileWatching: v
-                        }
-                      })
-                    }
-                    label="...but never while you are looking at this window"
-                    hint="The wait exists so somebody who disagrees can reach the pane first, which only means anything while nobody is here. On, nothing is pressed for as long as this window has the keyboard - the pane says which option it would press and that it is holding - and the full wait starts from the moment you look away. That is also what makes the Telegram message answerable: the question only ever reaches a phone with this window in the background."
-                  />
-                )}
-                {config.autoAnswer?.enabled === true && (
-                  <div className="setting">
-                    <label>Wait before answering</label>
-                    <Select
-                      value={String(config.autoAnswer?.waitMs ?? DEFAULT_AUTO_ANSWER.waitMs)}
-                      onChange={(v) =>
-                        onChange({
-                          autoAnswer: {
-                            ...DEFAULT_AUTO_ANSWER,
-                            ...config.autoAnswer,
-                            waitMs: Number(v)
-                          }
-                        })
-                      }
-                      menuWidth={260}
-                      options={[
-                        { value: '1200', label: '1.2 seconds', hint: 'barely a pause' },
-                        { value: '3000', label: '3 seconds' },
-                        { value: '5000', label: '5 seconds' },
-                        { value: '10000', label: '10 seconds' },
-                        { value: '30000', label: '30 seconds', hint: 'plenty of time to disagree' }
-                      ]}
-                    />
-                    <span className="hint">
-                      The pane counts this down on the question itself and names the option it is
-                      about to press, so an answer never arrives out of nowhere. Pressing any
-                      button, or arrowing at the desk, cancels it.
-                    </span>
-                  </div>
-                )}
-                <Switch
-                  checked={config.confirmClose}
-                  onChange={(v) => onChange({ confirmClose: v })}
-                  label="Ask before closing a running session"
-                  hint="Exited panes always close without a prompt."
-                />
-                <Switch
-                  checked={config.launchAtLogin}
-                  onChange={(v) => onChange({ launchAtLogin: v })}
-                  label="Start PaneForge when the computer starts"
-                  hint="Re-applied on every launch, not only when this is switched. The Windows Run entry is exactly the kind of thing an installer or a cleanup tool removes, and its absence reads as 'it did not reopen after a restart' with this switch still showing On."
-                />
                 {isWindows && (
                   <Switch
-                    checked={config.desktopShortcut !== false}
-                    onChange={(v) => onChange({ desktopShortcut: v })}
-                    label="Keep a PaneForge shortcut on the Desktop"
-                    hint="A launch that finds the shortcut missing puts it back. Our own installer used to delete it on every update, and Windows' maintenance task removes desktop shortcuts it decides are broken - either way the app looks uninstalled. An existing shortcut is never rewritten."
+                    checked={config.gameMode.enabled}
+                    onChange={(v) => onChange({ gameMode: { ...config.gameMode, enabled: v } })}
+                    label="Stay out of the way while a game is running"
+                    hint="No windows and no flashing while a game runs."
+                    why="Windows takes a fullscreen game off the screen whenever a window appears above it, so while one of the games below is running PaneForge opens no windows, flashes nothing and holds its update restart until you are done. The chime still plays."
                   />
                 )}
                 <Switch
-                  checked={config.saveHistory}
-                  onChange={(v) => onChange({ saveHistory: v })}
-                  label="Keep a searchable transcript of every pane"
-                  hint={`Stored on this machine only. Deleted after ${config.historyDays || '∞'} days.`}
+                  checked={config.gameMode.manual}
+                  onChange={(v) => onChange({ gameMode: { ...config.gameMode, manual: v } })}
+                  label="Do not disturb, right now"
+                  hint="No new windows or flashing until you turn it off."
+                />
+                <Switch
+                  checked={config.soundOnIdle}
+                  onChange={(v) => onChange({ soundOnIdle: v })}
+                  label="Play a sound when a session stops or waits for you"
+                  hint="Which sound each one makes is just below."
+                  why="Off unless you turn it on. Covers a finished turn, a turn gone silent, a question and the terminal bell."
                 />
               </div>
 
-              {config.gameMode.enabled && (
+              {isWindows && config.gameMode.enabled && (
                 <div className="setting">
                   <label>Games to watch for</label>
                   <input
@@ -922,13 +658,17 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       })
                     }
                   />
-                  <span className="hint">
-                    Process names as they appear in Task Manager. Leave it empty for the
-                    built-in list (CS2, Dota, Valorant, Fortnite, Apex, Rust, GTA V, Elden Ring
-                    and a few more).
-                  </span>
+                  <span className="hint">Names as Task Manager shows them. Empty uses the built-in list.</span>
+                  <Why>
+                    Leave it empty for the built-in list (CS2, Dota, Valorant, Fortnite, Apex,
+                    Rust, GTA V, Elden Ring and a few more).
+                  </Why>
                 </div>
               )}
+
+              <SoundsTab config={config} onChange={onChange} />
+
+              {facts.discord && <DiscordTab config={config} onChange={onChange} />}
             </>
           )}
 
@@ -943,7 +683,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   </button>
                 </div>
                 <div className="agent-grid">
-                  {agents.map((a) => (
+                  {list.map((a) => (
                     <div key={a.id} className={'agent-card' + (a.available ? '' : ' off')}>
                       <AgentLogo id={a.id} spec={a} size={22} tile muted={!a.available} />
                       <span className="agent-name">
@@ -1043,88 +783,13 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     </div>
                   ))}
                 </div>
-                {/*
-                  One field per provider, drawn off KEY_PROVIDERS rather than written out
-                  here: a provider added to the catalogue has to reach this screen by
-                  itself, or an agent ships with nowhere to authenticate from and fails as
-                  a 401 inside a pane that looks healthy.
-
-                  Password fields because these are read over somebody's shoulder in a
-                  room, not because they are secret from the machine - they are in
-                  config.json beside the pairing code, same as every other credential here.
-                */}
-                {KEY_PROVIDERS.map((p) => (
-                  <div className="setting" key={p.id}>
-                    <label>{p.label} key</label>
-                    <input
-                      type="password"
-                      className="search"
-                      placeholder={p.hint}
-                      value={config.providerKeys?.[p.id] ?? ''}
-                      onChange={(e) =>
-                        onChange({ providerKeys: { ...(config.providerKeys ?? {}), [p.id]: e.target.value } })
-                      }
-                    />
-                    <span className="hint">
-                      {p.note} Left blank, the agents that ask for it start on whatever login this
-                      machine already has.{' '}
-                      <button className="ghost small" onClick={() => api.openExternal(p.url)}>
-                        Get a key
-                      </button>
-                    </span>
-                  </div>
-                ))}
-                {/*
-                  The key fields above are what a pane authenticates WITH. This is the other
-                  half: what it may read. An agent pointed at another provider posts every
-                  file it opens to that provider, and a stealth model's provider states that
-                  it RETAINS what it is sent - so the control that matters is the folder, and
-                  it has to be decided before the pty exists. shared/paneTrust.ts.
-
-                  An allowlist rather than a denylist: a list of forbidden places is wrong
-                  the day a new repo is cloned, and it fails silently - the pane opens and
-                  the secret leaves. This fails the other way, with a named refusal.
-                */}
-                <div className="setting">
-                  <Switch
-                    label="Confine a third-party model to certain folders"
-                    hint="An agent on OpenRouter, DeepSeek, Z.ai or Grok posts every file it opens to that provider - and a stealth model's provider keeps what it is sent. With this on, such a pane will only open inside the folders below."
-                    checked={!!config.paneTrust?.restrictThirdParty}
-                    onChange={(v) =>
-                      onChange({ paneTrust: { ...(config.paneTrust ?? {}), restrictThirdParty: v } })
-                    }
-                  />
-                  <textarea
-                    className="search"
-                    rows={4}
-                    spellCheck={false}
-                    placeholder={'~/Projects/PaneForge\n~/Projects/toolstash'}
-                    value={(config.paneTrust?.allowedRoots ?? []).join('\n')}
-                    onChange={(e) =>
-                      onChange({
-                        paneTrust: {
-                          ...(config.paneTrust ?? {}),
-                          allowedRoots: e.target.value
-                            .split('\n')
-                            .map((r) => r.trim())
-                            .filter(Boolean)
-                        }
-                      })
-                    }
-                  />
-                  <span className="hint">
-                    One folder per line; everything under it counts. Leave the switch off and
-                    nothing is confined - which is what every desk that has not asked for this
-                    gets. First-party panes are never confined.
-                  </span>
-                </div>
                 <div className="setting-row">
-                  <span className="hint">Any other CLI can be added - it runs in a real terminal pane.</span>
+                  <span className="hint">Any other CLI can run in a pane too.</span>
                   <button className="ghost" onClick={() => addCustom(config, onChange)}>
                     Add agent
                   </button>
                 </div>
-                {installing && (
+                {installing && installing !== '__voice__' && (
                   <>
                     <InstallConsole agentId={installing} onDone={onInstalled} />
                     <div className="setting-row">
@@ -1140,12 +805,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
               <div className="setting">
                 <label>Default model per agent</label>
-                <span className="hint">
-                  Used for every new pane. Pin an exact version (Opus 5, Opus 4.8) so &quot;latest&quot; cannot
-                  change under you mid-project.
-                </span>
+                <span className="hint">Used for every new pane.</span>
                 <div className="model-rows">
-                  {agents
+                  {list
                     .filter((a) => a.available && supportsModel(a))
                     .map((a) => (
                       <div key={a.id} className="model-row">
@@ -1169,175 +831,324 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       </div>
                     ))}
                 </div>
-              </div>
-            </>
-          )}
-
-          {tab === 'voice' && (
-            <>
-              <div className="setting">
-                <label>Dictation</label>
-                <span className="hint">
-                  {keyLabel('Ctrl+Shift+Space')} and talk - it goes into the pane you are in, whichever
-                  agent is running there. Press it again to transcribe. While it is listening a red mic
-                  shows in that pane's top-right corner, and clicking that stops it too; nothing is drawn
-                  over a pane nobody is dictating into. On a phone, or any narrow window, the mic takes
-                  the whole screen instead: a 32-pixel target beside a terminal is not a thing you can
-                  hit at arm's length.
-                </span>
-              </div>
-
-              <div className="setting">
-                <label>Transcriber</label>
-                <Select
-                  value={config.voice.engine}
-                  onChange={(v) =>
-                    onChange({ voice: { ...config.voice, engine: v as VoiceConfig['engine'] } })
-                  }
-                  menuWidth={320}
-                  options={[
-                    { value: 'auto', label: 'Pick for me', hint: 'the ladder below' },
-                    {
-                      value: 'inapp',
-                      label: 'Whisper in this window',
-                      hint: `nothing to install; ${MODEL_MB[config.voice.model] ?? MODEL_MB.base} MB downloaded once`
-                    },
-                    {
-                      value: 'system',
-                      label: 'Whisper on this machine',
-                      hint: voiceStatus?.available ? `found: ${voiceStatus.engine}` : 'needs an install'
-                    },
-                    {
-                      value: 'browser',
-                      label: "The browser's speech service",
-                      hint: 'instant; sends audio off the device'
-                    }
-                  ]}
-                />
-                <span className="hint">{voiceChoice.why}</span>
-              </div>
-
-              <div className="setting">
-                <div className="setting-row">
-                  <span className="hint">
-                    {voiceStatus?.available
-                      ? `A whisper CLI is on PATH (${voiceStatus.engine}), so dictation uses it - it is faster than the in-window model and needs no download.`
-                      : 'No whisper CLI on PATH. Dictation runs Whisper in this window instead, which needs nothing installed. Installing one is optional and makes it faster.'}
-                  </span>
-                  {!voiceStatus?.available && (
-                    <button
-                      className="ghost"
-                      onClick={() => {
-                        setInstalling('__voice__')
-                        api.installVoice()
-                      }}
-                    >
-                      Install one anyway
-                    </button>
-                  )}
-                </div>
-                {installing === '__voice__' && (
-                  <InstallConsole
-                    agentId="__voice__"
-                    onDone={() => api.voiceStatus().then(setVoice)}
-                  />
-                )}
-              </div>
-
-              <div className="setting">
-                <label>Model</label>
-                <Select
-                  value={config.voice.model}
-                  onChange={(v) => onChange({ voice: { ...config.voice, model: v } })}
-                  menuWidth={300}
-                  options={[
-                    { value: 'tiny', label: 'tiny', hint: `fastest, roughest - ${MODEL_MB.tiny} MB` },
-                    { value: 'base', label: 'base', hint: `good default - ${MODEL_MB.base} MB` },
-                    { value: 'small', label: 'small', hint: `slower, better - ${MODEL_MB.small} MB` }
-                  ]}
-                />
-                <span className="hint">
-                  The size is the download the in-window transcriber makes the first time you use it, and
-                  never again. A whisper CLI on PATH ignores it and uses its own weights.
-                </span>
-              </div>
-
-              <div className="setting">
-                <label>Language</label>
-                <Select
-                  value={config.voice.language}
-                  onChange={(v) => onChange({ voice: { ...config.voice, language: v } })}
-                  menuWidth={240}
-                  options={[
-                    { value: 'auto', label: 'Detect automatically' },
-                    { value: 'en', label: 'English' },
-                    { value: 'ro', label: 'Romanian' },
-                    { value: 'es', label: 'Spanish' },
-                    { value: 'fr', label: 'French' },
-                    { value: 'de', label: 'German' }
-                  ]}
-                />
+                <Why>
+                  Pin an exact version (Opus 5, Opus 4.8) so &quot;latest&quot; cannot change under
+                  you mid-project.
+                </Why>
               </div>
 
               <div className="switches">
                 <Switch
+                  checked={config.modelAdvice !== false}
+                  onChange={(v) => onChange({ modelAdvice: v })}
+                  label="Suggest a lighter or stronger model for a new chat's first ask"
+                  hint="Only a suggestion: nothing switches until you press Switch."
+                  why="Only the very first thing you type into a fresh Claude Code chat, before anything has been asked of it. A quick lookup or a small edit gets offered a lower effort, or a cheaper model when the ask is really just a question; a hard, multi-file or repeated-failure ask gets offered a stronger one. It only ever suggests - nothing switches until you press Switch, and it never says anything mid-conversation, where a model change would resend the whole chat."
+                />
+                <Switch
+                  checked={config.autoAnswer?.enabled === true}
+                  onChange={(v) =>
+                    onChange({
+                      autoAnswer: { ...DEFAULT_AUTO_ANSWER, ...config.autoAnswer, enabled: v }
+                    })
+                  }
+                  label="Answer an agent's question for me when the answer is obvious"
+                  hint="Presses the one answer that plainly means go on."
+                  why="A CLI that asks 'may I do this?' stops until somebody presses return, and at the desk that press is usually a formality. This reads the options and presses the one that plainly means go on - a single 'Yes'-shaped answer and nothing else. It never picks an option that widens permission ('and don't ask again'), never picks one that stops or asks for a sentence back, and leaves anything with no obvious answer on screen as buttons. A question is only answered after it has sat still for a moment, so you can still reach it first, and only once - a press that does not take is left alone rather than repeated."
+                />
+                {config.autoAnswer?.enabled === true && (
+                  <Switch
+                    checked={config.autoAnswer?.anyQuestion === true}
+                    onChange={(v) =>
+                      onChange({
+                        autoAnswer: {
+                          ...DEFAULT_AUTO_ANSWER,
+                          ...config.autoAnswer,
+                          anyQuestion: v
+                        }
+                      })
+                    }
+                    label="...and take the CLI's own default for the rest"
+                    hint="Takes the option the CLI already has selected."
+                    why="A question with several real answers ('which of these three shapes?') is a decision you are being asked to make, so by default it waits for you. On, the app takes the row the CLI's own arrow is already on - its preference, not one invented here - and keeps the run moving. The two refusals above still hold."
+                  />
+                )}
+                {config.autoAnswer?.enabled === true && (
+                  <Switch
+                    checked={config.autoAnswer?.holdWhileWatching !== false}
+                    onChange={(v) =>
+                      onChange({
+                        autoAnswer: {
+                          ...DEFAULT_AUTO_ANSWER,
+                          ...config.autoAnswer,
+                          holdWhileWatching: v
+                        }
+                      })
+                    }
+                    label="...but never while you are looking at this window"
+                    hint="Nothing is pressed while this window has the keyboard."
+                    why="The wait exists so somebody who disagrees can reach the pane first, which only means anything while nobody is here. On, nothing is pressed for as long as this window has the keyboard - the pane says which option it would press and that it is holding - and the full wait starts from the moment you look away. That is also what makes the Telegram message answerable: the question only ever reaches a phone with this window in the background."
+                  />
+                )}
+                {config.autoAnswer?.enabled === true && (
+                  <div className="setting">
+                    <label>Wait before answering</label>
+                    <Select
+                      value={String(config.autoAnswer?.waitMs ?? DEFAULT_AUTO_ANSWER.waitMs)}
+                      onChange={(v) =>
+                        onChange({
+                          autoAnswer: {
+                            ...DEFAULT_AUTO_ANSWER,
+                            ...config.autoAnswer,
+                            waitMs: Number(v)
+                          }
+                        })
+                      }
+                      menuWidth={260}
+                      options={[
+                        { value: '1200', label: '1.2 seconds', hint: 'barely a pause' },
+                        { value: '3000', label: '3 seconds' },
+                        { value: '5000', label: '5 seconds' },
+                        { value: '10000', label: '10 seconds' },
+                        { value: '30000', label: '30 seconds', hint: 'plenty of time to disagree' }
+                      ]}
+                    />
+                    <Why>
+                      The pane counts this down on the question itself and names the option it is
+                      about to press, so an answer never arrives out of nowhere. Pressing any
+                      button, or arrowing at the desk, cancels it.
+                    </Why>
+                  </div>
+                )}
+                <Switch
                   checked={config.voice.enabled}
                   onChange={(v) => onChange({ voice: { ...config.voice, enabled: v } })}
                   label="Let me talk to a pane with the push-to-talk key, and the mic on a phone"
+                  hint={keyLabel('Ctrl+Shift+Space, talk, press it again to type it in.')}
+                  why={keyLabel(
+                    'Ctrl+Shift+Space and talk - it goes into the pane you are in, whichever agent is running there. Press it again to transcribe. While it is listening a red mic shows in that pane\'s top-right corner, and clicking that stops it too; nothing is drawn over a pane nobody is dictating into. On a phone, or any narrow window, the mic takes the whole screen instead: a 32-pixel target beside a terminal is not a thing you can hit at arm\'s length.'
+                  )}
                 />
               </div>
+
+              {config.voice.enabled && (
+                <>
+                  <div className="setting">
+                    <label>Transcriber</label>
+                    <Select
+                      value={config.voice.engine}
+                      onChange={(v) =>
+                        onChange({ voice: { ...config.voice, engine: v as VoiceConfig['engine'] } })
+                      }
+                      menuWidth={320}
+                      options={[
+                        { value: 'auto', label: 'Pick for me', hint: 'the fastest one here' },
+                        {
+                          value: 'inapp',
+                          label: 'Whisper in this window',
+                          hint: `nothing to install; ${MODEL_MB[config.voice.model] ?? MODEL_MB.base} MB downloaded once`
+                        },
+                        {
+                          value: 'system',
+                          label: 'Whisper on this machine',
+                          hint: voiceStatus?.available ? `found: ${voiceStatus.engine}` : 'needs an install'
+                        },
+                        {
+                          value: 'browser',
+                          label: "The browser's speech service",
+                          hint: 'instant; sends audio off the device'
+                        }
+                      ]}
+                    />
+                    <div className="setting-row">
+                      <span className="hint">{voiceChoice.why}</span>
+                      {!voiceStatus?.available && (
+                        <button
+                          className="ghost small"
+                          onClick={() => {
+                            setInstalling('__voice__')
+                            api.installVoice()
+                          }}
+                        >
+                          Install a faster one
+                        </button>
+                      )}
+                    </div>
+                    {installing === '__voice__' && (
+                      <InstallConsole
+                        agentId="__voice__"
+                        onDone={() => api.voiceStatus().then(setVoice)}
+                      />
+                    )}
+                    <Why>
+                      {voiceStatus?.available
+                        ? `A whisper CLI is on PATH (${voiceStatus.engine}), so dictation uses it - it is faster than the in-window model and needs no download.`
+                        : 'No whisper CLI on PATH. Dictation runs Whisper in this window instead, which needs nothing installed. Installing one is optional and makes it faster.'}
+                    </Why>
+                  </div>
+
+                  <div className="setting">
+                    <label>Model</label>
+                    <Select
+                      value={config.voice.model}
+                      onChange={(v) => onChange({ voice: { ...config.voice, model: v } })}
+                      menuWidth={300}
+                      options={[
+                        { value: 'tiny', label: 'tiny', hint: `fastest, roughest - ${MODEL_MB.tiny} MB` },
+                        { value: 'base', label: 'base', hint: `good default - ${MODEL_MB.base} MB` },
+                        { value: 'small', label: 'small', hint: `slower, better - ${MODEL_MB.small} MB` }
+                      ]}
+                    />
+                    <Why>
+                      The size is the download the in-window transcriber makes the first time you use
+                      it, and never again. A whisper CLI on PATH ignores it and uses its own weights.
+                    </Why>
+                  </div>
+
+                  <div className="setting">
+                    <label>Language</label>
+                    <Select
+                      value={config.voice.language}
+                      onChange={(v) => onChange({ voice: { ...config.voice, language: v } })}
+                      menuWidth={240}
+                      options={[
+                        { value: 'auto', label: 'Detect automatically' },
+                        { value: 'en', label: 'English' },
+                        { value: 'ro', label: 'Romanian' },
+                        { value: 'es', label: 'Spanish' },
+                        { value: 'fr', label: 'French' },
+                        { value: 'de', label: 'German' }
+                      ]}
+                    />
+                  </div>
+                </>
+              )}
+
+              {/*
+                Keys for the providers other than the CLIs' own logins, and the folder fence
+                for the panes that use them, folded away: most desks run on a subscription
+                login and never paste a key. Search opens the fold when a hit is inside it.
+              */}
+              <details className="discord-advanced" open={keysSet}>
+                <summary>Other model providers</summary>
+                {/*
+                  One field per provider, drawn off KEY_PROVIDERS rather than written out
+                  here: a provider added to the catalogue has to reach this screen by
+                  itself, or an agent ships with nowhere to authenticate from and fails as
+                  a 401 inside a pane that looks healthy.
+
+                  Password fields because these are read over somebody's shoulder in a
+                  room, not because they are secret from the machine - they are in
+                  config.json beside the pairing code, same as every other credential here.
+                */}
+                {KEY_PROVIDERS.map((p) => (
+                  <div className="setting" key={p.id}>
+                    <label>{p.label} key</label>
+                    <div className="setting-row">
+                      <input
+                        type="password"
+                        className="search"
+                        placeholder={p.hint}
+                        value={config.providerKeys?.[p.id] ?? ''}
+                        onChange={(e) =>
+                          onChange({ providerKeys: { ...(config.providerKeys ?? {}), [p.id]: e.target.value } })
+                        }
+                      />
+                      <button className="ghost small" onClick={() => api.openExternal(p.url)}>
+                        Get a key
+                      </button>
+                    </div>
+                    <span className="hint">{p.note}</span>
+                  </div>
+                ))}
+                {/*
+                  The key fields above are what a pane authenticates WITH. This is the other
+                  half: what it may read. An agent pointed at another provider posts every
+                  file it opens to that provider, and a stealth model's provider states that
+                  it RETAINS what it is sent - so the control that matters is the folder, and
+                  it has to be decided before the pty exists. shared/paneTrust.ts.
+
+                  An allowlist rather than a denylist: a list of forbidden places is wrong
+                  the day a new repo is cloned, and it fails silently - the pane opens and
+                  the secret leaves. This fails the other way, with a named refusal.
+                */}
+                <div className="setting">
+                  <Switch
+                    label="Confine a third-party model to certain folders"
+                    hint="Such a pane opens only inside the folders you list."
+                    why="An agent on OpenRouter, DeepSeek, Z.ai or Grok posts every file it opens to that provider - and a stealth model's provider keeps what it is sent. With this on, such a pane will only open inside the folders listed here. Left blank, the agents that ask for a key start on whatever login this machine already has. First-party panes are never confined."
+                    checked={!!config.paneTrust?.restrictThirdParty}
+                    onChange={(v) =>
+                      onChange({ paneTrust: { ...(config.paneTrust ?? {}), restrictThirdParty: v } })
+                    }
+                  />
+                  {!!config.paneTrust?.restrictThirdParty && (
+                    <>
+                      <textarea
+                        className="search"
+                        rows={4}
+                        spellCheck={false}
+                        placeholder={'~/Projects/PaneForge\n~/Projects/toolstash'}
+                        value={(config.paneTrust?.allowedRoots ?? []).join('\n')}
+                        onChange={(e) =>
+                          onChange({
+                            paneTrust: {
+                              ...(config.paneTrust ?? {}),
+                              allowedRoots: e.target.value
+                                .split('\n')
+                                .map((r) => r.trim())
+                                .filter(Boolean)
+                            }
+                          })
+                        }
+                      />
+                      <span className="hint">One folder per line; everything under it counts.</span>
+                    </>
+                  )}
+                </div>
+              </details>
             </>
           )}
 
-
-          {tab === 'discord' && <DiscordTab config={config} onChange={onChange} />}
-
           {tab === 'system' && (
             <>
-              <div className="setting">
-                <label>Administrator</label>
-                {admin?.supported ? (
-                  <>
-                    <span className="hint">
-                      {admin.elevated
-                        ? 'This window is running as administrator.'
-                        : 'Running as a normal user. Agents cannot stop admin-owned processes (a service on port 8000, for example).'}
-                    </span>
-                    <div className="switches">
-                      <Switch
-                        checked={admin.taskInstalled}
-                        onChange={toggleAdmin}
-                        label="Always start as administrator, with no UAC prompt"
-                        hint="Registers a Windows scheduled task once (one approval, ever) and points your shortcuts at it. Every agent pane then inherits admin rights."
-                      />
-                    </div>
-                    {admin.taskInstalled && (
-                      <span className="hint warn">
-                        Anything PaneForge launches runs elevated. Drag and drop from Explorer into an elevated
-                        window is blocked by Windows.
-                      </span>
-                    )}
-                    <div className="setting-row">
-                      <span className="hint">{busy === 'admin' ? 'Working...' : msg}</span>
-                      {!admin.elevated && admin.taskInstalled && (
-                        <button className="ghost" onClick={() => api.relaunchAsAdmin()}>
-                          Restart elevated now
-                        </button>
-                      )}
-                      {!admin.elevated && !admin.taskInstalled && (
-                        <button className="ghost" onClick={() => api.relaunchAsAdmin()}>
-                          Restart as admin (one prompt)
-                        </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
+              {/* Windows only: macOS has no no-prompt equivalent, and a row saying so is
+                  a row with nothing on it to press. */}
+              {admin?.supported && (
+                <div className="setting">
+                  <label>Administrator</label>
                   <span className="hint">
-                    macOS does not have a no-prompt equivalent. Agents that need root ask for a password
-                    themselves.
+                    {admin.elevated ? 'This window is running as administrator.' : 'Running as a normal user.'}
                   </span>
-                )}
-              </div>
+                  <div className="switches">
+                    <Switch
+                      checked={admin.taskInstalled}
+                      onChange={toggleAdmin}
+                      label="Always start as administrator, with no UAC prompt"
+                      hint="One Windows approval, ever. Every pane inherits it."
+                      why="Registers a Windows scheduled task once (one approval, ever) and points your shortcuts at it. Every agent pane then inherits admin rights. As a normal user, agents cannot stop admin-owned processes (a service on port 8000, for example)."
+                    />
+                  </div>
+                  {admin.taskInstalled && (
+                    <span className="hint warn">
+                      Everything it launches runs elevated; dragging files in from Explorer is blocked.
+                    </span>
+                  )}
+                  <div className="setting-row">
+                    <span className="hint">{busy === 'admin' ? 'Working...' : msg}</span>
+                    {!admin.elevated && admin.taskInstalled && (
+                      <button className="ghost" onClick={() => api.relaunchAsAdmin()}>
+                        Restart elevated now
+                      </button>
+                    )}
+                    {!admin.elevated && !admin.taskInstalled && (
+                      <button className="ghost" onClick={() => api.relaunchAsAdmin()}>
+                        Restart as admin (one prompt)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="setting">
                 <label>Updates</label>
@@ -1378,20 +1189,23 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     checked={!!config.devUpdates}
                     onChange={(v) => onChange({ devUpdates: v })}
                     label="Dev channel: take every build the moment it is cut"
-                    hint="New releases start as dev builds and everyone else updates only when one is promoted. On, this install is the proving ground - newer, sooner, less proven."
+                    hint="Newer, sooner, less proven."
+                    why="New releases start as dev builds and everyone else updates only when one is promoted. On, this install is the proving ground - newer, sooner, less proven."
                   />
                   <Switch
                     checked={config.restoreAfterUpdate}
                     onChange={(v) => onChange({ restoreAfterUpdate: v })}
                     label="Reopen my panes after an update restart"
-                    hint="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
+                    hint="An update feels like the app blinked."
+                    why="On, an update feels like the app blinked and every pane resumes its conversation. Off, a restart is a clean desk."
                   />
                   <Switch
                     checked={!!config.askAfterUpdate}
                     onChange={(v) => onChange({ askAfterUpdate: v })}
                     disabled={!config.restoreAfterUpdate}
                     label="…and ask first, like every other restart"
-                    hint="Off, an update restart is the one restart that never asks - it was the app's own idea, so it hands the desk straight back. On, it offers the panes exactly as a quit or a crash does."
+                    hint="Offers the panes, as a quit or a crash does."
+                    why="Off, an update restart is the one restart that never asks - it was the app's own idea, so it hands the desk straight back. On, it offers the panes exactly as a quit or a crash does."
                   />
                 </div>
               </div>
@@ -1410,20 +1224,282 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 />
               </div>
 
-              <div className="setting">
-                <label>Transcript retention</label>
-                <Select
-                  value={String(config.historyDays)}
-                  onChange={(v) => onChange({ historyDays: Number(v) })}
-                  menuWidth={220}
-                  options={[
-                    { value: '7', label: '7 days' },
-                    { value: '30', label: '30 days' },
-                    { value: '90', label: '90 days' },
-                    { value: '0', label: 'Keep everything' }
-                  ]}
+              <div className="switches">
+                <Switch
+                  checked={config.launchAtLogin}
+                  onChange={(v) => onChange({ launchAtLogin: v })}
+                  label="Start PaneForge when the computer starts"
+                  hint="Put back on every launch, not only when switched."
+                  why="Re-applied on every launch, not only when this is switched. The Windows Run entry is exactly the kind of thing an installer or a cleanup tool removes, and its absence reads as 'it did not reopen after a restart' with this switch still showing On."
+                />
+                {isWindows && (
+                  <Switch
+                    checked={config.desktopShortcut !== false}
+                    onChange={(v) => onChange({ desktopShortcut: v })}
+                    label="Keep a PaneForge shortcut on the Desktop"
+                    hint="A launch that finds it missing puts it back."
+                    why="Our own installer used to delete it on every update, and Windows' maintenance task removes desktop shortcuts it decides are broken - either way the app looks uninstalled. An existing shortcut is never rewritten."
+                  />
+                )}
+                <Switch
+                  checked={config.saveHistory}
+                  onChange={(v) => onChange({ saveHistory: v })}
+                  label="Keep a searchable transcript of every pane"
+                  hint={`Stored on this machine only. Deleted after ${config.historyDays || '∞'} days.`}
                 />
               </div>
+
+              {config.saveHistory && (
+                <div className="setting">
+                  <label>Transcript retention</label>
+                  <Select
+                    value={String(config.historyDays)}
+                    onChange={(v) => onChange({ historyDays: Number(v) })}
+                    menuWidth={220}
+                    options={[
+                      { value: '7', label: '7 days' },
+                      { value: '30', label: '30 days' },
+                      { value: '90', label: '90 days' },
+                      { value: '0', label: 'Keep everything' }
+                    ]}
+                  />
+                </div>
+              )}
+
+              <div className="switches">
+                <Switch
+                  checked={config.autoLane}
+                  onChange={(v) => onChange({ autoLane: v })}
+                  label="Give a second chat in the same project its own copy"
+                  hint="So two chats never overwrite each other's edits."
+                  why="Two agents in one folder overwrite each other's edits and fight over the dev server port. The second chat in a project opens in its own copy of the folder instead, carrying your .env files, your local settings and the installed packages (shared, so it costs no disk, and removing the copy never touches the original). It also gets its own port and the original folder's Claude history, memory and permissions. Press the copy's chip on the pane to see what is in it and bring the work back when it is done."
+                />
+                <Switch
+                  checked={config.autoCloseDone !== false}
+                  onChange={(v) => onChange({ autoCloseDone: v })}
+                  label="Close a pane once its work is finished"
+                  hint="After a minute unseen. Reopen it from Review."
+                  why="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after a minute of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
+                />
+                <Switch
+                  checked={(config.reclaim?.idleSleepMinutes ?? 0) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleSleepMinutes: v ? IDLE_SLEEP_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Put quiet panes to sleep when this machine is low on memory"
+                  hint="A sleeping pane keeps its card and screen; a press wakes it."
+                  why="Off: a finished pane closes into Review instead, and one that is not finished stays awake. Turn on to rest quiet panes when memory is short - a resting pane has its agent stopped and keeps its card, its screen and its conversation, and a press wakes it. Never the pane you are in, one that is working or running something, or one holding a question."
+                />
+                <Switch
+                  checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
+                  onChange={(v) =>
+                    onChange({
+                      reclaim: {
+                        ...DEFAULT_RECLAIM,
+                        ...config.reclaim,
+                        enabled: true,
+                        idleCloseMinutes: v ? IDLE_CLOSE_MINUTES : 0
+                      }
+                    })
+                  }
+                  label="Close a pane nobody has touched for a while"
+                  hint="Its reply stays in Review; Continue brings it back."
+                  why={`A pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes closes into Review, because an idle agent costs its ~190 MB the whole time it sits there: its reply stays readable in Review and Continue brings the conversation back. Never the pane you are in, one you have not read yet, one that is working or running something, or one holding a question. Off, a pane only closes when this machine is out of memory.`}
+                />
+                {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
+                  <div className="setting">
+                    <label>Close after (minutes)</label>
+                    <input
+                      className="search"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      step={1}
+                      value={config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES}
+                      onChange={(e) =>
+                        onChange({
+                          reclaim: {
+                            ...DEFAULT_RECLAIM,
+                            ...config.reclaim,
+                            enabled: true,
+                            idleCloseMinutes: Number(e.target.value)
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                )}
+                <Switch
+                  checked={config.deadDev?.enabled !== false}
+                  onChange={(v) =>
+                    onChange({ deadDev: { ...DEFAULT_DEAD_DEV, ...config.deadDev, enabled: v } })
+                  }
+                  label="Close a dev server that is serving nothing"
+                  hint="One nothing can reach closes after a countdown you can stop."
+                  why={`A dev server that has lost its port - a second copy started while the first still had it, or one whose window went away - keeps a compiler, a file watcher and a few hundred MB running while nothing can reach it. On, a server holding no connection at all for a minute and a half gets a ${config.deadDev?.countdownSeconds ?? DEFAULT_DEAD_DEV.countdownSeconds}-second card in the corner naming the project and the port, and is closed if nobody says otherwise. It never touches one that anything is connected to, and never one that launchd or a Windows service keeps alive, because that one comes straight back.`}
+                />
+              </div>
+
+              {/*
+                Everything that moves work to another machine needs one to move it to. With
+                nothing paired these rows can only ever do nothing, so they are not drawn;
+                the saved values still hold, and pairing a device brings the rows back.
+              */}
+              {paired && (
+                <div className="switches">
+                  <Switch
+                    checked={config.offloadWhenFull !== false}
+                    onChange={(v) => onChange({ offloadWhenFull: v })}
+                    label="Start a pane on a paired device when this machine is full"
+                    hint="Only once panes here use more memory than it has."
+                    why="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
+                  />
+                  <div className="setting">
+                    <label>Start new work on the other machine when the project is on GitHub</label>
+                    <div className="pickrow">
+                      {(
+                        [
+                          ['auto', 'Auto'],
+                          ['always', 'Always'],
+                          ['never', 'Never']
+                        ] as const
+                      ).map(([value, word]) => (
+                        <button
+                          key={value}
+                          className={`chip pick${preferRemoteOf(config.autoHandoff) === value ? ' on' : ''}`}
+                          onClick={() =>
+                            onChange({
+                              autoHandoff: {
+                                ...DEFAULT_AUTO_HANDOFF,
+                                ...config.autoHandoff,
+                                preferRemote: value
+                              }
+                            })
+                          }
+                        >
+                          {word}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="hint">Auto starts here; Always sends every new pane it can.</span>
+                    <Why>
+                      Everything below waits for something to go wrong - this machine running
+                      out of memory, or a pane sitting untouched for a quarter of an hour -
+                      and by then it has already paid for the agent it is about to move. This
+                      is the same answer given at the moment it is free: a pane that has not
+                      started yet has no conversation and nothing on screen to lose, so if the
+                      project is one the other machine also has, the agent can start over
+                      there and this screen gets the picture of it. Auto never does that on
+                      its own: a pane you open starts here, and only a pane already running
+                      is paused or moved when this machine runs short. Always sends every new
+                      pane it can; Never keeps it all here. A folder that is
+                      not on GitHub, one the other machine does not have, a project you have
+                      kept here, and anything driving a browser on this screen all stay,
+                      whichever you pick - and if the other machine does not answer within
+                      eight seconds the pane opens here and says so.
+                    </Why>
+                  </div>
+                  <Switch
+                    checked={config.autoHandoff?.enabled !== false}
+                    onChange={(v) =>
+                      onChange({
+                        autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
+                      })
+                    }
+                    label="Move unfinished work to a paired device when this machine is full"
+                    hint="Waits for the turn to end, then counts down first."
+                    why="Ongoing work can move when its project is available on the other device. It waits for the current turn, background work and subagents, then shows a countdown you can stop. Finished or stopped conversations stay here and close into Review when safe. Questions, unsent prompts, local files and work using this screen stay here."
+                  />
+                  {config.autoHandoff?.enabled !== false && (
+                    <div className="setting">
+                      <label>Panes this machine runs itself</label>
+                      <input
+                        className="search"
+                        type="number"
+                        min={0}
+                        max={64}
+                        step={1}
+                        value={config.autoHandoff?.keepLocal ?? DEFAULT_AUTO_HANDOFF.keepLocal}
+                        onChange={(e) =>
+                          onChange({
+                            autoHandoff: {
+                              ...DEFAULT_AUTO_HANDOFF,
+                              ...config.autoHandoff,
+                              keepLocal: Number(e.target.value)
+                            }
+                          })
+                        }
+                      />
+                      <span className="hint">Above this many, unfinished work can move. 0 means no limit.</span>
+                      <Why>
+                        Above this many panes, portable unfinished work can move to a paired
+                        device after its turn and background work finish. Completed work stays
+                        here. 0 turns the budget off; without an online paired device nothing moves.
+                      </Why>
+                    </div>
+                  )}
+                  {config.autoHandoff?.enabled !== false &&
+                    (config.autoHandoff?.keepHere ?? []).length > 0 && (
+                      <div className="setting">
+                        <label>Projects that never leave this machine</label>
+                        <div className="keephere">
+                          {(config.autoHandoff?.keepHere ?? []).map((name) => (
+                            <button
+                              key={name}
+                              className="chip keephere-chip"
+                              title={`Stop holding ${name} here - it may be moved to a paired machine again`}
+                              onClick={() =>
+                                onChange({
+                                  autoHandoff: {
+                                    ...DEFAULT_AUTO_HANDOFF,
+                                    ...config.autoHandoff,
+                                    keepHere: (config.autoHandoff?.keepHere ?? []).filter(
+                                      (n) => n !== name
+                                    )
+                                  }
+                                })
+                              }
+                            >
+                              {name} <span className="keephere-x">✕</span>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="hint">Press one to let it move again.</span>
+                        <Why>
+                          Added by &quot;Keep it here&quot; on the memory card, for work only this
+                          device can do - its own Keychain, its own scheduled jobs, a browser on
+                          this screen. A project listed here is refused by every rule above: the
+                          budget, the pressure sweep and the idle clock. The list is empty, and
+                          this row is hidden, until something is on it.
+                        </Why>
+                      </div>
+                    )}
+                  {config.autoHandoff?.enabled !== false && (
+                    <Switch
+                      checked={(config.autoHandoff?.offloadIdleMinutes ?? IDLE_OFFLOAD_MINUTES) > 0}
+                      onChange={(v) =>
+                        onChange({
+                          autoHandoff: {
+                            ...DEFAULT_AUTO_HANDOFF,
+                            ...config.autoHandoff,
+                            offloadIdleMinutes: v ? IDLE_OFFLOAD_MINUTES : 0
+                          }
+                        })
+                      }
+                      label="...and move quiet unfinished work even when there is still room"
+                      hint={`After ${IDLE_OFFLOAD_MINUTES} quiet minutes, even with memory to spare.`}
+                      why={`After ${IDLE_OFFLOAD_MINUTES} quiet minutes, a portable conversation with recorded unfinished work can move to a paired device. Finished conversations stay here. Questions, background jobs, subagents and the pane you are using prevent a move.`}
+                    />
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

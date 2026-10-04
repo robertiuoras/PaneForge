@@ -21,8 +21,8 @@ const COMPONENTS = resolve(root, 'src/renderer/src/components')
 /** Files whose whole contents belong to one tab. */
 const WHOLE_FILE = [
   ['AppearanceTab.tsx', 'appearance'],
-  ['SoundsTab.tsx', 'sounds'],
-  ['DiscordTab.tsx', 'discord']
+  ['SoundsTab.tsx', 'alerts'],
+  ['DiscordTab.tsx', 'alerts']
 ]
 
 /** Turn a JSX string literal back into the words a person sees. */
@@ -35,7 +35,8 @@ function plain(s) {
 }
 
 /**
- * The words of the `hint=` that belongs to the label on `at`, whatever shape it is in.
+ * The words of the `hint=` (or `why=`) that belongs to the label on `at`, whatever shape
+ * it is in.
  *
  * A literal is read directly; an expression is read for the words INSIDE it - every
  * quoted or backticked run, with `${...}` cut out - because a hint like
@@ -43,18 +44,18 @@ function plain(s) {
  * number in it, not a computation. Anything that is not a string (a bare identifier, a
  * function name) contributes nothing, which is right: it is not what is drawn.
  */
-function hintAfter(lines, at) {
+function propAfter(lines, at, prop) {
   // The hint of THIS control: stop at the next label, which starts the next one.
   let text = ''
   for (let j = at; j < Math.min(at + 12, lines.length); j++) {
     if (j > at && /\blabel="/.test(lines[j].line)) break
     text += lines[j].line + '\n'
   }
-  const start = text.search(/\bhint=/)
+  const start = text.search(new RegExp(`\\b${prop}=`))
   if (start < 0) return ''
   const open = text[text.indexOf('=', start) + 1]
   if (open === '"') {
-    const m = text.slice(start).match(/\bhint="([^"]*)"/)
+    const m = text.slice(start).match(new RegExp(`\\b${prop}="([^"]*)"`))
     return m ? plain(m[1]) : ''
   }
   if (open !== '{') return ''
@@ -135,7 +136,11 @@ export function readSettings() {
       // setting findable ("idle", "memory", "offload") live in exactly those sentences.
       const lab = line.match(/\blabel="([^"]+)"/)
       if (lab) {
-        push(tab, plain(lab[1]), hintAfter(lines, i))
+        // The `why=` behind the row's `?` is searched too: it is where the long
+        // explanation went when the hints were cut to one line, and its words ("idle",
+        // "190 MB", "bot token") are still what somebody types to find the switch.
+        const why = propAfter(lines, i, 'why')
+        push(tab, plain(lab[1]), [propAfter(lines, i, 'hint'), why].filter(Boolean).join(' '))
         continue
       }
 

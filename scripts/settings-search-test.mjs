@@ -44,7 +44,7 @@ for (const f of ['settings-index.mjs', 'gen-settings-index.mjs', 'settings-searc
 
 // Every tab the rail draws has at least one setting on it, or the search can send
 // somebody to a page with nothing marked on it.
-const TABS = ['general', 'appearance', 'sounds', 'agents', 'voice', 'discord', 'system']
+const TABS = ['general', 'appearance', 'alerts', 'agents', 'system']
 for (const tab of TABS) {
   ok(`tab ${tab} has settings indexed`, settings.some((s) => s.tab === tab))
 }
@@ -72,7 +72,7 @@ ok(
   closeHit[0]?.label.toLowerCase().startsWith('close a pane'),
   closeHit[0]?.label
 )
-ok('...on the tab it is really drawn on', closeHit[0]?.tab === 'general', closeHit[0]?.tab)
+ok('...on the tab it is really drawn on', closeHit[0]?.tab === 'system', closeHit[0]?.tab)
 
 // A hint is as often an expression as a literal, and reading only the literals dropped
 // nine of them - so this asks for words that exist ONLY inside a template string or a
