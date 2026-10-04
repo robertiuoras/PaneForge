@@ -14,7 +14,7 @@
 // already knows its renderers, GPU and utility processes, it is free to ask, and asking
 // the table would mean deciding which of the machine's Electron processes are ours.
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { totalmem } from 'node:os'
 import { app, BrowserWindow } from 'electron'
 import { paneBackJobs } from '../shared/paneBackJobs'
@@ -38,14 +38,96 @@ const WIN = process.platform === 'win32'
  * so both are converted here rather than in the parser - the parser's contract is KB and
  * milliseconds on every platform.
  */
-const SNAPSHOT_PS = [
-  '$ErrorActionPreference="SilentlyContinue"',
+const SNAPSHOT_BODY = [
+  '$now = Get-Date',
   'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,UserModeTime,KernelModeTime,CreationDate,CommandLine |',
   '  ForEach-Object {',
-  '    $age = [long]((Get-Date) - $_.CreationDate).TotalSeconds',
+  '    $age = [long]($now - $_.CreationDate).TotalSeconds',
   '    "$($_.ProcessId) $($_.ParentProcessId) $([long]($_.WorkingSetSize/1024)) ' +
     '$([long](($_.UserModeTime + $_.KernelModeTime)/10000)) $age $($_.CommandLine)" }'
 ].join('\n')
+
+/** Printed after every snapshot so the reader knows where one table ends. */
+const SNAPSHOT_END = '<<PF-SNAPSHOT-END>>'
+
+/**
+ * ONE PowerShell, started once and asked for a table per line it is sent, instead of a new
+ * powershell.exe every 4 s. Measured on this PC 2026-10-05: the per-sample spawn was ~0.54
+ * CPU-seconds each (Windows PowerShell 5.1 start-up + CIM module load + a Defender AMSI scan
+ * of every one), ~15 a minute, all day, plus the WmiPrvSE work. The loop below pays that
+ * start-up once; each sample is then only the CIM read. It exits by itself when this
+ * process dies (stdin closes), and is stopped after SNAPSHOT_IDLE_MS without a request.
+ */
+const SNAPSHOT_LOOP = [
+  '$ErrorActionPreference="SilentlyContinue"',
+  'while ($null -ne [Console]::In.ReadLine()) {',
+  SNAPSHOT_BODY,
+  `  "${SNAPSHOT_END}"`,
+  '}'
+].join('\n')
+
+const SNAPSHOT_IDLE_MS = 60_000
+
+let helper: ChildProcess | null = null
+let helperBuf = ''
+let helperWaiter: ((text: string | null) => void) | null = null
+let helperIdle: ReturnType<typeof setTimeout> | null = null
+
+function stopHelper(): void {
+  const h = helper
+  helper = null
+  helperBuf = ''
+  if (helperIdle) clearTimeout(helperIdle)
+  helperIdle = null
+  const w = helperWaiter
+  helperWaiter = null
+  try {
+    h?.kill()
+  } catch {
+    /* already gone */
+  }
+  w?.(null)
+}
+
+/** One table from the long-lived PowerShell; null is a failed probe. */
+function windowsTable(done: (text: string | null) => void): void {
+  try {
+    if (!helper) {
+      const encoded = Buffer.from(SNAPSHOT_LOOP, 'utf16le').toString('base64')
+      const h = spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'ignore']
+      })
+      helper = h
+      h.stdout?.setEncoding('utf8')
+      h.stdout?.on('data', (chunk: string) => {
+        if (helper !== h) return
+        helperBuf += chunk
+        const at = helperBuf.indexOf(SNAPSHOT_END)
+        if (at < 0) return
+        const text = helperBuf.slice(0, at)
+        helperBuf = helperBuf.slice(at + SNAPSHOT_END.length)
+        const w = helperWaiter
+        helperWaiter = null
+        w?.(text)
+      })
+      h.on('error', () => helper === h && stopHelper())
+      h.on('exit', () => helper === h && stopHelper())
+    }
+    if (helperIdle) clearTimeout(helperIdle)
+    helperIdle = setTimeout(stopHelper, SNAPSHOT_IDLE_MS)
+    if (typeof helperIdle.unref === 'function') helperIdle.unref()
+    const guard = setTimeout(stopHelper, 15_000)
+    helperWaiter = (text) => {
+      clearTimeout(guard)
+      done(text)
+    }
+    helper?.stdin?.write('\n')
+  } catch {
+    stopHelper()
+    done(null)
+  }
+}
 
 /**
  * `pid ppid rssKb cpuMs ageSeconds commandLine` per line - what the Windows command is
@@ -250,13 +332,7 @@ export function snapshot(
   }
   try {
     if (WIN) {
-      const encoded = Buffer.from(SNAPSHOT_PS, 'utf16le').toString('base64')
-      execFile(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-        { windowsHide: true, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 },
-        (err, stdout) => finish(err, stdout)
-      )
+      windowsTable((text) => finish(text === null ? new Error('powershell') : null, text ?? ''))
     } else {
       execFile(
         'ps',

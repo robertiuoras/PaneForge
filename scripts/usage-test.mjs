@@ -250,5 +250,41 @@ if (process.platform === 'darwin') {
   console.log('skip  the live macOS control (not darwin)')
 }
 
+// ---------------------------------------------------------------- one PowerShell, many tables
+
+// The Windows sampler used to start a new powershell.exe every 4 s (~0.54 CPU-s each, measured
+// 2026-10-05). It now starts one and sends it a line per table. The loop is sliced out of the
+// source and run for real: two requests to the SAME process must give two parseable tables.
+if (process.platform === 'win32') {
+  const lf = mainSrc.indexOf('const SNAPSHOT_BODY')
+  const lt = mainSrc.indexOf('const SNAPSHOT_IDLE_MS')
+  const loopFile = join(dir, 'loop.ts')
+  writeFileSync(loopFile, mainSrc.slice(lf, lt) + '\nexport { SNAPSHOT_LOOP, SNAPSHOT_END }\n', 'utf8')
+  const { SNAPSHOT_LOOP, SNAPSHOT_END } = await import('file://' + loopFile.replace(/\\/g, '/'))
+  const { spawn } = await import('node:child_process')
+  const child = spawn(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(SNAPSHOT_LOOP, 'utf16le').toString('base64')],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }
+  )
+  let buf = ''
+  child.stdout.setEncoding('utf8')
+  child.stdout.on('data', (c) => (buf += c))
+  const table = async () => {
+    buf = ''
+    child.stdin.write('\n')
+    for (let i = 0; i < 300 && !buf.includes(SNAPSHOT_END); i++) await new Promise((r) => setTimeout(r, 100))
+    return buf.slice(0, buf.indexOf(SNAPSHOT_END))
+  }
+  const one = parseWindows(await table())
+  const two = parseWindows(await table())
+  ok('the long-lived PowerShell answers a table per request', one.length > 20 && two.length > 20, `${one.length}/${two.length} rows`)
+  ok('the second table comes from the same process (still alive)', child.exitCode === null)
+  ok('rows carry cmd and elapsed like the old one-shot', one.some((r) => r.cmd && r.elapsed !== undefined && r.pid === child.pid))
+  child.stdin.end()
+  await new Promise((r) => child.once('exit', r))
+  ok('it exits by itself when its parent closes stdin', child.exitCode === 0)
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
