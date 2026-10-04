@@ -712,7 +712,7 @@ button.chip.kept:hover { filter: brightness(1.3); }
    thing in the sidebar - so it gets the mark the rows carry and a real edge. Still `ghost`:
    the loud button in this list is New session, and two of those compete. */
 .save-ws { display: inline-flex; align-items: center; gap: 5px; border-color: var(--line-strong, var(--line)); }
-.save-ws:disabled { opacity: 0.55; }
+/* No own fade: button:disabled's 0.78 keeps the label at 3:1 (0.55 measured 2.33:1 on paper). */
 /* Forgetting a workspace is destructive and it was invisible until the row was hovered,
    then a 12px glyph. Always drawn, always a target. */
 .ws-x { opacity: 0.5; min-width: 24px; min-height: 24px; display: inline-flex; align-items: center; justify-content: center; }
@@ -3580,7 +3580,7 @@ html.handheld .move-soon.line .card-x { top: 50%; }
    reads as the app moving rather than as more to read. No motion: it appears, and the
    thing it names is happening on screen behind the card. */
 .tour-acts-live { display: flex; flex-direction: column; gap: 2px; }
-.tour-act { color: var(--accent); font-size: 12px; line-height: 1.4; }
+.tour-act { color: var(--accent-text); font-size: 12px; line-height: 1.4; }
 /* The tour is holding on this step until a person moves it - see `waitsForYou`. Accent
    text on the card's own surface, no box and no motion: it is a line to be read once,
    not a second alert competing with the step it belongs to. */
@@ -5322,5 +5322,6 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
   visibility: visible; width: 7px; height: 0; border-left: 0; transform: none;
 }
 .keep-checkbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.keep-all:has(:disabled), .session-keep-open:has(:disabled) { opacity: .5; cursor: default; }
-.keep-checkbox:disabled { cursor: default; }
+/* The box fades, the words do not: a half-faded label measured 2.05:1 on paper. */
+.keep-all:has(:disabled), .session-keep-open:has(:disabled) { cursor: default; }
+.keep-checkbox:disabled { opacity: .5; cursor: default; }
