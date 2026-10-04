@@ -6231,6 +6231,15 @@ const SWEEP_OTHER_IDLE_MS = 3 * 24 * 60 * 60 * 1000
 const REGENERABLE =
   /(^|\/)(node_modules|\.next(-[^/]*)?|production-build|build|dist|\.turbo|__pycache__|\.pytest_cache|\.cache|coverage|test-results|playwright-report|\.codegraph|graphify-out|ios-derived-data)(\/|$)|\.tsbuildinfo$|(^|\/)\.DS_Store$/
 const TAR_EXCLUDES = ['node_modules', '.next*', 'production-build', 'build', 'dist', '.turbo', '__pycache__']
+/**
+ * Windows' own tar (bsdtar, System32\tar.exe), named outright. A shell started from Git for
+ * Windows - Git Bash, every chat's Bash tool - puts GNU tar first on PATH, and GNU tar reads
+ * the `C:` in `-czf C:\...\x.tgz` as a remote host ("Cannot connect to C: resolve failed"),
+ * so the sweep kept every finished lane it was asked to archive. GNU's `--force-local` is
+ * refused by bsdtar, so pick the binary instead of a flag.
+ */
+const SYSTEM_TAR = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+const TAR = process.platform === 'win32' && existsSync(SYSTEM_TAR) ? SYSTEM_TAR : 'tar'
 const SWEEP_KEEP = 20
 /** How often `retry` starts a sweep. Folders only become removable after six idle hours anyway. */
 const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000
@@ -6537,12 +6546,12 @@ function sweepOne(w) {
     writeFileSync(list, files.join('\0') + '\0', 'utf8')
     try {
       const tar = spawnSync(
-        'tar',
+        TAR,
         ['-czf', archive, ...TAR_EXCLUDES.map((x) => `--exclude=${x}`), '-C', w.dir, '--null', '-T', list],
         { encoding: 'utf8', timeout: 15 * 60_000, windowsHide: true }
       )
       if (tar.status !== 0) throw new Error(`its untracked files could not be archived: ${firstLine(`${tar.stderr}${tar.error?.message ?? ''}`)}`)
-      const check = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8', timeout: 5 * 60_000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })
+      const check = spawnSync(TAR, ['-tzf', archive], { encoding: 'utf8', timeout: 5 * 60_000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })
       if (check.status !== 0) throw new Error('the archive of its untracked files did not read back')
     } finally {
       try {
