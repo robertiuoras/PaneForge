@@ -6050,7 +6050,7 @@ function doctor() {
     const panes = s.parkedWork.some((p) => unfinished(p) && !p.recovery.owner) ? openPanes() : null
     for (const p of s.parkedWork) {
       const r = p.recovery
-      const gone = r && unfinished(r) ? (r.owner ? living && !living.has(r.owner) : panes && !panes.ids.includes(r.pane)) : false
+      const gone = unfinished(p) ? (r.owner ? living && !living.has(r.owner) : panes && !panes.ids.includes(r.pane)) : false
       const state = !p.present ? 'ref is gone' : p.moved ? 'ref moved' : p.merged ? 'already on trunk'
         : r && ['complete', 'reviewed'].includes(r.status) ? `done (${r.status})`
         : r?.status === 'blocked' ? `blocked: ${String(r.reason ?? '').slice(0, 120)}`
