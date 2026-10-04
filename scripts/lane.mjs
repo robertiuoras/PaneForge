@@ -6187,9 +6187,12 @@ function openPanes() {
     out = r.stdout ?? ''
   }
   const rows = out.split('\n').filter((l) => l.trim()).map((l) => l.split('\t'))
-  if (rows.some((c) => c.length < 5 || !c[0].trim() || !c[4].trim())) return null
+  // A row is `card number, pane id, state, title, folder` (`pf-ctl.mjs list`). The first
+  // column is the NUMBER on the card, so ids read from it never matched a pane id and a
+  // live completion pane was marked ended 10 min after it opened (2026-10-02).
+  if (rows.some((c) => c.length < 5 || !c[1].trim() || !c[4].trim())) return null
   return {
-    ids: rows.map((c) => c[0].trim()),
+    ids: rows.map((c) => c[1].trim()),
     // Every listed pane, `exited` included: an ASLEEP pane lists as exited and wakes back
     // into its folder, so a removed folder would be a pane resuming into nothing.
     dirs: rows.map((c) => c[4].trim())

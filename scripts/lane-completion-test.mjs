@@ -124,7 +124,7 @@ for (const kind of ['quiet-live', 'sleeping', 'unknown', 'empty-index', 'missing
   if (kind === 'empty-index') git(x.dir, 'read-tree', '--empty')
   if (kind === 'missing') rmSync(x.dir, { recursive: true, force: true })
   if (kind === 'foreign') { rmSync(x.dir, { recursive: true, force: true }); mkdirSync(x.dir); writeFileSync(join(x.dir, 'private.txt'), 'foreign preserved') }
-  if (kind === 'pane-subdir') writeFileSync(x.panes, `active\ttitle\tcodex\tworking\t${join(x.dir, 'src')}\n`)
+  if (kind === 'pane-subdir') writeFileSync(x.panes, `1\tactive\tworking\ttitle\t${join(x.dir, 'src')}\n`)
   if (kind === 'process-subdir' || kind === 'problem-process') writeFileSync(x.processes, JSON.stringify([join(x.dir, 'src')]))
   if (kind === 'problem-process') git(x.dir, 'read-tree', '--empty')
   if (kind === 'unknown-process') writeFileSync(x.processes, 'invalid JSON')
@@ -166,8 +166,12 @@ const resumed = fixture('completion-ended')
 writeFileSync(join(resumed.dir, 'intent.txt'), 'completion must survive'); resumed.patch((s) => { delete s.lanes.a }); resumed.run('retry')
 const resumedKey = resumed.state().recovery.active
 const age = () => resumed.patch((s) => { s.recovery.items[resumedKey].at = Date.now() - 46 * 60_000 })
-age(); writeFileSync(resumed.panes, `logged\ttitle\tcodex\tworking\t${resumed.repo}\n`); resumed.run('retry')
+// `pf list` rows are `card number, pane id, state, title, folder` - the pane id is the
+// SECOND column. Reading the first (the card number) never found the completion pane, so
+// a live one was marked ended 10 min after dispatch (2026-10-02, s63-muq763lt).
+age(); writeFileSync(resumed.panes, `1\tlogged\tworking\ttitle\t${resumed.repo}\n`); resumed.run('retry')
 check('a relocated live completion pane prevents duplicate dispatch', resumed.requests().length === 1)
+check('...and is not marked ended while its pane is open', resumed.state().recovery.items[resumedKey]?.status === 'dispatched' && resumed.state().recovery.active === resumedKey, JSON.stringify(resumed.state().recovery.items[resumedKey]))
 writeFileSync(resumed.panes, ''); writeFileSync(resumed.beat, JSON.stringify({ at: Date.now(), chats: ['still-native'] }))
 resumed.patch((s) => { s.recovery.items[resumedKey].owner = 'still-native'; s.recovery.items[resumedKey].status = 'owned' }); resumed.run('retry')
 check('a quiet native completion owner prevents takeover', resumed.requests().length === 1)
@@ -358,7 +362,7 @@ const callHook = (event, session) => spawnSync(process.execPath, [join(hook.repo
 // The chat's pane is open in its lane, as it is in real use. Without it the sweep the hook
 // starts first removes this empty, unheld folder on a Mac (lsof can see no program in it);
 // Windows has no lsof, so the sweep fails closed there and the fixture never noticed.
-writeFileSync(hook.panes, `guard-pane\ttitle\tclaude\tworking\t${hook.dir}\n`)
+writeFileSync(hook.panes, `1\tguard-pane\tworking\ttitle\t${hook.dir}\n`)
 const guarded = callHook('pretool', 'guard-owner')
 check('a guard-only first claim registers its repository', guarded.status === 0 && JSON.parse(readFileSync(hook.env.LANE_REGISTRY, 'utf8')).sessions['guard-owner'].includes(realpathSync(hook.repo)), guarded.stderr)
 writeFileSync(join(hook.dir, 'source.txt'), 'dirty guard-only intent')

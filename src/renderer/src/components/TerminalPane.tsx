@@ -12,6 +12,7 @@ import {
   type Box,
   type Cell
 } from '@shared/mirrorFit'
+import { busyWindowStart } from '@shared/busyWindow'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { codexAltArrow } from '@shared/codexKeys'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
@@ -927,7 +928,7 @@ function screenText(t: Terminal, rows: number): string {
   let last = t.rows - 1
   while (last > 0 && !read(last).trim()) last--
   let out = ''
-  for (let i = Math.max(0, last - rows + 1); i <= last; i++) out += read(i) + '\n'
+  for (let i = busyWindowStart(read, last, rows); i <= last; i++) out += read(i) + '\n'
   return out
 }
 
