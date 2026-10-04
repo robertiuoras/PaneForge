@@ -303,7 +303,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
-    note: 'One OpenRouter key, any model on it - free ones included. Paste the key in Settings.',
+    note: 'One OpenRouter key for any model, free ones included.',
     docs: 'https://openrouter.ai/docs/community/claude-code'
   },
   {
@@ -580,7 +580,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     install: 'npm i -g opencode-ai',
     uninstall: 'npm rm -g opencode-ai',
     free: true,
-    note: 'Open source - bring any key, or point it at a local model',
+    note: 'Open source - any key, or a model on this computer',
     docs: 'https://opencode.ai'
   },
   {
@@ -979,7 +979,7 @@ export const KEY_PROVIDERS: KeyProvider[] = [
     placeholder: keyVar('xai'),
     hint: 'xai-...',
     url: 'https://console.x.ai',
-    note: 'The key Grok Build reads. It can also sign in on its own.'
+    note: 'The key Grok Build reads; it can also sign in itself.'
   }
 ]
 

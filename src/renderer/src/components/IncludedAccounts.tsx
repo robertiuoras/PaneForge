@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { IncludedAccounts as Accounts } from '@shared/types'
 import { isMac } from '../platform'
+import { Why } from './Controls'
+import Select from './Select'
 
 export default function IncludedAccounts(): React.JSX.Element {
   const [target, setTarget] = useState<'local' | 'pc'>('local')
@@ -33,10 +35,10 @@ export default function IncludedAccounts(): React.JSX.Element {
       <label>Included-plan accounts</label>
       <button className="ghost small" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>Refresh</button>
     </div>
-    {isMac && <select aria-label="Account computer" value={target} disabled={busy} onChange={(e) => setTarget(e.target.value as 'local' | 'pc')}>
-      <option value="local">This Mac</option><option value="pc">PC</option>
-    </select>}
-    <p className="hint">Saved Claude and Codex subscription logins. Plan names come from the saved login; they do not confirm remaining usage.</p>
+    {isMac && <Select size="sm" title="Account computer" value={target} disabled={busy}
+      options={[{ value: 'local', label: 'This Mac' }, { value: 'pc', label: 'PC' }]}
+      onChange={(v) => setTarget(v as 'local' | 'pc')} />}
+    <p className="hint">Saved Claude and Codex logins; one press switches.</p>
     {busy && <p className="hint">Checking account selection…</p>}
     {accounts && (['claude', 'codex'] as const).map((provider) => <div key={provider}>
       <p>{provider === 'claude' ? 'Claude' : 'Codex'}: {accounts[provider].live || 'Signed out'}</p>
@@ -48,5 +50,6 @@ export default function IncludedAccounts(): React.JSX.Element {
       </div>)}
     </div>)}
     {message && <p className="hint" role="status">{message}</p>}
+    <Why>Saved Claude and Codex subscription logins. Plan names come from the saved login; they do not confirm remaining usage.</Why>
   </div>
 }

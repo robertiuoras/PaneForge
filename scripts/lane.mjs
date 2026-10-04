@@ -3581,15 +3581,37 @@ function submitPcJob(dir, words) {
  * when this waiter was itself killed, because the job keeps its place on the PC and a dead
  * waiter is never a verdict on the code (dropping the job there queued a fresh one at the
  * back, the livelock below). `why` is rbuild's own final line when it printed one.
+ *
+ * A clock tick (`!suiteWaits()`) never waits on a job still in line. It ran this whole wait
+ * inside `retry`, holding the recovery lock: 2026-10-04 1:12pm-1:27pm one sat 15 minutes in
+ * `--wait <id> 900` and every `recover` from another chat failed, and the clocks kill a tick
+ * long before (lane-cron at 4 minutes). So a tick first asks the job's state once with
+ * `rbuild --resume` - one short ssh, no wait: it finishes an upload that was cut off and
+ * reports the state (exit 0 passed, 1 ended, 75 still in line), and the PC counts the ask as
+ * a waiter, so a job only ticks look at is not cancelled as orphaned after 10 minutes. Still
+ * in line: pending, and the next tick asks again. Ended: the wait below returns at once with
+ * its output (rbuild's 60 s is only the cap), so a finished job's verdict still lands.
  */
 function waitPcJob(id, seconds = PC_WAIT_S) {
-  const r = spawnSync(process.execPath, [RBUILD, '--wait', id, String(seconds)], {
+  if (!suiteWaits()) {
+    const asked = rbuildOnce(['--resume', id], 180)
+    // Anything but an ended job is still in line to a tick, rbuild refusing included (another
+    // process is mid-upload of it): a chat's own full wait settles the rest, as it always did.
+    if (asked.status !== 0 && asked.status !== 1) return { ...asked, pending: true }
+    seconds = 60
+  }
+  return rbuildOnce(['--wait', id, String(seconds)], seconds + 300)
+}
+
+/** One rbuild call about a submitted job, read the way `waitPcJob` describes. */
+function rbuildOnce(args, timeoutS) {
+  const r = spawnSync(process.execPath, [RBUILD, ...args], {
     windowsHide: true,
     encoding: 'utf8',
     // The job's whole output comes back here; past the default 1 MB spawnSync kills rbuild.
     maxBuffer: 64 * 1024 * 1024,
     // rbuild ends its own wait at `seconds` (+120s for its ssh); this is only a backstop.
-    timeout: (seconds + 300) * 1000
+    timeout: timeoutS * 1000
   })
   const stderr = r.stderr ?? ''
   const out = `${r.stdout ?? ''}${stderr}`
@@ -3945,11 +3967,11 @@ function withSuiteRun(state, dir, commit, judge, job = false) {
 }
 
 /**
- * Whether this command waits for a suite it started. A clock tick does not: lane-cron
- * SIGKILLs `retry` at 4 minutes (scripts/lane-cron.mjs) and the app kills `retry` and
- * `release --gone` at 10 (src/main/laneBoard.ts RETRY_TIMEOUT), each far inside one 20-minute
- * run, so the tick says "already running" and the next tick reads the answer. A chat's
- * `ready`, `release` or `autoship` waits for it, as it always did.
+ * Whether this command waits for a suite it started, or for a PC job (`waitPcJob`). A clock
+ * tick does not: lane-cron SIGKILLs `retry` at 4 minutes (scripts/lane-cron.mjs) and the app
+ * kills `retry` and `release --gone` at 10 (src/main/laneBoard.ts RETRY_TIMEOUT), each far
+ * inside one 20-minute run, so the tick says "already running" and the next tick reads the
+ * answer. A chat's `ready`, `release` or `autoship` waits for it, as it always did.
  */
 const suiteWaits = () => !(cmd === 'retry' || (cmd === 'release' && argv.includes('--gone')))
 

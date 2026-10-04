@@ -13,6 +13,8 @@
  * session events in a second that are worth one frame.
  */
 import net from 'node:net'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   DEFAULT_DISCORD_STYLE,
@@ -33,6 +35,27 @@ function defaultPipePaths(): string[] {
   if (process.platform === 'win32') return n.map((i) => `\\\\?\\pipe\\discord-ipc-${i}`)
   const base = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || '/tmp'
   return n.map((i) => join(base, `discord-ipc-${i}`))
+}
+
+/**
+ * Whether Discord is on this machine at all, for Settings to leave out the Discord rows
+ * where it is not. Installed rather than running: a presence switched on waits for the
+ * app to open, so its switch belongs on screen while Discord is closed. Read off the
+ * disk, never by opening the pipe - a connect here would be a second client on it.
+ */
+export function discordInstalled(): boolean {
+  const names = ['Discord', 'DiscordPTB', 'DiscordCanary']
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')
+    return names.some((n) => existsSync(join(local, n)))
+  }
+  if (process.platform === 'darwin') {
+    const apps = ['Discord', 'Discord PTB', 'Discord Canary'].map((n) => `${n}.app`)
+    if (apps.some((a) => existsSync(join('/Applications', a)) || existsSync(join(homedir(), 'Applications', a))))
+      return true
+  }
+  // Linux packages put the app in too many places to list; a running one has its socket.
+  return defaultPipePaths().some((p) => existsSync(p))
 }
 
 export interface PresenceOptions {

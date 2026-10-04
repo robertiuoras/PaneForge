@@ -8,6 +8,7 @@ import {
   type SoundEvent
 } from '@shared/sounds'
 import Select from './Select'
+import { Why } from './Controls'
 import { previewSound } from '../useChime'
 
 const api = window.api
@@ -24,26 +25,30 @@ const api = window.api
  * out by waiting for a real alert is how you end up with a cat noise you cannot live with
  * firing at 2am.
  */
-const EVENTS: { key: SoundEvent; label: string; hint: string }[] = [
+const EVENTS: { key: SoundEvent; label: string; hint: string; why: string }[] = [
   {
     key: 'done',
     label: 'A session finished its turn',
-    hint: 'The one you will hear most - it plays even while PaneForge is focused, because a pane you are not reading can still finish. Pick something you can hear forty times a day.'
+    hint: 'Plays even while PaneForge is focused.',
+    why: 'The one you will hear most - it plays even while PaneForge is focused, because a pane you are not reading can still finish. Pick something you can hear forty times a day.'
   },
   {
     key: 'stall',
     label: 'A running turn went silent',
-    hint: 'The turn clock is still going and the pane has printed nothing for the number of minutes set under General. Worth making audibly different from the one above - it is the only check on the app claiming an agent is working.'
+    hint: 'Rings when a working chat has printed nothing for a while.',
+    why: 'The turn clock is still going and the pane has printed nothing for the number of minutes set above. Worth making audibly different from the one above - it is the only check on the app claiming an agent is working.'
   },
   {
     key: 'ask',
     label: 'An agent asked you a question',
-    hint: 'The run has stopped and will not move again until somebody answers. Make this one unmistakable - it is the alert whose cost is the rest of the run.'
+    hint: 'The chat is stopped until you answer. Make it unmistakable.',
+    why: 'The run has stopped and will not move again until somebody answers. Make this one unmistakable - it is the alert whose cost is the rest of the run.'
   },
   {
     key: 'bell',
     label: 'A pane rang the terminal bell',
-    hint: 'A CLI asking for a person directly: a prompt it needs answered, a build that failed. Short is better here, since a chatty CLI can ring several times a minute.'
+    hint: 'A chat asking for you directly. Short sounds work best.',
+    why: 'A CLI asking for a person directly: a prompt it needs answered, a build that failed. Short is better here, since a chatty CLI can ring several times a minute.'
   }
 ]
 
@@ -100,10 +105,11 @@ export default function SoundsTab({ config, onChange }: Props): JSX.Element {
           onChange={(e) => set({ volume: Number(e.target.value) / 100 })}
           onMouseUp={() => previewSound(sounds.done, sounds)}
         />
-        <div className="hint">
+        <div className="hint">Applies to every sound below.</div>
+        <Why>
           Applies to every sound below. At 0% the alerts still mark the pane and flash the
           taskbar - they just do it silently.
-        </div>
+        </Why>
       </div>
 
       {EVENTS.map((ev) => (
@@ -132,15 +138,13 @@ export default function SoundsTab({ config, onChange }: Props): JSX.Element {
             </button>
           </div>
           <div className="hint">{ev.hint}</div>
+          <Why>{ev.why}</Why>
         </div>
       ))}
 
       <div className="setting">
         <label>Your own sounds</label>
-        <div className="hint">
-          Any {SOUND_EXTS.map((e) => e.slice(1)).join(', ')} file under 8 MB. PaneForge takes
-          its own copy, so the alert keeps working after you move or tidy the original.
-        </div>
+        <div className="hint">Add your own alert sound from a file.</div>
         {sounds.custom.map((c) => (
           <div key={c.id} className="setting-row sound-row">
             <span className="sound-name">{c.name}</span>
@@ -162,6 +166,10 @@ export default function SoundsTab({ config, onChange }: Props): JSX.Element {
           </button>
           {msg && <span className="hint">{msg}</span>}
         </div>
+        <Why>
+          Any {SOUND_EXTS.map((e) => e.slice(1)).join(', ')} file under 8 MB. PaneForge takes
+          its own copy, so the alert keeps working after you move or tidy the original.
+        </Why>
       </div>
     </>
   )
