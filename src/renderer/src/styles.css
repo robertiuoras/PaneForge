@@ -3006,7 +3006,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   font-size: 11px; line-height: 1; cursor: pointer;
   transition: color var(--fast), border-color var(--fast);
 }
-.why-btn:hover { color: var(--fg); border-color: var(--accent); }
+.why-btn:hover { color: var(--text); border-color: var(--accent); }
 .why-btn[aria-expanded='true'] { color: var(--accent); border-color: var(--accent); }
 .why-text { grid-column: 1 / -1; margin: 2px 4px 8px; max-width: 62ch; }
 /* The same `?` under a heading rather than beside a switch: a `.setting` is a column, so
