@@ -73,8 +73,25 @@ export function stagedHours(readyAt: number, now: number): number {
  * it - a person who has never used git has no idea what "staged" means and no reason to
  * learn. See "Every word on screen is read by somebody who has never used git".
  */
-export function stagedWaitingWords(current: string, version: string, hours: number): string {
-  return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, the next time you quit PaneForge, or by itself once this computer has sat untouched for 10 minutes - never while you are working.`
+export function stagedWaitingWords(current: string, version: string, hours: number, selfInstall: boolean): string {
+  const waited = `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}.`
+  return selfInstall
+    ? `${waited} It installs when you choose Restart now, the next time you quit PaneForge, or by itself once this computer has sat untouched for 10 minutes - never while you are working.`
+    : `${waited} It installs when you choose Restart now or the next time you quit PaneForge. ${NO_SELF_INSTALL}`
+}
+
+/**
+ * Why the card stops promising an install by itself: with reopening panes after an update
+ * off, the idle install never fires (`selfInstallOff` in updateHold.ts), and the PC's card
+ * said "by itself once this computer has sat untouched" for 23 hours on 2026-10-03/04.
+ */
+const NO_SELF_INSTALL = 'It will not install by itself while reopening your panes after an update is turned off in Settings.'
+
+/** What the card says while a build is ready and has not waited long yet. */
+export function readyWords(current: string, selfInstall: boolean): string {
+  return selfInstall
+    ? `You are on ${current}. Choose Restart now when you are ready, or Later: it installs the next time you quit, or by itself once this computer has sat untouched for 10 minutes.`
+    : `You are on ${current}. Choose Restart now when you are ready, or Later: it installs the next time you quit. ${NO_SELF_INSTALL}`
 }
 
 /**

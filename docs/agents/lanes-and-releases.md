@@ -109,6 +109,14 @@ stop. `npm run typecheck`/`npm test` gate a commit. `node scripts/lane.mjs ready
 another chat's release is not yours; yesterday's word is not today's (`test:unreleased`).
 Never cut one while a next step is open.
 
+**A push of master needs a passing suite on the exact tree it pushes** (`test:pushgate`).
+`installPushGate` writes a git pre-push hook that runs `lane.mjs prepush`, which asks
+`treeVerdict` (the ledger's suite records, matched by tree) about every `refs/heads/master`
+push; other refs are never gated. `ship()` run by `autoship` re-tests the merged tree with
+`pushedTreeFailure` before pushing and resets to the pre-merge commit when it is red. A hand
+`ship` and a version release record `pushOk` for their tree and go through. `--no-verify` is
+a deliberate bypass.
+
 **Dev-window tour** (`shared/tour.ts`, `TourCard.tsx`, `shared/lookCheck.ts`; `test:tour`,
 `test:look`): each `feat:`/`fix:`/`perf:` commit since the installed build touching `src/`,
 deduped by subject, is a step. Card = NAME in screen words (SCOPE via `SCOPE_PLACES`, then
@@ -149,7 +157,8 @@ Install once, update from app. Unsupported: skip not retry (`shared/pickRelease.
 a normal quit, or an IDLE DESK (2026-09-24, Robert): `idleInstallCheck` every 60s asks
 `idleInstallBlocker` (`shared/updateHold.ts`) - nobody touched the computer 10 min, no pane
 printed/typed 10 min, none mid-turn/asking/drafting/back job, restore after update on, no
-game. No countdown/escalation/retry (`test:updatehold`). A staged build on a busy desk may
+game. No countdown/escalation/retry (`test:updatehold`). Restore off = no self-install ever:
+the card stops promising one (`selfInstallOff`), the hold line names every half (`idleHoldLine`). A staged build on a busy desk may
 still sit for days: the rule working. `src/main` never consumes
 `onUpdateIgnored`/`READY_HOLD_MS`. `phaseAt`; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS`
 45min, `PROBE_BUDGET_MS` 5min, `POLL_WATCHDOG_MS` 6min; quit gated `stagedInstallable()`.

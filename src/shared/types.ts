@@ -2061,6 +2061,20 @@ export interface RemoteConfig {
   mirrorAllDefaulted?: boolean
 }
 
+/**
+ * What this machine HAS, for the Settings rows that are only drawn once it does.
+ *
+ * Read off the machine, never asked: a row is drawn because the thing it configures
+ * exists here, not because somebody switched on an "advanced" mode. A pairing is not in
+ * here because the renderer already holds it (config.remote.peers).
+ */
+export interface SettingsFacts {
+  /** credentials for the Telegram alerts, in the environment or the env file */
+  telegram: boolean
+  /** the Discord app is installed on this machine */
+  discord: boolean
+}
+
 export interface Config {
   /**
    * The build this machine last showed a "what changed" card for.
@@ -2892,6 +2906,8 @@ export interface Api {
 
   /** elevation state plus the no-UAC launch task */
   adminStatus(): Promise<AdminStatus>
+  /** what this machine has, so Settings can leave out rows about what it has not */
+  settingsFacts(): Promise<SettingsFacts>
   /** register (or refresh) the scheduled task that starts PaneForge elevated */
   adminEnable(): Promise<{ ok: boolean; message: string }>
   adminDisable(): Promise<{ ok: boolean; message: string }>

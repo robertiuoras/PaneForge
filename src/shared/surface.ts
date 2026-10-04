@@ -148,6 +148,7 @@ export const SURFACE: Surface = {
   answerOffload: ['invoke', 'offload:answer'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],
+  settingsFacts: ['invoke', 'settings:facts'],
   adminEnable: ['invoke', 'admin:enable'],
   adminDisable: ['invoke', 'admin:disable'],
   relaunchAsAdmin: ['send', 'app:relaunchAsAdmin'],

@@ -7,7 +7,7 @@ import {
   paletteFor,
   type ThemeConfig
 } from '@shared/theme'
-import { Segmented } from './Controls'
+import { Segmented, Why } from './Controls'
 
 /**
  * Whether THIS window is the one drawing real macOS glass. `main.tsx` reads the same flag
@@ -103,10 +103,11 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
             Reset
           </button>
         </div>
-        <div className="hint">
+        <div className="hint">Every other colour is worked out from this one.</div>
+        <Why>
           Everything else on screen is worked out from this one colour - the greys lean
           towards it, and the app checks that what it derived is still readable.
-        </div>
+        </Why>
       </div>
 
       <div className="setting">
@@ -165,11 +166,12 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
           value={Math.round(theme.tint * 100)}
           onChange={(e) => set({ tint: Number(e.target.value) / 100 })}
         />
-        <div className="hint">
+        <div className="hint">0% is neutral grey; higher leans towards your colour.</div>
+        <Why>
           0% is neutral slate. Higher tints the window, the sidebar and every card towards
           your colour - a few percent is what makes a theme look designed rather than
           recoloured.
-        </div>
+        </Why>
       </div>
 
       <div className="setting">
@@ -181,10 +183,11 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
           value={Math.round(theme.depth * 100)}
           onChange={(e) => set({ depth: Number(e.target.value) / 100 })}
         />
-        <div className="hint">
+        <div className="hint">Past about 75% the window goes light.</div>
+        <Why>
           Most of this slider is the dark end, because that is where dark themes live. Past
           about 75% the window goes light and the text turns over with it.
-        </div>
+        </Why>
       </div>
 
       {glassWindow() && (
@@ -197,12 +200,13 @@ export default function AppearanceTab({ theme, onChange }: Props): JSX.Element {
             value={Math.round((theme.glass ?? 0.2) * 100)}
             onChange={(e) => set({ glass: Number(e.target.value) / 100 })}
           />
-          <div className="hint">
+          <div className="hint">See-through sidebar. 0% is solid.</div>
+          <Why>
             This Mac draws real glass behind the window. 0% keeps the sidebar painted, the
             way every other machine gets it; 100% is the bare material, with your desktop
             showing through the rows. The panes never go clear - a terminal over a
             wallpaper is unreadable at any tint.
-          </div>
+          </Why>
         </div>
       )}
 

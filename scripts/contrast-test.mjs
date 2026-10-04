@@ -260,9 +260,10 @@ function worstUnder(img, scale, rect, textLum) {
 const SCREENS = [
   { id: 'desk', open: null },
   { id: 'settings', open: /settings/i },
-  // Its own screen because it is the one tab drawn in another product's colours (the
-  // Discord card replica) beside the app's own look cards and switches.
-  { id: 'settings · discord', open: /settings/i, tab: /^\s*Discord/ },
+  // Its own screen because Alerts carries the one block drawn in another product's
+  // colours (the Discord card replica, on a machine with Discord installed) beside the
+  // app's own sound rows and switches.
+  { id: 'settings · alerts', open: /settings/i, tab: /^\s*Alerts/ },
   { id: 'devices', open: /device/i },
   { id: 'history', open: /history/i }
 ]
