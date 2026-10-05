@@ -446,6 +446,7 @@
           "lane-merge.mjs",
           "test-app.mjs",
           "dev-profile.mjs",
+          "signal-guard.mjs",
           "release-notes.mjs",
           "pf-telegram.mjs",
           "ask-stamp.mjs",
