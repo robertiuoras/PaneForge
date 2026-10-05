@@ -43,6 +43,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import type { TunnelState } from '../shared/types'
+import { signal } from '../shared/signalGuard'
 import { Funnel, type FunnelDeps } from './funnel'
 
 /**
@@ -554,11 +555,7 @@ export async function sweepOrphans(port: number, mine: number[] = []): Promise<v
       if (pid === process.pid || mine.includes(pid)) continue
       if (process.platform === 'win32') await run('taskkill.exe', ['/F', '/PID', String(pid)])
       else {
-        try {
-          process.kill(pid, 'SIGTERM')
-        } catch {
-          /* gone between listing and killing is the normal case */
-        }
+        signal(pid, 'SIGTERM') // gone between listing and killing is the normal case
       }
     }
   } catch {

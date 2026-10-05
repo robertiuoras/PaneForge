@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process'
 import { rmSync } from 'node:fs'
+import { signal as sendSignal, signalable } from './signal-guard.mjs'
 
 async function descendantsOf(pid) {
+  if (!signalable(pid)) return [] // the descendants of pid 1 are every process on the machine
   const output = await new Promise((resolve) => {
     execFile('ps', ['-Ao', 'pid=,ppid='], { windowsHide: true }, (error, stdout) => {
       resolve(error ? '' : stdout)
@@ -75,7 +77,7 @@ export async function closeTestChrome(chrome, profile, ws) {
       // Chrome helpers that still hold this test profile. The tree comes from chrome.pid,
       // never from a process name, so it cannot reach Electron or a user's browser.
       for (const pid of await descendantsOf(chrome.pid)) {
-        try { process.kill(pid, 'SIGKILL') } catch { /* exited between ps and kill */ }
+        sendSignal(pid, 'SIGKILL') // exited between ps and kill is fine
       }
       chrome.kill('SIGKILL')
     }

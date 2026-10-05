@@ -19,6 +19,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { devPlan, devSignalOf, inRepo, managerFor, type DevServer } from '../shared/devServers'
 import { runningDevs, type DevPane, type RunningDev } from '../shared/devList'
+import { signal as signalPid, signalable } from '../shared/signalGuard'
 import { cwdsFor } from './devList'
 
 const WIN = process.platform === 'win32'
@@ -85,6 +86,7 @@ export function descendants(procs: Proc[], root: number): Proc[] {
     if (kids) kids.push(p)
     else byParent.set(p.ppid, [p])
   }
+  if (!signalable(root)) return [] // the descendants of pid 1 are every process on the machine
   const seen = new Set<number>([root])
   const out: Proc[] = []
   const queue = [root]
@@ -208,7 +210,7 @@ export async function listRunningDevs(panes: DevPane[]): Promise<RunningDev[]> {
  * machine over.
  */
 export async function stopDevServer(pid: number): Promise<{ ok: boolean; why?: string }> {
-  if (!Number.isInteger(pid) || pid <= 1) return { ok: false, why: 'not a process I can stop' }
+  if (!signalable(pid)) return { ok: false, why: 'not a process I can stop' }
   const procs = await table()
   const me = procs.find((p) => p.pid === pid)
   if (!me) return { ok: false, why: 'already gone' }
@@ -226,13 +228,7 @@ export async function stopDevServer(pid: number): Promise<{ ok: boolean; why?: s
   const kids = descendants(procs, pid).map((p) => p.pid)
   const all = [...kids, pid]
   const signal = (sig: NodeJS.Signals): void => {
-    for (const target of all) {
-      try {
-        process.kill(target, sig)
-      } catch {
-        /* already gone */
-      }
-    }
+    for (const target of all) signalPid(target, sig) // already gone is fine
   }
   signal('SIGTERM')
   await new Promise((r) => setTimeout(r, 2500))

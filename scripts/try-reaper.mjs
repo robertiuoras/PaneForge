@@ -10,6 +10,7 @@ import { appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { signal as sendSignal } from './signal-guard.mjs'
 
 export const IDLE_LIMIT_MS = 15 * 60 * 1000
 export const POLL_MS = 60 * 1000
@@ -45,11 +46,7 @@ const wait = (ms) => new Promise((res) => setTimeout(res, ms))
  */
 async function closeOne(pid) {
   for (const [signal, ms] of [['SIGTERM', 8000], ['SIGTERM', 3000], ['SIGKILL', 3000]]) {
-    try {
-      process.kill(pid, signal)
-    } catch {
-      return 'closed'
-    }
+    if (!sendSignal(pid, signal)) return 'closed'
     for (let t = 0; t < ms && alive(pid); t += 250) await wait(250)
     if (!alive(pid)) return signal === 'SIGKILL' ? 'killed' : 'closed'
   }

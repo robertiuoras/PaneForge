@@ -238,6 +238,7 @@
     "probe": "node scripts/probe.mjs",
     "boot-timing": "node scripts/boot-timing.mjs",
     "test:killguard": "node scripts/kill-guard-test.mjs",
+    "test:signalguard": "node scripts/signal-guard-test.mjs",
     "test:trust": "node scripts/trust-test.mjs",
     "test:slash": "node scripts/slash-test.mjs",
     "test:recall": "node scripts/prompt-recall-test.mjs",

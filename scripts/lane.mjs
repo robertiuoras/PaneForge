@@ -67,6 +67,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
+
+// kill(-1) signals every process the user owns and kill(0) this process's own group, so a pid of 0 or 1 is never
+// signalled (2026-10-06: a fake pid 1 quit every app on the Mac). Own copy of scripts/signal-guard.mjs: lane.mjs is
+// copied around alone. test:signalguard fails on any other raw process.kill( that is not a signal-0 probe.
+function signalGroup(pid, name) {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false
+  try { process.kill(-pid, name); return true } catch { return false }
+}
 import { countedSuffixes, maskCounts, mergeAutoConflicts, mergeImportConflicts, mergeJsonListAdds, mergeListAddConflicts, recount } from './lane-merge.mjs'
 import {
   CLAIM_NS,
@@ -4110,12 +4118,9 @@ function stopStaleSuiteJob(dir, commit) {
   if (!run?.job || run.commit === commit || run.pid === process.pid || !processAlive(run.pid)) return
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(run.pid), '/T', '/F'], { windowsHide: true, timeout: 60_000 })
   else {
-    try {
-      // Detached, so the job leads its own process group: npm and every suite under it go too.
-      process.kill(-run.pid, 'SIGKILL')
-    } catch {
-      /* already gone */
-    }
+    // Detached, so the job leads its own process group: npm and every suite under it go too.
+    // signalGroup refuses pid 0 and 1 (kill(-1) is every process the user owns).
+    signalGroup(run.pid, 'SIGKILL')
   }
   const fresh = read()
   if (fresh.suiteRun?.[dir]?.pid === run.pid) {

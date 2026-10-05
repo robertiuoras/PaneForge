@@ -25,6 +25,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkoutFamily } from './dev-profile.mjs'
+import { signal as sendSignal } from './signal-guard.mjs'
 
 // A DEV WINDOW SOMEBODY IS LOOKING AT IS NOT A LEFTOVER.
 //
@@ -260,11 +261,7 @@ function signalTestApps(root, kept, signal) {
       for (const raw of (found.stdout ?? '').split('\n')) {
         const pid = Number(raw.trim())
         if (!pid || ofKept(pid)) continue
-        try {
-          process.kill(pid, signal)
-        } catch {
-          /* already gone */
-        }
+        sendSignal(pid, signal) // already gone is fine
       }
     }
   } catch {

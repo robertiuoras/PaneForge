@@ -34,6 +34,7 @@ import {
   type Vitals
 } from '../shared/mainWatch'
 import { readPressure } from './memory'
+import { signal, signalable } from '../shared/signalGuard'
 
 interface Hello {
   t: 'hello'
@@ -272,10 +273,12 @@ async function markDeskForRestart(h: Hello): Promise<void> {
  * that recovered the app by hand on 2026-09-07.
  */
 function relaunch(h: Hello): void {
+  // `kill -9 <pid>` below goes through sh, so the pid is checked here: 0 or 1 would hit a whole group or everything.
+  if (!signalable(h.pid)) return
   if (!h.packaged) {
     // A development copy is restarted by whatever is running it. Stopping it is the whole
     // job here, and relaunching a build from `out/` would fight the dev script.
-    try { process.kill(h.pid, 'SIGKILL') } catch { /* already gone */ }
+    signal(h.pid, 'SIGKILL')
     return
   }
   try {
@@ -294,11 +297,7 @@ function relaunch(h: Hello): void {
   } catch {
     // No shell, or no process slots. Stopping the app is still better than leaving a window
     // that answers nothing, and the desk above means the panes come back when it is opened.
-    try {
-      process.kill(h.pid, 'SIGKILL')
-    } catch {
-      /* already gone */
-    }
+    signal(h.pid, 'SIGKILL')
   }
 }
 
@@ -307,11 +306,11 @@ function launchRecovery(command: string, args: string[], pid: number): void {
   try {
     const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
     child.once('error', () => {
-      try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+      signal(pid, 'SIGKILL')
     })
     child.unref()
   } catch {
-    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+    signal(pid, 'SIGKILL')
   }
 }
 

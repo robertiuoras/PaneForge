@@ -48,6 +48,7 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { spawnDetachedNoWindow } from './consoles'
 import { spawnQuiet } from './spawnQuiet'
+import { signal, signalable } from '../shared/signalGuard'
 
 /** How often the live tree is written down. */
 export const SAMPLE_MS = 30_000
@@ -102,7 +103,9 @@ export function childIndex(snapshot: ProcRecord[]): Map<number, ProcRecord[]> {
  * its own tree (Windows reuses pids, and a reused number can close a loop) would otherwise
  * walk forever inside a sampler that runs unattended.
  */
-export function descendantsOf(snapshot: ProcRecord[], roots: number[]): ProcRecord[] {
+export function descendantsOf(snapshot: ProcRecord[], allRoots: number[]): ProcRecord[] {
+  // The descendants of pid 1 are every process on the machine; 0 and junk are never a root.
+  const roots = allRoots.filter((r) => Number.isInteger(r) && r > 1)
   const byParent = childIndex(snapshot)
   const seen = new Set<number>(roots)
   const out: ProcRecord[] = []
@@ -189,7 +192,7 @@ export function reapStraysScript(records: StrayRecord[], delayMs: number): strin
 
 /** The same sweep for POSIX. `ps -o lstart=` is the only portable stable start time. */
 export function reapStraysSh(records: StrayRecord[], delayMs: number): string {
-  const lines = records.map(
+  const lines = records.filter((r) => signalable(r.pid)).map(
     (r) =>
       `s=$(ps -o lstart= -p ${r.pid} 2>/dev/null | tr -s ' ' '_' | sed 's/^_//;s/_$//'); ` +
       `[ "$s" = "${r.started}" ] && kill -9 ${r.pid} 2>/dev/null`
@@ -452,13 +455,8 @@ export function reapDetached(records: StrayRecord[], delayMs: number): void {
  * had already left the group.
  */
 export function killPaneStrays(id: string, ptyPid?: number): void {
-  if (!WIN && ptyPid && ptyPid > 0) {
-    try {
-      process.kill(-ptyPid, 'SIGKILL')
-    } catch {
-      /* no such group: the pty is already gone */
-    }
-  }
+  // No such group = the pty is already gone; a pid of 0 or 1 is refused by signal().
+  if (!WIN && ptyPid) signal(-ptyPid, 'SIGKILL')
   const records = tracked.get(id) ?? []
   tracked.delete(id)
   persist()

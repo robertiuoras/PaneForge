@@ -72,6 +72,7 @@ const TESTS = [
   ['power', 'power-test.mjs'],
   ['vault', 'vault-test.mjs'],
   ['killguard', 'kill-guard-test.mjs'],
+  ['signalguard', 'signal-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
