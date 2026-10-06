@@ -3708,14 +3708,18 @@ function failLines(all) {
   return all
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => /^(?:(?:fail|FAIL|not ok)\b|[✗✖]\s)/.test(l))
+    .filter((l) => /^(?:(?:fail|FAIL|not ok)\b|[✗✖]\s)/.test(l) && !/^[✗✖]\s+failing tests:$/.test(l))
     .slice(0, 4)
     .join('; ')
 }
 
 /** The check names in a `failLines` string: `FAIL  stickyselect  24.7s; ...` -> { stickyselect, ... }. */
 function failNames(text) {
-  return new Set(text.split('; ').map((p) => p.match(/^(?:fail|FAIL|✗|✖|not ok)\s+(\S+)/)?.[1]).filter(Boolean))
+  return new Set(text.split('; ').map((p) => {
+    // Node's spec reporter names individual tests, which can share their first word.
+    const spec = p.match(/^[✗✖]\s+(.+?)(?:\s+\([\d.]+ms\))?$/)
+    return spec?.[1] ?? p.match(/^(?:fail|FAIL|not ok)\s+(\S+)/)?.[1]
+  }).filter(Boolean))
 }
 
 /**

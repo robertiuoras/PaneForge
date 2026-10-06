@@ -139,7 +139,13 @@ if (mode === 'pass') process.exit(0)
 if (mode === 'ts') { console.log('src/x.ts(1,1): error TS2322: nope'); process.exit(2) }
 if (mode === 'red') { console.log('ok   fine'); console.log('FAIL broken - it broke'); console.error('rbuild: failed - exit 1'); process.exit(1) }
 if (mode === 'red2') { console.log('ok   fine'); console.log('FAIL other - it broke'); console.error('rbuild: failed - exit 1'); process.exit(1) }
-if (/^(node|tick)-red2?$/.test(mode)) { console.log('ENOENT: an error injected by a regression test'); console.log((mode.startsWith('node') ? '✖' : '✗') + ' tests/' + (mode.endsWith('2') ? 'other' : 'broken') + '.test.mjs (123ms)'); console.error('rbuild: failed - exit 1'); process.exit(1) }
+if (/^(node|tick)-red2?$/.test(mode)) {
+  console.log('ENOENT: an error injected by a regression test')
+  const name = 'tests/' + (mode.endsWith('2') ? 'other' : 'broken') + '.test.mjs (123ms)'
+  console.log((mode.startsWith('node') ? '✖ Context ' : '✗ ') + name)
+  if (mode.startsWith('node')) { console.log('ℹ fail 1'); console.log('✖ failing tests:'); console.log('✖ Context ' + name) }
+  console.error('rbuild: failed - exit 1'); process.exit(1)
+}
 if (mode === 'killed') process.kill(process.pid, 'SIGKILL')
 if (mode === 'oom') { console.error('rbuild: failed while installing'); console.log('npm error network ETIMEDOUT'); console.error('rbuild: failed - exit 1'); process.exit(1) }
 console.error('rbuild: cancelled')
@@ -279,10 +285,12 @@ process.exit(1)
     const held = work(repeated.dir, `chat-${reporter}`, 'repair.txt')
     const red = lane(repeated.dir, 'ready', '--session', `chat-${reporter}`)
     ok(`${reporter}: symbol failure is quoted as a code failure`,
-      /fails its own test suite/.test(said(red)) && said(red).includes(`${glyph} tests/broken.test.mjs`), said(red))
+      /fails its own test suite/.test(said(red)) && said(red).includes(`${glyph}${reporter === 'node' ? ' Context' : ''} tests/broken.test.mjs`), said(red))
     ok(`${reporter}: repeated failure is confirmed and cached red`,
       suiteSubmits(repeated.dir).length === 2 && ledger(repeated.dir).pcSuite?.ok === false,
       JSON.stringify(ledger(repeated.dir).pcSuite))
+    ok(`${reporter}: the spec summary is not a failed check`,
+      !ledger(repeated.dir).pcSuite?.reason?.includes('failing tests:'), JSON.stringify(ledger(repeated.dir).pcSuite))
     ok(`${reporter}: a confirmed code failure reaches the lane repair gate`,
       suiteSubmits(held.dir).length === 2 && !contains(repeated.remote, git(held.dir, 'rev-parse', 'HEAD'), 'main'), said(red))
 
