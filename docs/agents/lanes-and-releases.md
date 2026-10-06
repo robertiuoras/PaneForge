@@ -85,6 +85,15 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   (`dirty`), and the checkout has no hand edits (`closeShippedRecovery`, `test:lanecompletion`).
   `doctor` says when parked work is done, blocked, or left by a chat that is gone, and a recovery
   item that lost the active slot is revisited and blocked, not left dispatched (`test:lanecompletion`).
+- Recovery takeovers (`test:lanecompletion`): (A) `claim --prefer <lane>` lets the pane an item was
+  dispatched to (`dispatched`, no owner, same `PF_PANE`) swap into that lane though it holds a preserved
+  item; no catch-up or reset, so `begin` still sees the pinned HEAD. Another pane or an owned item gets
+  no swap. (B) a release never merges trunk into a lane holding a preserved item (a ledger error skips
+  every lane). (C) `recover --key K --session S --disposition adopt` moves an `owned`/`verified` lane
+  item from a dead owner to S when S holds the lane, the old owner holds no lane, the inventory does
+  not show it living, and the lane HEAD equals or descends from the pinned commit; status resets to
+  `owned` so the adopter re-verifies. (D) `claim` closes the requested lane's items whose pinned commit
+  trunk already holds (`closeShippedRecovery`), so a blocked dead-owner item no longer bars the lane.
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).

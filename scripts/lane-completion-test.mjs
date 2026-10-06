@@ -93,7 +93,7 @@ const briefed = (sub, disposition, fill = {}) => {
   const r = spawnSync(process.execPath, argv.map((a) => fills[a] ?? a), { cwd: root, env: f.env, encoding: 'utf8', timeout: 90_000 })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
-check('every command in the brief names its subcommand first', brief.length === 5 && brief.every((c) => /lane\.mjs$/.test(c[0]) && /^[a-z]+$/.test(c[1]) && c.includes('--repo')), JSON.stringify(brief))
+check('every command in the brief names its subcommand first', brief.length === 6 && brief.every((c) => /lane\.mjs$/.test(c[0]) && /^[a-z]+$/.test(c[1]) && c.includes('--repo')), JSON.stringify(brief))
 const got = briefed('claim')
 check('actual completion owner receives the exact preserved lane', got.code === 0 && JSON.parse(got.out).lane === 'a', got.out + got.err)
 check('claim alone cannot bypass the recovery binding/verification gate', f.run('ready', '--session', 'completion-owner', '--lane', 'a').code !== 0)
@@ -256,6 +256,12 @@ for (const kind of ['shipped', 'unshipped', 'shipped-chat-ends', 'uncommitted-on
   // The new chat commits in the lane; in the last case that includes the preserved changes.
   writeFileSync(join(o.dir, 'next.txt'), 'next chat work'); git(o.dir, 'add', '-A'); git(o.dir, 'commit', '-qm', 'next chat work')
   const item = () => o.state().recovery.items[k]
+  // Claiming the lane already closes an item trunk holds (defect D); put it back to `owned`
+  // so the ready-time and release-time closures below are still exercised.
+  if (kind.startsWith('shipped')) {
+    check(`${kind}: claim itself closes the item trunk already holds`, item()?.status === 'reviewed' && item()?.reason === 'included by trunk ancestry', JSON.stringify(item()))
+    o.patch((s) => { s.recovery.items[k].status = 'owned'; delete s.recovery.items[k].reason; s.recovery.active = k })
+  }
   check(`${kind}: an ended owner's owned item and the lane held by a new chat`, began.code === 0 && item()?.status === 'owned' && item()?.owner === 'ended-owner' && next.code === 0 && o.state().lanes.a?.session === 'next-chat', began.err + next.err)
   if (kind === 'shipped-chat-ends') {
     // A chat ending with clean committed work gets the same finish it gets in any lane.
@@ -421,6 +427,139 @@ check('same pane after clear carries guard-only dirty work', carried.code === 0 
   spawnSync(process.execPath, [t.cli, 'retry'], { cwd: t.repo, env, encoding: 'utf8', timeout: 90_000 })
   const trust = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(t.dir)]
   check('completion pane folder inherits the repo trust, not its prompt history', trust?.hasTrustDialogAccepted === true && trust.allowedTools?.[0] === 'Bash(ls:*)' && !('history' in trust), JSON.stringify(trust))
+}
+
+// 2026-10-07 (taskdriver.ai): a completion pane opened at lane b's folder was handed fallback
+// lane c because b's old hold had not been reaped yet; once b was free the pane's own claim
+// still came back as c, so `begin` could never match the ledger. A pane takes back the
+// checkout its own recovery item was dispatched to; nobody else's pane does.
+// Also: a release must not merge trunk into a lane that holds a preserved item (the pinned
+// commit moved, `begin` refused, the dispatcher re-dispatched under a new key ten times).
+const dispatchedFixture = (name, mutate = () => {}) => {
+  const x = fixture(name)
+  writeFileSync(join(x.dir, 'intent.txt'), name); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  x.patch((s) => {
+    s.recovery.items[k].pane = 'pane-X'
+    s.lanes.b = { session: 'rescuer', cwd: x.dir, pane: 'pane-X', seen: Date.now(), at: Date.now() }
+    mutate(s, k)
+  })
+  return { x, k, head: git(x.dir, 'rev-parse', 'HEAD'), index: git(x.dir, 'write-tree') }
+}
+const claimAs = (x, pane) => {
+  const r = spawnSync(process.execPath, [x.cli, 'claim', '--prefer', 'a', '--cwd', x.dir, '--session', 'rescuer'], { cwd: x.repo, env: { ...x.env, PF_PANE: pane }, encoding: 'utf8', timeout: 90_000 })
+  let lane = null; try { lane = JSON.parse(r.stdout).lane } catch {}
+  return { r, lane }
+}
+{
+  const { x, k, head, index } = dispatchedFixture('swap')
+  const c = claimAs(x, 'pane-X')
+  check('own recovery pane takes its requested lane back', c.lane === 'a' && x.state().lanes.a?.session === 'rescuer' && !x.state().lanes.b, c.r.stdout + c.r.stderr)
+  check('taking the lane back leaves HEAD and index alone', git(x.dir, 'rev-parse', 'HEAD') === head && git(x.dir, 'write-tree') === index)
+  const b = x.run('recover', '--key', k, '--session', 'rescuer', '--disposition', 'begin')
+  check('begin succeeds after the swap', b.code === 0, b.out + b.err)
+}
+{
+  const { x, k } = dispatchedFixture('swap-other-pane')
+  const c = claimAs(x, 'pane-Y')
+  check('another pane does not take the recovery lane', c.lane !== 'a' && x.state().lanes.b?.session === 'rescuer', c.r.stdout + c.r.stderr)
+  check('begin still refuses from another pane', x.run('recover', '--key', k, '--session', 'rescuer', '--disposition', 'begin').code !== 0)
+}
+{
+  const { x } = dispatchedFixture('swap-owned', (s, k) => { s.recovery.items[k].owner = 'someone-else'; s.recovery.items[k].status = 'owned' })
+  const c = claimAs(x, 'pane-X')
+  check('an item someone already owns is not taken back', c.lane !== 'a' && x.state().lanes.b?.session === 'rescuer', c.r.stdout + c.r.stderr)
+}
+{
+  const x = fixture('release-catchup')
+  writeFileSync(join(x.dir, 'intent.txt'), 'preserved'); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  const head = git(x.dir, 'rev-parse', 'HEAD')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  const bClaim = JSON.parse(x.run('claim', '--prefer', 'b', '--session', 'shipper').out)
+  writeFileSync(join(bClaim.dir, 'shipped.txt'), 'ship'); git(bClaim.dir, 'add', 'shipped.txt'); git(bClaim.dir, 'commit', '-qm', 'ship it')
+  const r = x.run('ready', '--session', 'shipper', '--lane', 'b')
+  check('release of another lane succeeds', r.code === 0, r.out + r.err)
+  check('a lane with a preserved item keeps its exact HEAD through a release', Boolean(k) && git(x.dir, 'rev-parse', 'HEAD') === head, git(x.dir, 'log', '--oneline', '-3'))
+}
+{
+  const x = fixture('release-catchup-plain')
+  // lane a keeps a folder on disk (committed, trunk-included work, so nothing is preserved)
+  writeFileSync(join(x.dir, 'old.txt'), 'old'); git(x.dir, 'add', 'old.txt'); git(x.dir, 'commit', '-qm', 'old work')
+  git(x.repo, 'merge', '-q', '--no-edit', 'lane-a'); git(x.repo, 'push', '-q', 'origin', 'master')
+  x.run('release', '--session', 'original', '--gone')
+  const bClaim = JSON.parse(x.run('claim', '--prefer', 'b', '--session', 'shipper').out)
+  writeFileSync(join(bClaim.dir, 'shipped.txt'), 'ship'); git(bClaim.dir, 'add', 'shipped.txt'); git(bClaim.dir, 'commit', '-qm', 'ship it')
+  const r = x.run('ready', '--session', 'shipper', '--lane', 'b')
+  check('an ordinary unheld lane still catches up on a release', r.code === 0 && (!existsSync(x.dir) || git(x.dir, 'rev-parse', 'HEAD') === git(x.repo, 'rev-parse', 'master')), r.out + r.err)
+}
+
+// Defect C (2026-10-07, taskdriver-mobile): the owner's pane closed, Robert resumed in another
+// pane, and no supported command moved the item to the successor. `adopt` does, under proof.
+const adoptFixture = (name, { commits = 0, mutate = () => {} } = {}) => {
+  const x = fixture(name)
+  writeFileSync(join(x.dir, 'intent.txt'), name); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  const pinned = git(x.dir, 'rev-parse', 'HEAD')
+  for (let i = 0; i < commits; i++) { writeFileSync(join(x.dir, `more${i}.txt`), 'x'); git(x.dir, 'add', '-A'); git(x.dir, 'commit', '-qm', `successor ${i}`) }
+  x.patch((st) => {
+    Object.assign(st.recovery.items[k], { owner: 'dead-owner', status: 'owned' })
+    st.lanes.a = { session: 'successor', cwd: x.dir, seen: Date.now(), at: Date.now() }
+    mutate(st, k)
+  })
+  const adopt = (session = 'successor') => x.run('recover', '--key', k, '--session', session, '--disposition', 'adopt')
+  return { x, k, pinned, adopt, item: () => x.state().recovery.items[k] }
+}
+for (const commits of [0, 1]) {
+  const { x, k, adopt, item } = adoptFixture(`adopt-ok-${commits}`, { commits })
+  const r = adopt()
+  check(`adopt moves a dead owner's item to the lane holder (HEAD +${commits})`, r.code === 0 && item().owner === 'successor' && item().status === 'owned' && item().adoptedFrom?.[0] === 'dead-owner', r.out + r.err)
+  if (commits === 0) {
+    const receipt = join(x.repo, '.git', 'adopt-proof.json')
+    writeFileSync(receipt, JSON.stringify({ commit: git(x.dir, 'rev-parse', 'HEAD'), checks: [{ command: 'fixture assertions', exitCode: 0 }], review: { reviewer: 'independent fixture', result: 'accepted' } }))
+    const v = x.run('recover', '--key', k, '--session', 'successor', '--disposition', 'verified', '--receipt', receipt)
+    check('the adopter can record verification', v.code === 0 && item().status === 'verified', v.out + v.err)
+  }
+}
+{
+  const { adopt, item } = adoptFixture('adopt-not-lane-holder')
+  const r = adopt('bystander')
+  check('adopt refuses a caller that does not hold the lane', r.code !== 0 && item().owner === 'dead-owner', r.out + r.err)
+}
+{
+  const { adopt, item } = adoptFixture('adopt-owner-holds-lane', { mutate: (st) => { st.lanes.b = { session: 'dead-owner', cwd: join(st.lanes.a.cwd, '..', 'nowhere'), seen: Date.now(), at: Date.now() } } })
+  const r = adopt()
+  check('adopt refuses while the old owner still holds a lane', r.code !== 0 && item().owner === 'dead-owner', r.out + r.err)
+}
+{
+  const { x, adopt, item } = adoptFixture('adopt-not-descendant')
+  git(x.dir, 'checkout', '-q', '--detach', 'master'); git(x.dir, 'reset', '-q', '--hard', 'v0.0.1')
+  const r = adopt()
+  check('adopt refuses a HEAD that does not descend from the pinned commit', r.code !== 0 && item().owner === 'dead-owner', r.out + r.err)
+}
+{
+  const { adopt, item } = adoptFixture('adopt-blocked', { mutate: (st, k) => { st.recovery.items[k].status = 'blocked' } })
+  const r = adopt()
+  check('adopt refuses a blocked item', r.code !== 0 && item().owner === 'dead-owner' && item().status === 'blocked', r.out + r.err)
+}
+
+// Defect D (2026-10-07, taskdriver.ai): a blocked item with a dead owner whose pinned commit
+// trunk already holds was only ever closed for a lane the caller HELD, so claim could never
+// reach the lane to close it.
+for (const shipped of [true, false]) {
+  const x = fixture(`blocked-${shipped ? 'in' : 'not-in'}-trunk`)
+  writeFileSync(join(x.dir, 'intent.txt'), 'blocked'); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  x.patch((st) => { Object.assign(st.recovery.items[k], { owner: 'dead-owner', status: 'blocked' }); delete st.recovery.active })
+  if (shipped) { git(x.repo, 'merge', '-q', '--no-edit', x.state().recovery.items[k].commit); git(x.repo, 'push', '-q', 'origin', 'master') }
+  const r = spawnSync(process.execPath, [x.cli, 'claim', '--prefer', 'a', '--cwd', x.dir, '--session', 'newcomer'], { cwd: x.repo, env: x.env, encoding: 'utf8', timeout: 90_000 })
+  let lane = null; try { lane = JSON.parse(r.stdout).lane } catch {}
+  const it = x.state().recovery.items[k]
+  if (shipped) check('claim closes a blocked item trunk already holds and gets the lane', lane === 'a' && it.status === 'reviewed' && it.reason === 'included by trunk ancestry', r.stdout + r.stderr + JSON.stringify(it))
+  else check('claim leaves a blocked item trunk does not hold untouched', it.status === 'blocked' && it.owner === 'dead-owner', r.stdout + r.stderr + JSON.stringify(it))
 }
 
 console.log(`${failures ? 'FAIL' : 'ok'} completion fixture: ${failures} failures`)

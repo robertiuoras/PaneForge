@@ -1077,6 +1077,7 @@ function recoveryBrief(key, r) {
 You are not alone. Preserve other owners, staged edits, private files and task intent. This is verification and authorized integration only; NEVER cut, tag, publish or install a release. Use the existing included native CLI provider route, no API credentials or pool fallback.
 First read AGENTS.md and lane docs, back up the target files/index/ref before any repair. ${r.problem ?? ''} Missing/foreign worktrees or an empty index with tracked HEAD files require preservation and diagnosis; NEVER auto-stage deletions, reset, remove or reconstruct files on that evidence.
 ${r.ref ? `Review the pinned ref ${r.ref} at ${r.commit} against current trunk by content. Do not cherry-pick a moved ref or blindly merge by name. Claim an empty ordinary lane, assert its heldBy is your actual native conversation ID, then explicitly park --ref ${JSON.stringify(r.ref)} --lane <slot> before resuming reviewed intent. If no safe slot or ambiguous intent, record blocked/reviewed disposition.` : `Claim the exact lane: ${cli('claim')} --prefer ${r.lane} --cwd ${JSON.stringify(laneDir(r.lane))} --session <actual-native-id>. Assert the returned lane/dir and fresh status heldBy; a fallback slot is NOT authority to edit the original. If ownership changed, stop.`}
+If this key is already owned by a chat whose pane is gone, a successor that holds the exact lane takes it over with ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition adopt (refused while the old owner runs or if the lane no longer contains the pinned commit), then re-verifies.
 Bind this recovery after the ownership readback: ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition begin${r.ref ? ' --lane <claimed-slot>' : ''}.
 Review intent and content equivalence, finish only intended work, run the repository's required PC checks (no Mac build/full-check fallback), obtain independent review, and commit verified work. Save a JSON receipt with commit, nonempty checks array of {command, exitCode: 0}, and review: {reviewer: <independent owner>, result: "accepted"}. Then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition verified --receipt <json-file>; normal ready requires this pinned verification before integration.
 Run ${cli('ready')} --session <actual-native-id> --lane <owned-slot>. Read the real merge/push outcome and remote inclusion, then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition complete. A ready flag is not completion. Version-mode publication remains for Robert's publisher.
@@ -1208,6 +1209,24 @@ function recover(session, key, disposition, receiptPath, wanted) {
     const state = read()
     const r = state.recovery?.items?.[key]
     if (!r) throw new Error('unknown recovery key')
+    if (disposition === 'adopt') {
+      // A successor chat in ANOTHER pane takes over a dead owner's item (2026-10-07,
+      // taskdriver-mobile): carryRecovery only follows a same-pane clear.
+      if (r.ref) throw new Error('adopt is for lane items; a parked ref is reviewed through begin')
+      if (!r.owner || r.owner === session) throw new Error('this item has no other owner to take over from; use begin')
+      if (!['owned', 'verified'].includes(r.status)) throw new Error(`a ${r.status} item cannot be adopted; use begin or review it`)
+      if (state.lanes[r.lane]?.session !== session) throw new Error('claim the exact ordinary lane first: only its holder can adopt')
+      if (Object.values(state.lanes).some((l) => l.session === r.owner)) throw new Error('the previous owner still holds a lane')
+      // null = inventory unknown. Allowed: the lane hold is the proof the old owner cannot
+      // continue, since a lane is held by one chat at a time and the old owner holds none.
+      if (recoveryLiving()?.has(r.owner)) throw new Error('its owner is still running')
+      if (!gitSafe(laneDir(r.lane), 'merge-base', '--is-ancestor', r.commit, 'HEAD').ok) throw new Error('this lane does not contain the pinned commit; its work is not a continuation')
+      r.adoptedFrom = [...(r.adoptedFrom ?? []), r.owner]
+      r.owner = session; r.status = 'owned' // a verified receipt belonged to the old owner
+      r.at = now()
+      writeRecovery(state)
+      return r
+    }
     if (r.owner && r.owner !== session) throw new Error('another recovery owner holds this key')
     if (disposition === 'begin') {
       if (['complete', 'reviewed', 'blocked'].includes(r.status)) throw new Error('this snapshot has a durable disposition; review it explicitly before retry')
@@ -2418,6 +2437,18 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     return !w.damaged && !w.dirty && w.ahead === 0 && !state.ready[id] && !state.conflicts[id] && !preservedRecovery(state, id)
   }
   const requested = prefer && prefer !== 'main' && POOL.includes(prefer) && cwd && inside(samePath(cwd), samePath(laneDir(prefer)))
+  // A recovery pane is dispatched to the exact lane its item is pinned to, but may be handed
+  // a fallback at SessionStart while the old hold is unreaped (2026-10-07, taskdriver.ai).
+  // Its own un-owned dispatched item must not stop it returning there. Another pane, or an
+  // item someone already owns, gets nothing. The swap only moves the hold: no catch-up, no
+  // reset, because `begin` checks HEAD === the pinned commit.
+  const dispatchedHere = (id) => {
+    const r = PANE ? preservedRecovery(state, id) : null
+    return Boolean(r && r.status === 'dispatched' && !r.owner && r.pane === PANE)
+  }
+  // A blocked item whose pinned commit trunk already holds was only closed for a lane the
+  // caller already HELD, so nothing could ever clear it and the lane stayed unclaimable (D).
+  if (requested) closeShippedRecovery(state, session, prefer)
   if (requested) {
     const owner = state.lanes[prefer]
     if (owner?.pane && owner.session !== session && !owner.asleep && empty(prefer)) {
@@ -2432,7 +2463,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // and the requested one is unheld. A visit to another checkout never moves a hold.
     const held = Object.keys(state.lanes).find((id) => state.lanes[id].session === session)
     if (held && held !== 'main' && held !== prefer && !state.lanes[prefer] && state.lanes[held].cwd &&
-        inside(samePath(state.lanes[held].cwd), samePath(laneDir(prefer))) && empty(held) && empty(prefer)) {
+        inside(samePath(state.lanes[held].cwd), samePath(laneDir(prefer))) && empty(held) && (empty(prefer) || dispatchedHere(prefer))) {
       delete state.lanes[held]
     }
   }
@@ -5524,6 +5555,10 @@ function ship(kind, session, { gated = false } = {}) {
       const rebased = []
       for (const id of POOL) {
         if (id === 'main' || working.has(id)) continue
+        // A lane holding a preserved recovery item keeps its pinned commit: merging trunk in
+        // moved it, blocked the item ("pinned commit changed") and re-dispatched it under a
+        // new key. A ledger that cannot be read skips every lane (fail closed).
+        if (state.recoveryError || preservedRecovery(state, id)) continue
         const c = catchUp(id)
         if (c.moved) rebased.push(id)
         if (c.conflicts.length) noteConflict(conflicts, id, `${MB} merge: ${c.conflicts.join(', ')}`, state.conflicts)
