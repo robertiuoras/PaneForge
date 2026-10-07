@@ -423,6 +423,69 @@ check('same pane after clear carries guard-only dirty work', carried.code === 0 
   check('completion pane folder inherits the repo trust, not its prompt history', trust?.hasTrustDialogAccepted === true && trust.allowedTools?.[0] === 'Bash(ls:*)' && !('history' in trust), JSON.stringify(trust))
 }
 
+// 2026-10-07 (taskdriver.ai): a completion pane opened at lane b's folder was handed fallback
+// lane c because b's old hold had not been reaped yet; once b was free the pane's own claim
+// still came back as c, so `begin` could never match the ledger. A pane takes back the
+// checkout its own recovery item was dispatched to; nobody else's pane does.
+// Also: a release must not merge trunk into a lane that holds a preserved item (the pinned
+// commit moved, `begin` refused, the dispatcher re-dispatched under a new key ten times).
+const dispatchedFixture = (name, mutate = () => {}) => {
+  const x = fixture(name)
+  writeFileSync(join(x.dir, 'intent.txt'), name); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  x.patch((s) => {
+    s.recovery.items[k].pane = 'pane-X'
+    s.lanes.b = { session: 'rescuer', cwd: x.dir, pane: 'pane-X', seen: Date.now(), at: Date.now() }
+    mutate(s, k)
+  })
+  return { x, k, head: git(x.dir, 'rev-parse', 'HEAD'), index: git(x.dir, 'write-tree') }
+}
+const claimAs = (x, pane) => {
+  const r = spawnSync(process.execPath, [x.cli, 'claim', '--prefer', 'a', '--cwd', x.dir, '--session', 'rescuer'], { cwd: x.repo, env: { ...x.env, PF_PANE: pane }, encoding: 'utf8', timeout: 90_000 })
+  let lane = null; try { lane = JSON.parse(r.stdout).lane } catch {}
+  return { r, lane }
+}
+{
+  const { x, k, head, index } = dispatchedFixture('swap')
+  const c = claimAs(x, 'pane-X')
+  check('own recovery pane takes its requested lane back', c.lane === 'a' && x.state().lanes.a?.session === 'rescuer' && !x.state().lanes.b, c.r.stdout + c.r.stderr)
+  check('taking the lane back leaves HEAD and index alone', git(x.dir, 'rev-parse', 'HEAD') === head && git(x.dir, 'write-tree') === index)
+  const b = x.run('recover', '--key', k, '--session', 'rescuer', '--disposition', 'begin')
+  check('begin succeeds after the swap', b.code === 0, b.out + b.err)
+}
+{
+  const { x, k } = dispatchedFixture('swap-other-pane')
+  const c = claimAs(x, 'pane-Y')
+  check('another pane does not take the recovery lane', c.lane !== 'a' && x.state().lanes.b?.session === 'rescuer', c.r.stdout + c.r.stderr)
+  check('begin still refuses from another pane', x.run('recover', '--key', k, '--session', 'rescuer', '--disposition', 'begin').code !== 0)
+}
+{
+  const { x } = dispatchedFixture('swap-owned', (s, k) => { s.recovery.items[k].owner = 'someone-else'; s.recovery.items[k].status = 'owned' })
+  const c = claimAs(x, 'pane-X')
+  check('an item someone already owns is not taken back', c.lane !== 'a' && x.state().lanes.b?.session === 'rescuer', c.r.stdout + c.r.stderr)
+}
+{
+  const x = fixture('release-catchup')
+  writeFileSync(join(x.dir, 'intent.txt'), 'preserved'); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  const head = git(x.dir, 'rev-parse', 'HEAD')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  const bClaim = JSON.parse(x.run('claim', '--prefer', 'b', '--session', 'shipper').out)
+  writeFileSync(join(bClaim.dir, 'shipped.txt'), 'ship'); git(bClaim.dir, 'add', 'shipped.txt'); git(bClaim.dir, 'commit', '-qm', 'ship it')
+  const r = x.run('ready', '--session', 'shipper', '--lane', 'b')
+  check('release of another lane succeeds', r.code === 0, r.out + r.err)
+  check('a lane with a preserved item keeps its exact HEAD through a release', Boolean(k) && git(x.dir, 'rev-parse', 'HEAD') === head, git(x.dir, 'log', '--oneline', '-3'))
+}
+{
+  const x = fixture('release-catchup-plain')
+  x.run('release', '--session', 'original', '--gone')
+  const bClaim = JSON.parse(x.run('claim', '--prefer', 'b', '--session', 'shipper').out)
+  writeFileSync(join(bClaim.dir, 'shipped.txt'), 'ship'); git(bClaim.dir, 'add', 'shipped.txt'); git(bClaim.dir, 'commit', '-qm', 'ship it')
+  const r = x.run('ready', '--session', 'shipper', '--lane', 'b')
+  check('an ordinary unheld lane still catches up on a release', r.code === 0 && git(x.dir, 'rev-parse', 'HEAD') === git(x.repo, 'rev-parse', 'master'), r.out + r.err)
+}
+
 console.log(`${failures ? 'FAIL' : 'ok'} completion fixture: ${failures} failures`)
 if (!failures) rmSync(root, { recursive: true, force: true })
 process.exitCode = failures ? 1 : 0
