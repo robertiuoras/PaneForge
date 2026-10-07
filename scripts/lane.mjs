@@ -494,13 +494,11 @@ const TENTATIVE_MS = 20 * 60 * 1000
 // Nothing can be lost by not waiting. An ignored lane's work stays on its own branch and
 // merges with the next release the moment its chat marks it ready.
 const HOLD_BUSY_MS = 60 * 60 * 1000
-// How long a main-folder file must sit untouched, with the chat holding the folder gone,
-// before it is called stranded (`mainStranded`). The app's own figure for "no window hosts
-// this chat and it has been quiet": GONE_MS in src/main/laneBoard.ts. With the holder still
-// alive the bound is HOLD_BUSY_MS above, the measured "untouched this long is not mid-edit".
+// How long a main-folder file must sit untouched, with the chat that left it gone, before it
+// is called stranded (`mainStranded`). The app's own figure for "no window hosts this chat and
+// it has been quiet": GONE_MS in src/main/laneBoard.ts. With a chat still holding the folder
+// the bound is HOLD_BUSY_MS above, the measured "untouched this long is not mid-edit".
 const STRANDED_QUIET_MS = 15 * 60 * 1000
-// An app inventory older than this is from a copy that has quit (BEAT_STALE_MS in laneBoard.ts).
-const BEAT_STALE_MS = 5 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -929,15 +927,12 @@ function recoveryFor(state, session, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => r.owner === session && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
-// `maxAge`: skip a beat older than this, so a pid the OS has since handed to another process
-// cannot pass an app that quit days ago off as running.
-function recoveryLiving(maxAge = Infinity) {
+function recoveryLiving() {
   try {
     const living = new Set()
     let known = false
     const see = (beat, pid) => {
       if (!beat || !Number.isFinite(beat.at) || !Array.isArray(beat.chats) || !beat.chats.every((s) => typeof s === 'string')) throw new Error('invalid inventory')
-      if (now() - beat.at > maxAge) return
       if (pid) {
         try { process.kill(pid, 0) } catch (e) {
           if (e.code === 'ESRCH') return
@@ -5226,6 +5221,12 @@ function releaseClaim(session, { gone = false, cleared = false } = {}) {
         }
       }
       delete state.lanes[id]
+      // Who walked away from uncommitted files in the main folder, so the card about them
+      // (strandedCard) can still name the chat after its hold is gone.
+      if (id === 'main') {
+        if (w.dirty) state.mainLeft = { session, at: now() }
+        else delete state.mainLeft
+      }
       // The test copy this chat opened belongs to the chat, not to the next one that
       // claims the lane - and `--minimized` means nobody sees it to close it by hand.
       closeLaneApps(laneDir(id))
@@ -5341,10 +5342,12 @@ const blockerFiles = (blockers) => blockers.split('\n').filter(Boolean).map((l) 
  * none of them raised anything.
  *
  * Stranded is read off the files first, like HOLD_BUSY_MS: untouched for STRANDED_QUIET_MS
- * and the folder's holder is gone (no hold, its chat ended, or quiet that long and in no
- * running app's inventory) - or untouched for HOLD_BUSY_MS whoever holds it. A file whose
- * age cannot be read is never stranded: the failure that matters is calling somebody's
- * open edit abandoned. Reads only; nothing here touches the files.
+ * and nobody holds the folder any more (its chat's app released the hold - Next's lane clock
+ * and old PaneForge's sweep do that for a closed chat - or SessionEnd stamped it ended), or
+ * untouched for HOLD_BUSY_MS whoever holds it. A chat still holding the folder is never
+ * called gone from here: a Next chat is in no inventory this engine can read, so a live one
+ * would read as dead. A file whose age cannot be read is never stranded: the failure that
+ * matters is calling somebody's open edit abandoned. Reads only; nothing here touches the files.
  */
 function mainStranded(state, blockers = mainBlockers(state)) {
   if (RELEASE !== 'merge' || !blockers) return null
@@ -5361,14 +5364,10 @@ function mainStranded(state, blockers = mainBlockers(state)) {
   const quiet = now() - touched
   if (quiet < STRANDED_QUIET_MS) return null
   const hold = state.lanes.main
-  const session = hold?.session ?? null
-  const seen = hold?.seen ?? hold?.claimed ?? 0
-  let gone = !session || Boolean(hold.ended)
-  if (!gone && now() - seen > STRANDED_QUIET_MS) {
-    // Only a running app's word counts: unknown is never "the chat is gone".
-    const living = recoveryLiving(BEAT_STALE_MS)
-    gone = Boolean(living) && !living.has(session) && !(hold.pane && living.has(hold.pane))
-  }
+  // The chat that released the folder with these files in it, unless somebody wrote them since.
+  const left = !hold?.session && state.mainLeft?.at >= touched ? state.mainLeft : null
+  const session = hold?.session ?? left?.session ?? null
+  const gone = !hold?.session || Boolean(hold.ended)
   if (!gone && quiet < HOLD_BUSY_MS) return null
   const waiting = Object.keys(state.ready).filter((id) => id !== 'main').sort()
   return { files, session, gone, waiting }
@@ -5376,7 +5375,7 @@ function mainStranded(state, blockers = mainBlockers(state)) {
 
 function strandedWho(s) {
   if (!s.session) return 'no chat holds the main folder'
-  if (s.gone) return `the chat holding the main folder (${s.session.slice(0, 8)}) has ended`
+  if (s.gone) return `the chat that left them (${s.session.slice(0, 8)}) has ended`
   return `the chat holding the main folder (${s.session.slice(0, 8)}) has not touched them for over an hour`
 }
 
@@ -5430,8 +5429,10 @@ function strandedCard(state) {
   if (!blockers) {
     if (!was) return null
     if (was.card && !send(['--clear', '--id', id], { id, clear: true })) return null
-    delete state.stranded
-    write(state)
+    // Posting takes up to 30 s, and a chat's claim or release written meanwhile must survive.
+    const fresh = read()
+    delete fresh.stranded
+    write(fresh)
     return was.card ? 'The main folder no longer holds the release - took its card down.' : null
   }
   const stuck = mainStranded(state, blockers)
@@ -5448,8 +5449,9 @@ function strandedCard(state) {
     `Paste into a chat in ${repo}: commit ${names} in ${MAIN} as it is (keep both sides if a lane changes it), then run lane.mjs retry --repo ${MAIN}`
   const via = send(['--id', id, '--title', title, '--detail', detail, '--not-browser'], { id, card: true, title, detail })
   if (!via) return null
-  state.stranded = { key, since: was?.since ?? now(), card: { at: now(), via } }
-  write(state)
+  const fresh = read()
+  fresh.stranded = { key, since: was?.since ?? now(), card: { at: now(), via } }
+  write(fresh)
   return `The main folder holds the release with ${names} and nobody is on it - raised one card for a person (${via}).`
 }
 
@@ -7812,7 +7814,10 @@ try {
     // What is left is a real disagreement. One nobody is on gets one card for a person.
     const sent = clashCards(state)
     if (sent.length) {
-      write(state)
+      // Each card took up to 20 s to post; a chat's claim or release written meanwhile must survive.
+      const fresh = read()
+      for (const o of sent) if (fresh.conflicts[o.id]) fresh.conflicts[o.id].card = state.conflicts[o.id].card
+      write(fresh)
       for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - raised one card for a person (${o.via}).`)
     }
     const completion = dispatchCompletion()

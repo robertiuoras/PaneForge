@@ -13,19 +13,21 @@
 // The agents repeated the sentence as "queued behind another chat's main-checkout edits" and
 // moved on, nothing raised a card, and a person found it by hand eight hours later.
 //
-// The rule now: once the files have been left alone and the chat that left them is gone (or
-// nobody has touched them for HOLD_BUSY_MS whoever holds the folder), the reason says nobody
-// is working on it, and the lane clock (`retry`) raises ONE waiting card naming the file, the
-// holder and the waiting lanes - cleared when the blocker goes. The stranded bytes are never
-// touched. A live chat mid-edit in the main folder still gets the old wait, and no card.
+// The rule now: once the files have been left alone and the chat that left them is gone - its
+// hold released by its app's sweep (Next's lane clock, `release --gone`) or stamped ended - or
+// nobody has touched them for HOLD_BUSY_MS whoever holds the folder, the reason says nobody is
+// working on it, and the lane clock (`retry`) raises ONE waiting card naming the file, the
+// chat that left it and the waiting lanes - cleared when the blocker goes. The stranded bytes
+// are never touched. A chat still holding the main folder is never called gone from here: a
+// Next chat is in no inventory this engine can read, so only its own app may say so.
 //
 // Real git repos in the temp folder, real lane.mjs, no stubs. LANE_DISPATCH_LOG stands in for
 // GuardDeck (see clashCards).
 //
 //   node scripts/lane-stranded-main-test.mjs
 
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, unlinkSync, utimesSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -55,7 +57,7 @@ const LEDGER = 'clients/alison-r/write-ledger.jsonl'
  * app inventory (`.git/paneforge-panes/pf-<pid>.json`, this live process's pid) hosts the
  * chats in `living`. `holderSeen` is how long ago the holder last ran a lane command.
  */
-function fixture(name, { holder, living, fileAge, holderSeen }) {
+function fixture(name, { holder, living, fileAge, holderSeen, pane = null }) {
   const repo = join(root, name)
   mkdirSync(join(repo, 'scripts'), { recursive: true })
   mkdirSync(join(repo, 'clients', 'alison-r'), { recursive: true })
@@ -101,13 +103,14 @@ function fixture(name, { holder, living, fileAge, holderSeen }) {
   const statePath = join(repo, '.git', 'paneforge-lanes.json')
   const state = JSON.parse(readFileSync(statePath, 'utf8'))
   state.lanes.main.seen = Date.now() - holderSeen
+  if (pane) state.lanes.main.pane = pane
   writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n', 'utf8')
 
   mkdirSync(join(repo, '.git', 'paneforge-panes'), { recursive: true })
   writeFileSync(join(repo, '.git', 'paneforge-panes', `pf-${process.pid}.json`), JSON.stringify({ at: Date.now(), chats: living }))
 
   const readCards = () => (existsSync(cards) ? readFileSync(cards, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
-  return { repo, lane, work, main, stranded, readCards }
+  return { repo, lane, work, main, stranded, readCards, env }
 }
 
 const landed = (repo) => git(repo, 'log', '--oneline', 'master').includes('log a write')
@@ -115,8 +118,11 @@ const landed = (repo) => git(repo, 'log', '--oneline', 'master').includes('log a
 // ------------------------------------------------- the 7 Oct shape: holder gone, file left
 
 {
-  const f = fixture('holder-gone', { holder: 'deadmain-01a113ba', living: ['someone-else'], fileAge: 3 * HOUR, holderSeen: 3 * HOUR })
+  const f = fixture('holder-gone', { holder: 'deadmain-01a113ba', living: ['someone-else'], fileAge: 3 * HOUR, holderSeen: 3 * HOUR, pane: 'pane-closed' })
   ok('the holder took main, the lane chat a copy', f.main.lane === 'main' && f.work.lane !== 'main', JSON.stringify([f.main, f.work]))
+  // Its app finds the chat closed and gives the main folder back, files and all (Next's lane clock).
+  const gave = f.lane('release', '--session', 'deadmain-01a113ba', '--gone')
+  ok('the closed chat gave the main folder back', gave.code === 0 && !JSON.parse(readFileSync(join(f.repo, '.git', 'paneforge-lanes.json'), 'utf8')).lanes.main, gave.out || gave.err)
   const done = f.lane('ready', '--session', 'lane-chat-b')
   ok('the finished lane does not merge over the stranded file', !landed(f.repo), done.out || done.err)
   ok('the reason no longer says a chat is still working', !/chats still working/i.test(done.out), done.out)
@@ -141,6 +147,54 @@ const landed = (repo) => git(repo, 'log', '--oneline', 'master').includes('log a
   const all = f.readCards()
   ok('the card is cleared once the blocker is gone', all.length === 2 && all[1].clear === true, JSON.stringify(all))
   ok('and the finished work then merges', landed(f.repo), r3.out || r3.err)
+}
+
+// ------------------- a Next chat holding main, quiet a while, is in no inventory but alive
+
+{
+  const f = fixture('holder-next', { holder: 'nextmain-0000', living: ['someone-else'], fileAge: 20 * 60 * 1000, holderSeen: 20 * 60 * 1000, pane: 'pane-next-open' })
+  const done = f.lane('ready', '--session', 'lane-chat-b')
+  ok('a chat still holding main is not called gone because no inventory lists it', /waiting on chats still working: main/.test(done.out), done.out)
+  f.lane('retry')
+  ok('and gets no card', f.readCards().length === 0, JSON.stringify(f.readCards()))
+}
+
+// ---------- a chat claiming while the card is being posted keeps its claim (the 30 s window)
+
+if (process.platform !== 'win32') {
+  const f = fixture('card-race', { holder: 'racemain-01a113ba', living: ['someone-else'], fileAge: 3 * HOUR, holderSeen: 3 * HOUR, pane: 'pane-closed' })
+  f.lane('release', '--session', 'racemain-01a113ba', '--gone')
+  f.lane('ready', '--session', 'lane-chat-b')
+  // The card goes into a pipe this test keeps full, so posting it waits - as GuardDeck can for 30 s.
+  const fifo = join(root, 'card-race.fifo')
+  execFileSync('mkfifo', [fifo])
+  const pipe = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK)
+  for (const size of [4096, 1]) {
+    try {
+      for (;;) writeSync(pipe, Buffer.alloc(size, 32))
+    } catch {
+      /* full */
+    }
+  }
+  const tick = spawn(process.execPath, [join(f.repo, 'scripts', 'lane.mjs'), 'retry'], { cwd: f.repo, env: { ...f.env, LANE_DISPATCH_LOG: fifo }, stdio: 'ignore' })
+  const ended = new Promise((done) => tick.on('exit', done))
+  const posting = () => spawnSync('lsof', ['-p', String(tick.pid), '-Fn'], { encoding: 'utf8' }).stdout.includes('card-race.fifo')
+  const until = Date.now() + 120_000
+  while (!posting() && tick.exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 200))
+  ok('the lane clock is posting the card', posting())
+  const late = JSON.parse(f.lane('claim', '--session', 'late-chat').out)
+  const drain = setInterval(() => {
+    try {
+      while (readSync(pipe, Buffer.alloc(65536)) > 0);
+    } catch {
+      /* empty */
+    }
+  }, 50)
+  await ended
+  clearInterval(drain)
+  closeSync(pipe)
+  const lanes = JSON.parse(readFileSync(join(f.repo, '.git', 'paneforge-lanes.json'), 'utf8')).lanes
+  ok('a claim made while the card was posted is still in the ledger', lanes[late.lane]?.session === 'late-chat', JSON.stringify({ late, lanes }))
 }
 
 // --------------------------------------- a live chat mid-edit in main keeps the old wait
