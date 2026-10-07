@@ -143,7 +143,10 @@ push; other refs are never gated. `ship()` run by `autoship` re-tests the merged
 `ship` and a version release record `pushOk` for their tree and go through. `--no-verify` is
 a deliberate bypass. The refusal names master's own `lane.mjs` by absolute path (a lane's copy can be
 older and lack the gate): `ready` for lane work, `autoship` when master already holds the merged
-work.
+work. Every PC typecheck/suite job is keyed on the folder's COMMITTED tree (`headTree`) and, when
+the folder is dirty, ships a `git archive` copy of that tree (`submitPcTree`): rbuild uploads the
+folder as it stands, and a verdict on another chat's uncommitted edits matched no pushed commit,
+so master sat unpushed while main was being edited (2026-10-07, `test:lanetypecheckjob` v).
 
 **Dev-window tour** (`shared/tour.ts`, `TourCard.tsx`, `shared/lookCheck.ts`; `test:tour`,
 `test:look`): each `feat:`/`fix:`/`perf:` commit since the installed build touching `src/`,

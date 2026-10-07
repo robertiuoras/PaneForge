@@ -3946,6 +3946,39 @@ function remember(state, [key, sub], value) {
   write(fresh)
 }
 
+/** The tree `dir` has committed (HEAD's), or null. The tree a push sends, so the one a PC verdict must be on. */
+function headTree(dir) {
+  const t = gitSafe(dir, 'rev-parse', 'HEAD^{tree}')
+  return t.ok ? t.out : null
+}
+
+/**
+ * Queue `words` on the PC for exactly `tree`, the committed tree of `dir`. rbuild uploads the
+ * folder as it stands, so while another chat has uncommitted edits in it the job tested a tree
+ * no commit has, and the pre-push hook (`treeVerdict` on the pushed commit's tree) never found a
+ * verdict: 2026-10-07 master sat 9 commits ahead of origin, lanes b and d merged and unpushed,
+ * for as long as main was being edited. A folder that is not exactly `tree` ships a throwaway
+ * copy of `tree` instead (`git archive`, 0.3 s for PaneForge), named like the folder so the PC
+ * labels it the same; rbuild has read every file by the time it returns, so the copy goes then.
+ */
+function submitPcTree(dir, tree, words) {
+  if (!tree || workingTree(dir) === tree) return submitPcJob(dir, words)
+  const box = mkdtempSync(join(tmpdir(), 'lane-pc-'))
+  try {
+    const copy = join(box, basename(dir))
+    mkdirSync(copy)
+    const tar = join(box, 'tree.tar')
+    const a = gitSafe(dir, 'archive', '--format=tar', '-o', tar, tree)
+    if (!a.ok) return { failed: `could not copy the committed files out of git: ${firstLine(a.out)}` }
+    const x = spawnSync('tar', ['-xf', tar, '-C', copy], { encoding: 'utf8', windowsHide: true, timeout: 120_000 })
+    if (x.status !== 0) return { failed: `could not unpack the committed files: ${firstLine(`${x.stderr ?? ''}`) || `exit ${x.status}`}` }
+    rmSync(tar, { force: true })
+    return submitPcJob(copy, words)
+  } finally {
+    rmSync(box, { recursive: true, force: true })
+  }
+}
+
 /** Queue `words` on the PC for `dir` without waiting: `{ id }`, or `{ failed }` with why not. */
 function submitPcJob(dir, words) {
   const at = process.argv.indexOf('--session')
@@ -4035,14 +4068,14 @@ const pcWaiting = (what, id) =>
  */
 function remoteTypecheckFailure(state) {
   if (!onPc()) return undefined
-  const tree = workingTree(MAIN)
+  const tree = headTree(MAIN)
   // Fresh: another chat's try may have queued this tree's job since `state` was read.
   const last = read().typecheck
   const known = tree && last?.tree === tree ? last : null
   if (known && 'verdict' in known) return known.verdict
   let id = known?.id
   if (!id) {
-    const sent = submitPcJob(MAIN, ['typecheck'])
+    const sent = submitPcTree(MAIN, tree, ['typecheck'])
     if (sent.failed) {
       return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
     }
@@ -4118,7 +4151,7 @@ function failNames(text) {
  * one still in line (`waitPcJob`); `waitS` is the wait budget.
  */
 function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_WAIT_S } = {}) {
-  const tree = workingTree(dir)
+  const tree = headTree(dir)
   const mine = tree && known?.tree === tree ? known : null
   if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
   let id = mine?.id
@@ -4129,7 +4162,7 @@ function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_
     if (!id) {
       // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
       // on Windows). The typecheck is its own gate, already passed for this tree.
-      const sent = submitPcJob(dir, ['--', 'npm', 'test'])
+      const sent = submitPcTree(dir, tree, ['--', 'npm', 'test'])
       // The record is left as it is: after a red first job it still names that job, and
       // the next try reads its answer again rather than running it again.
       if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
@@ -4519,7 +4552,7 @@ function stopStaleSuiteJob(dir, commit) {
  * node_modules is fixed outside this file and the next attempt should find out.
  *
  * On the Mac it runs on the PC instead (`pcSuite`, cached in `state.pcSuite`) on the TREE
- * rbuild ships - the commit plus whatever MAIN has uncommitted, which is what the PC tests.
+ * MAIN has committed - never another chat's uncommitted edits, which no push sends (`submitPcTree`).
  *
  * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
  * hands now, and it is typed by a person who is watching.
