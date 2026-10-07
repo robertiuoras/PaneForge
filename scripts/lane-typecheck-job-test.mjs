@@ -118,6 +118,10 @@ try {
 import { randomUUID } from 'node:crypto'
 const args = process.argv.slice(2)
 appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify(args) + '\\n')
+if (args.includes('--no-wait') && args.includes('--') && existsSync(${JSON.stringify(join(home, '.claude', 'rbuild-unsent'))})) {
+  console.error('ssh: connect to host pc port 22: Operation timed out')
+  process.exit(255)
+}
 if (args.includes('--no-wait')) {
   const id = randomUUID()
   const repo = args.includes('--repo') ? realpathSync(args[args.indexOf('--repo') + 1]) : null
@@ -153,6 +157,9 @@ if (/^(node|tick)-red2?$/.test(mode)) {
 }
 if (mode === 'killed') process.kill(process.pid, 'SIGKILL')
 if (mode === 'oom') { console.error('rbuild: failed while installing'); console.log('npm error network ETIMEDOUT'); console.error('rbuild: failed - exit 1'); process.exit(1) }
+// GuardDeck's own words for a job stopped on the PC, as rbuild relayed them on 2026-10-08.
+if (mode === 'stalled') { console.log('ok   fine'); console.error('rbuild: timed_out - timed_out after 11 min running, 0 min waiting, peak memory 8.1 of 8.0 GB; Stalled: no output and under 5% of one CPU for 10 min (a test or server left waiting?); stopped after 11 min instead of at its 30 min limit.'); process.exit(1) }
+if (mode === 'linetimeout') { console.error('rbuild: timed_out - timed_out after 0 min running, 30 min waiting'); process.exit(1) }
 console.error('rbuild: cancelled')
 process.exit(1)
 `)
@@ -396,6 +403,54 @@ process.exit(1)
   ok('q: no confirm job and nothing cached', suiteSubmits(sqq.dir).length === 1 && !ledger(sqq.dir).pcSuite,
     JSON.stringify([suiteSubmits(sqq.dir).length, ledger(sqq.dir).pcSuite]))
   ok('q: the reason is rbuild\'s last status line', /rbuild: failed - exit 1/.test(said(qOut)), said(qOut))
+
+  // q2: master's suite cannot run on the PC at all (2026-10-08 paneforge-next: `npm test`
+  // started every test file at once, peaked 8.1 of 8.0 GB and the PC job was stopped), and the
+  // finished lane is the one that caps it. The gate stopped at "could not run" and never asked
+  // the lane, so the fix could not land. A ready lane whose own tree passes is the answer.
+  mode('pass')
+  const sq2 = project('suitecannot')
+  const q2 = work(sq2.dir, 'chat-q2', 'q2.txt')
+  const q2Tip = git(q2.dir, 'rev-parse', 'HEAD')
+  writeFileSync(repoModesFile, JSON.stringify({ [real(sq2.dir)]: 'oom', [real(q2.dir)]: 'pass' }))
+  const q2Out = lane(sq2.dir, 'ready', '--session', 'chat-q2')
+  rmSync(repoModesFile, { force: true })
+  ok('q2: lane whose own suite passes lands while master cannot run', contains(sq2.remote, q2Tip, 'main'), said(q2Out))
+  ok('q2: the lane was tested on the PC', suiteSubmits(q2.dir).length === 1, JSON.stringify(suiteSubmits(q2.dir)))
+  ok('q2: master\'s cannot-run is not cached', !ledger(sq2.dir).pcSuite?.tree || !('ok' in ledger(sq2.dir).pcSuite),
+    JSON.stringify(ledger(sq2.dir).pcSuite))
+
+  // q3: master cannot be SENT to the PC (unreachable): no lane jobs are queued behind it.
+  mode('pass')
+  const sq3 = project('suiteunsent')
+  const q3 = work(sq3.dir, 'chat-q3', 'q3.txt')
+  writeFileSync(join(home, '.claude', 'rbuild-unsent'), '')
+  const q3Out = lane(sq3.dir, 'ready', '--session', 'chat-q3')
+  rmSync(join(home, '.claude', 'rbuild-unsent'), { force: true })
+  ok('q3: unreachable PC is reported as could not be sent', /test suite could not be sent to the PC/.test(said(q3Out)), said(q3Out))
+  ok('q3: no lane job queued behind an unreachable PC', suiteSubmits(q3.dir).length === 0, JSON.stringify(suiteSubmits(q3.dir)))
+
+  // q4: the same master, the next try: the PC stopped its suite after 11 minutes of running
+  // (stalled at 8.1 of 8.0 GB). It ran, so the lane is asked, as in q2.
+  mode('pass')
+  const sq4 = project('suitestalled')
+  const q4 = work(sq4.dir, 'chat-q4', 'q4.txt')
+  const q4Tip = git(q4.dir, 'rev-parse', 'HEAD')
+  writeFileSync(repoModesFile, JSON.stringify({ [real(sq4.dir)]: 'stalled', [real(q4.dir)]: 'pass' }))
+  const q4Out = lane(sq4.dir, 'ready', '--session', 'chat-q4')
+  rmSync(repoModesFile, { force: true })
+  ok('q4: lane lands while master\'s suite was stopped after running', contains(sq4.remote, q4Tip, 'main'), said(q4Out))
+  ok('q4: the lane was tested on the PC', suiteSubmits(q4.dir).length === 1, JSON.stringify(suiteSubmits(q4.dir)))
+
+  // q5: timed out in line, never started: the runner, so no lane job is stacked behind it.
+  mode('pass')
+  const sq5 = project('suitelinetimeout')
+  const q5 = work(sq5.dir, 'chat-q5', 'q5.txt')
+  writeFileSync(repoModesFile, JSON.stringify({ [real(sq5.dir)]: 'linetimeout', [real(q5.dir)]: 'pass' }))
+  const q5Out = lane(sq5.dir, 'ready', '--session', 'chat-q5')
+  rmSync(repoModesFile, { force: true })
+  ok('q5: a job that never started is reported as could not run', /test suite could not run on the PC/.test(said(q5Out)), said(q5Out))
+  ok('q5: no lane job queued behind it', suiteSubmits(q5.dir).length === 0, JSON.stringify(suiteSubmits(q5.dir)))
 
   // r: two finished lanes while master is red: both lane jobs are queued before either is
   // waited on, so the PC runs them side by side.

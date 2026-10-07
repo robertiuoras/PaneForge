@@ -4053,6 +4053,10 @@ function rbuildOnce(args, timeoutS) {
     status: r.status,
     // rbuild names a job that ran and exited red `failed`; cancelled and timed_out never ran to a verdict.
     ran: /^rbuild: failed\b/.test(final ?? ''),
+    // It got as far as running on the PC: exited red, or stopped there after minutes of running
+    // (2026-10-08 paneforge-next main: "timed_out after 11 min running, 0 min waiting, peak memory
+    // 8.1 of 8.0 GB; Stalled: no output ..."). Still no verdict; `pcSuite` calls it `died`.
+    started: /^rbuild: (failed\b|timed_out\b.*\bafter [1-9]\d* min running)/.test(final ?? ''),
     out,
     why: final ?? (out.trim() ? firstLine(out) : r.error?.message || `exit ${r.status}`)
   }
@@ -4060,6 +4064,16 @@ function rbuildOnce(args, timeoutS) {
 
 /** A suite sentence that is not a verdict on the code: queued on the PC, already running here, or the runner failed. */
 const SUITE_UNSETTLED = /test suite (is already running|ended without an answer|(is still waiting its turn on|could not (run on|be sent to)) the PC)/
+/**
+ * The unsettled case not worth waiting out: the suite started on the PC and ended red with no
+ * failing test named (`died` in `pcSuite`). Asking master again cannot end it when the cause
+ * is master's own tree, and the lane carrying the fix was never asked (2026-10-08
+ * paneforge-next: `npm test` started every file at once, 8.1 of 8.0 GB, so the lane capping
+ * it sat marked done behind "could not run", then behind "timed_out after 11 min running ...
+ * Stalled"). The ready lanes are asked instead. A job that never ran (cancelled, timed out in
+ * line, unsent, tooling missing) still waits: that is the runner, not a tree.
+ */
+const SUITE_DIED = /test suite could not run on the PC, .* each finished lane is tried on its own/
 
 const pcWaiting = (what, id) =>
   `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
@@ -4147,8 +4161,11 @@ function failNames(text) {
  *   waits on that same id.
  * - `{ cannot, why }`: the job never ran to a verdict (could not be sent, cancelled, timed
  *   out on the PC, unknown to rbuild, tooling missing, or red with no failing check named
- *   - a dependency install or an out-of-memory kill on the PC, which a tree can never fix
- *   and caching would pin until a merge). Dropped, so the next try sends a new one.
+ *   - a dependency install or an out-of-memory kill on the PC, which caching would pin until
+ *   a merge). Dropped, so the next try sends a new one. `died` when it did run on the PC
+ *   (red, or stopped after minutes of running) with no tooling missing: a tree CAN cause
+ *   that one (2026-10-08 paneforge-next: `npm test` started every file at once, 8.1 of
+ *   8.0 GB), so the gate asks the ready lanes too.
  * - `{ red }`: ran and failed checks it names, then failed again on one confirming job (the
  *   confirm-once rule in `suiteFailure`; the confirming job is remembered too), repeating a
  *   check the first job failed. Two reds on different checks mean every check passed in one
@@ -4190,7 +4207,7 @@ function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_
     const failed = failLines(r.out)
     if (!r.ran || cannotRun(r.out) || !failed) {
       if (tree) save(null)
-      return { cannot: 'run on', why: r.why }
+      return { cannot: 'run on', why: r.why, ...(r.started && !cannotRun(r.out) && { died: true }) }
     }
     if (confirming) {
       // No record of the first red (an older lane.mjs wrote it), a shared check, or a list
@@ -4586,6 +4603,9 @@ function suiteFailure(state) {
     const v = pcSuite(MAIN, read().pcSuite, (rec) => remember(state, ['pcSuite'], rec))
     if (!v) return null
     if (v.pending) return pcWaiting('test suite', v.pending)
+    if (v.died) {
+      return `${MB}'s test suite could not run on the PC, so nothing was released - ${v.why}. It started and stopped without naming a failing test, so each finished lane is tried on its own.`
+    }
     if (v.cannot) {
       return `${MB}'s test suite could not ${v.cannot} the PC, so nothing was released - ${v.why}. That is the remote runner, not the code.`
     }
@@ -4947,8 +4967,10 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   const red = suiteFailure(state)
   if (red) {
     // No verdict yet - master's suite is still queued on the PC, already running in another
-    // check, or the runner failed. Testing every finished lane now would only stack more runs.
-    if (SUITE_UNSETTLED.test(red)) return { shipped: false, reason: red }
+    // check, or its job never ran (cancelled, timed out, unsent). Testing every finished lane
+    // now would only stack more runs. One that ran and died there goes on to the lanes
+    // (`SUITE_DIED`).
+    if (SUITE_UNSETTLED.test(red) && !SUITE_DIED.test(red)) return { shipped: false, reason: red }
     // The lane that fixes a red master can never merge if the gate only ever asks
     // master, because master stays red until the merge that only happens once the gate
     // says yes - the deadlock this exists for. A ready lane already carries master's
