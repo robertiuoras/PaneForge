@@ -242,6 +242,8 @@ const TESTS = [
   ['lanenevercopy', 'lane-never-copy-test.mjs'],
   // A copy missing most of its files is damaged, never handed to a chat (2026-10-01).
   ['lanedamaged', 'lane-damaged-test.mjs'],
+  // A copy a killed checkout left half made is finished on proof or left alone (2026-10-07).
+  ['lanehalfmade', 'lane-halfmade-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
   ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
   ['lanetypecheckjob', 'lane-typecheck-job-test.mjs'],
@@ -497,7 +499,7 @@ const SERIAL = new Set([
  */
 const LANE_ONLY = new Set([
   'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
-  'lanedamaged', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
+  'lanedamaged', 'lanehalfmade', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
   'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice',
   'lanestrand', 'pushgate'
 ])

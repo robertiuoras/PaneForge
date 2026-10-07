@@ -4,7 +4,7 @@
 // cached. A red suite is confirmed once, and the confirming job is reused the same way.
 // The rbuild here is a stub under a fake HOME: no PC, no network.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -109,7 +109,8 @@ try {
   mkdirSync(engineDir, { recursive: true })
   mkdirSync(join(home, '.claude'), { recursive: true })
   mkdirSync(childTmp, { recursive: true })
-  const original = readFileSync(join(scripts, 'lane.mjs'), 'utf8')
+  // LANE_ENGINE=<file> runs these against another engine (an older commit's, to see it red).
+  const original = readFileSync(process.env.LANE_ENGINE ?? join(scripts, 'lane.mjs'), 'utf8')
   const relocated = original.replace(/from '(\.\/[^']+)'/g, (_, p) =>
     `from '${pathToFileURL(resolve(scripts, p)).href}'`)
   writeFileSync(join(engineDir, 'lane.mjs'), relocated)
@@ -120,7 +121,11 @@ appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify(args) + '\\n')
 if (args.includes('--no-wait')) {
   const id = randomUUID()
   const repo = args.includes('--repo') ? realpathSync(args[args.indexOf('--repo') + 1]) : null
-  appendFileSync(${JSON.stringify(jobsFile)}, JSON.stringify({ id, repo, kind: args.includes('--') ? 'suite' : 'typecheck' }) + '\\n')
+  // What the real rbuild would upload from that folder, read at submit time: base.txt's bytes
+  // and whether an untracked stray.txt is there.
+  const shipped = repo && existsSync(repo + '/base.txt') ? readFileSync(repo + '/base.txt', 'utf8') : null
+  const stray = Boolean(repo) && existsSync(repo + '/stray.txt')
+  appendFileSync(${JSON.stringify(jobsFile)}, JSON.stringify({ id, repo, kind: args.includes('--') ? 'suite' : 'typecheck', shipped, stray }) + '\\n')
   console.error('rbuild: job ' + id + ' saved. queued behind 25')
   process.exit(75)
 }
@@ -495,6 +500,41 @@ process.exit(1)
   ok('u: the lane whose job already passed lands', contains(sU.remote, u2Tip, 'main'), said(uOut))
   ok('u: no long wait on the lane still in line', !uWaits.some((a) => a[1] === u1Job && Number(a[2]) > TICK_S), JSON.stringify(uWaits))
   ok('u: the try ends inside stub time for a short read (not the 900 s wait)', uMs < 6000, `${uMs} ms`)
+
+  // v: another chat has uncommitted edits in the main folder (and a new file). The push gate
+  // judges the COMMITTED tree, so master's typecheck and suite must test exactly that: ship
+  // the committed files, and key the verdict on HEAD's tree. 2026-10-07: they shipped the
+  // folder as it stood, the verdict was keyed on a tree no commit has, and the pre-push hook
+  // refused master (9 commits, lanes b and d) for as long as the other chat kept editing.
+  mode('pass')
+  suiteMode('pass')
+  const sv = project('suitedirty')
+  const v = work(sv.dir, 'chat-v', 'v.txt')
+  const vTip = git(v.dir, 'rev-parse', 'HEAD')
+  writeFileSync(join(sv.dir, 'base.txt'), 'uncommitted edit\n')
+  writeFileSync(join(sv.dir, 'stray.txt'), 'new file\n')
+  // Master's committed tree before the lane lands: the tree its own suite is read on.
+  const vBaseTree = git(sv.dir, 'rev-parse', 'HEAD^{tree}')
+  const vJobs0 = readFileSync(jobsFile, 'utf8').trim().split('\n').length
+  const vOut = lane(sv.dir, 'ready', '--session', 'chat-v')
+  const vJobs = readFileSync(jobsFile, 'utf8').trim().split('\n').slice(vJobs0).map(JSON.parse)
+  const vHeadTree = git(sv.dir, 'rev-parse', 'HEAD^{tree}')
+  ok('v: the lane lands with the main folder dirty', contains(sv.remote, vTip, 'main'), said(vOut))
+  ok('v: master was tested on the PC', vJobs.some((j) => j.kind === 'suite') && vJobs.some((j) => j.kind === 'typecheck'),
+    JSON.stringify(vJobs))
+  ok('v: every job shipped the committed files, not the uncommitted edit',
+    vJobs.length > 0 && vJobs.every((j) => j.shipped === 'base\n' && !j.stray), JSON.stringify(vJobs))
+  // The pre-push hook (`treeVerdict`) matches a record's tree to the pushed commit's tree exactly,
+  // so a verdict keyed on the folder as it stood can never let a push through.
+  ok('v: the suite verdict is on master\'s committed tree, not the folder as it stood',
+    ledger(sv.dir).pcSuite?.tree === vBaseTree && ledger(sv.dir).pcSuite?.ok === true,
+    `${JSON.stringify(ledger(sv.dir).pcSuite)} vs ${vBaseTree}`)
+  ok('v: the typecheck verdict is on HEAD^{tree} too', ledger(sv.dir).typecheck?.tree === vHeadTree,
+    `${JSON.stringify(ledger(sv.dir).typecheck)} vs ${vHeadTree}`)
+  ok('v: the other chat keeps its uncommitted edit and new file',
+    readFileSync(join(sv.dir, 'base.txt'), 'utf8') === 'uncommitted edit\n' && existsSync(join(sv.dir, 'stray.txt')))
+  ok('v: no copy is left behind in the temp folder',
+    !readdirSync(childTmp).some((n) => n.startsWith('lane-pc-')), readdirSync(childTmp).join(', '))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

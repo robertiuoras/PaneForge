@@ -47,13 +47,19 @@ import { randomUUID, createHash } from 'node:crypto'
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  readSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -488,6 +494,11 @@ const TENTATIVE_MS = 20 * 60 * 1000
 // Nothing can be lost by not waiting. An ignored lane's work stays on its own branch and
 // merges with the next release the moment its chat marks it ready.
 const HOLD_BUSY_MS = 60 * 60 * 1000
+// How long a main-folder file must sit untouched, with the chat that left it gone, before it
+// is called stranded (`mainStranded`). The app's own figure for "no window hosts this chat and
+// it has been quiet": GONE_MS in src/main/laneBoard.ts. With a chat still holding the folder
+// the bound is HOLD_BUSY_MS above, the measured "untouched this long is not mid-edit".
+const STRANDED_QUIET_MS = 15 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -1142,6 +1153,10 @@ function dispatchCompletion() {
     if (!existsSync(dir)) problem = 'The checkout is missing; pinned local commits must be backed up before rebuilding.'
     else if (!isWorktree(dir)) problem = 'The folder is foreign or damaged; preserve it and diagnose before any repair.'
     else {
+      // A copy a killed checkout left half made is not abandoned work: finish it when the
+      // proof holds (finishCopy) and there is then nothing here to dispatch.
+      if (halfMade(dir)) finishCopy(id, state)
+      else dropFinishedLock(dir)
       const head = gitSafe(dir, 'rev-parse', 'HEAD')
       const status = gitSafe(dir, ...WORK_STATUS)
       const index = gitSafe(dir, 'ls-files', '-z')
@@ -1201,6 +1216,22 @@ function dispatchCompletion() {
   return pane ? { key: r.key, pane } : null
 }
 
+// Why `session` may NOT adopt lane item `r`, or null when it may. ONE predicate for `recover
+// --disposition adopt` (holding: the caller must already hold the lane) and for claim's
+// swap off `main` (holding: false, the lane is not yet the caller's), so they cannot drift.
+function adoptRefusal(state, session, r, { holding }) {
+  if (r.ref) return 'adopt is for lane items; a parked ref is reviewed through begin'
+  if (!r.owner || r.owner === session) return 'this item has no other owner to take over from; use begin'
+  if (!['owned', 'verified'].includes(r.status)) return `a ${r.status} item cannot be adopted; use begin or review it`
+  if (holding && state.lanes[r.lane]?.session !== session) return 'claim the exact ordinary lane first: only its holder can adopt'
+  if (Object.values(state.lanes).some((l) => l.session === r.owner)) return 'the previous owner still holds a lane'
+  // null = inventory unknown. Allowed: the lane hold is the proof the old owner cannot
+  // continue, since a lane is held by one chat at a time and the old owner holds none.
+  if (recoveryLiving()?.has(r.owner)) return 'its owner is still running'
+  if (!gitSafe(laneDir(r.lane), 'merge-base', '--is-ancestor', r.commit, 'HEAD').ok) return 'this lane does not contain the pinned commit; its work is not a continuation'
+  return null
+}
+
 function recover(session, key, disposition, receiptPath, wanted) {
   if (!session || !key) throw new Error('recover needs an actual session and pinned key')
   const unlock = recoveryLock()
@@ -1212,15 +1243,8 @@ function recover(session, key, disposition, receiptPath, wanted) {
     if (disposition === 'adopt') {
       // A successor chat in ANOTHER pane takes over a dead owner's item (2026-10-07,
       // taskdriver-mobile): carryRecovery only follows a same-pane clear.
-      if (r.ref) throw new Error('adopt is for lane items; a parked ref is reviewed through begin')
-      if (!r.owner || r.owner === session) throw new Error('this item has no other owner to take over from; use begin')
-      if (!['owned', 'verified'].includes(r.status)) throw new Error(`a ${r.status} item cannot be adopted; use begin or review it`)
-      if (state.lanes[r.lane]?.session !== session) throw new Error('claim the exact ordinary lane first: only its holder can adopt')
-      if (Object.values(state.lanes).some((l) => l.session === r.owner)) throw new Error('the previous owner still holds a lane')
-      // null = inventory unknown. Allowed: the lane hold is the proof the old owner cannot
-      // continue, since a lane is held by one chat at a time and the old owner holds none.
-      if (recoveryLiving()?.has(r.owner)) throw new Error('its owner is still running')
-      if (!gitSafe(laneDir(r.lane), 'merge-base', '--is-ancestor', r.commit, 'HEAD').ok) throw new Error('this lane does not contain the pinned commit; its work is not a continuation')
+      const refusal = adoptRefusal(state, session, r, { holding: true })
+      if (refusal) throw new Error(refusal)
       r.adoptedFrom = [...(r.adoptedFrom ?? []), r.owner]
       r.owner = session; r.status = 'owned' // a verified receipt belonged to the old owner
       r.at = now()
@@ -2218,9 +2242,282 @@ function isWorktree(dir) {
   return Boolean(ownRepo && theirs && ownRepo === theirs)
 }
 
+/**
+ * A lane copy whose checkout never finished.
+ *
+ * `git worktree add` writes `locked` = "initializing" into the new worktree's gitdir, checks
+ * the files out, writes the index LAST, and only then removes the lock. Killed part way - the
+ * 20s git deadline, a hook deadline taking the whole process tree - it leaves a registered
+ * worktree with that lock, NO index and only the head of HEAD's files (index order) on disk.
+ * isWorktree() calls that whole, so nothing rebuilt it; damageOf() calls it damaged (every
+ * file reads as a staged deletion), so it left the pool for good; and the completion clock
+ * sent a recovery pane at it. Measured on taskdriver.ai 7 Oct 2026: lane d (1,401 of 4,832
+ * files missing) and lane f (531 of 4,831), every present file byte-identical to HEAD.
+ *
+ * ensureWorktree now adds with `--no-checkout` under its own lock (MAKING) and writes the
+ * files itself (finishCopy), so the same kill leaves the same recognisable shape. Read from
+ * the filesystem only: this runs for every lane on every `status`.
+ */
+const MAKING = 'paneforge: copy still being made'
+// Writing a whole checkout is the one slow git call here (4,800 files ~9s on a Mac). It gets
+// its own bound; a hook deadline still caps it (hookTimeout), and a kill leaves MAKING behind.
+const CHECKOUT_TIMEOUT_MS = 10 * 60_000
+function adminOf(dir) {
+  try {
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(join(dir, '.git'), 'utf8'))
+    return m ? resolve(dir, m[1]) : null
+  } catch {
+    return null
+  }
+}
+function halfMade(dir) {
+  const admin = adminOf(dir)
+  if (!admin || existsSync(join(admin, 'index'))) return null
+  let lock
+  try {
+    lock = readFileSync(join(admin, 'locked'), 'utf8').trim()
+  } catch {
+    return null
+  }
+  return lock === 'initializing' || lock === MAKING ? { admin, lock } : null
+}
+
+/** git with its own env, stdin and bound; never throws (same contract as gitSafe). */
+function gitWith(cwd, args, { env, input, timeout = GIT_TIMEOUT_MS } = {}) {
+  try {
+    const out = execFileSync('git', args, {
+      windowsHide: true,
+      cwd,
+      encoding: 'utf8',
+      input,
+      env: env ? { ...process.env, ...env } : undefined,
+      stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      maxBuffer: 256 * 1024 * 1024,
+      timeout: hookTimeout(timeout),
+      killSignal: 'SIGKILL'
+    })
+    return { ok: true, out: out.trim() }
+  } catch (e) {
+    return { ok: false, out: errText(e) }
+  }
+}
+
+// What finishCopy writes into the index.lock it holds. git's own lock holds index bytes, never
+// this, so a lock carrying it whose process is gone is abandoned now, not in STALE_LOCK_MS.
+const FINISHING = 'paneforge finishing this copy, process '
+function finisherGone(lock) {
+  try {
+    const fd = openSync(lock, 'r')
+    const head = Buffer.alloc(80)
+    const n = readSync(fd, head, 0, 80, 0)
+    closeSync(fd)
+    const m = new RegExp(`^${FINISHING}(\\d+)\n`).exec(head.toString('utf8', 0, n))
+    if (!m) return false
+    process.kill(Number(m[1]), 0)
+    return false
+  } catch (e) {
+    return e.code === 'ESRCH'
+  }
+}
+
+/** The lock left on a copy that IS whole: a kill landed between the index and the lock. */
+function dropFinishedLock(dir) {
+  const admin = adminOf(dir)
+  if (!admin || !existsSync(join(admin, 'index'))) return
+  try {
+    const lock = readFileSync(join(admin, 'locked'), 'utf8').trim()
+    // git writes the index last and only then unlinks "initializing"; ours goes the same way.
+    if (lock === 'initializing' || lock === MAKING) unlinkSync(join(admin, 'locked'))
+  } catch {
+    /* no lock, or a person's own `git worktree lock` - left alone */
+  }
+}
+
+/**
+ * Finish a half-made lane copy (halfMade) - only when nothing in it can be anybody's work.
+ *
+ * The gate, every part of it required: the gitdir lock is git's "initializing" or ours, there
+ * is no index, no git is writing it now (no index.lock younger than STALE_LOCK_MS), HEAD is
+ * the lane branch and its tip, no open recovery item is pinned to the lane (`state`; only
+ * reviewed/complete ones pass), nothing on disk is outside HEAD (no untracked or ignored
+ * file), and every file that IS there is HEAD's byte for byte. It holds index.lock from the
+ * file check to the end, so no git command can write the index meanwhile. Then: the index is
+ * built from HEAD in a side file, ONLY the missing files are written - into a folder in the
+ * gitdir first, each then linked in whole, so a kill never leaves a cut-off file in the copy -
+ * git must report nothing, the side file becomes the index (two renames through the lock),
+ * and the lock goes last. A kill anywhere in here leaves a copy this recognises again.
+ * Files already there are never rewritten.
+ *
+ * Anything short of that is `{ finished: false, why }` and the copy is left as it was (an
+ * abandoned index.lock aside): still damaged, never handed out, for a person
+ * (docs/agents/lanes-and-releases.md). A refusal over file contents is remembered against the
+ * files' sizes and times, so an unchanged copy is not read again on every claim (4,879 files
+ * took 4.4s to read on a Mac).
+ */
+function finishCopy(id, state) {
+  const dir = laneDir(id)
+  const made = id !== 'main' && existsSync(dir) ? halfMade(dir) : null
+  if (!made) return { finished: false, why: `lane ${id}'s copy is not one that never finished being made` }
+  const no = (why) => ({ finished: false, why })
+  const index = join(made.admin, 'index')
+  const live = join(made.admin, 'index.lock')
+  let held = false
+  try {
+    if (state && preservedRecovery(state, id)) return no('a recovery item is still open on it')
+    if (existsSync(live) && now() - statSync(live).mtimeMs < STALE_LOCK_MS && !finisherGone(live)) return no('a git process may still be writing it (its index.lock is fresh)')
+    const branch = laneBranch(id)
+    const sym = gitWith(dir, ['symbolic-ref', '-q', 'HEAD'])
+    const head = gitWith(dir, ['rev-parse', '--verify', '-q', 'HEAD'])
+    const tip = gitWith(MAIN, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])
+    if (!sym.ok || sym.out !== `refs/heads/${branch}` || !head.ok || !tip.ok || head.out !== tip.out) return no(`its HEAD is not the tip of ${branch}`)
+    // Abandoned (older than STALE_LOCK_MS, or a killed run of this, checked above). Moved
+    // aside first so two of these racing for it cannot both take the lock: one rename finds it.
+    const aside = `${live}.paneforge-${process.pid}`
+    try {
+      renameSync(live, aside)
+      rmSync(aside, { force: true })
+    } catch {
+      /* none, or another one got it first - the exclusive create below settles which */
+    }
+    try {
+      const fd = openSync(live, 'wx')
+      held = true
+      writeFileSync(fd, `${FINISHING}${process.pid}\n`)
+      closeSync(fd)
+    } catch {
+      if (!held) return no('a git process started writing it')
+      throw new Error('could not mark its index.lock as held')
+    }
+    if (existsSync(index)) return no('git wrote its index meanwhile')
+    // What a killed run of this left in the gitdir (only reachable holding the lock).
+    for (const n of readdirSync(made.admin)) if (/^(index\.paneforge-|index\.lock\.paneforge-|paneforge-stage-)\d+$/.test(n)) rmSync(join(made.admin, n), { recursive: true, force: true })
+    const listing = gitWith(dir, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'])
+    if (!listing.ok || !listing.out) return no(`git could not list HEAD: ${listing.out}`)
+    const tracked = new Map()
+    for (const rec of listing.out.split('\0')) {
+      const tab = rec.indexOf('\t')
+      if (tab < 0) continue
+      const [mode, , sha] = rec.slice(0, tab).split(' ')
+      tracked.set(rec.slice(tab + 1), { mode, sha })
+    }
+    const folders = new Set()
+    for (const p of tracked.keys()) for (let i = p.indexOf('/'); i >= 0; i = p.indexOf('/', i + 1)) folders.add(p.slice(0, i))
+    // Stops at the first thing HEAD does not have: a chat's file, a build output, an ignored
+    // folder - never walked into, so a stray node_modules costs one readdir, not a million.
+    const present = []
+    const walk = (rel) => {
+      for (const e of readdirSync(rel ? join(dir, rel) : dir, { withFileTypes: true })) {
+        const p = rel ? `${rel}/${e.name}` : e.name
+        if (!rel && e.name === '.git') continue
+        const t = tracked.get(p)
+        if (e.isDirectory()) {
+          if (t?.mode === '160000' && !readdirSync(join(dir, p)).length) {
+            present.push({ path: p, gitlink: true, ...t })
+            continue
+          }
+          if (!folders.has(p)) return p
+          const stray = walk(p)
+          if (stray) return stray
+        } else if (!t || t.mode === '160000') return p
+        else present.push({ path: p, link: e.isSymbolicLink(), ...t })
+      }
+      return null
+    }
+    const stray = walk('')
+    if (stray) return no(`${stray} is in it and is not a file of HEAD (untracked or ignored)`)
+    const memo = join(made.admin, 'paneforge-refused')
+    const fp = createHash('sha256').update(head.out)
+    for (const x of present) {
+      const st = lstatSync(join(dir, x.path))
+      fp.update(`\0${x.path}\0${st.size}\0${st.mtimeMs}\0${st.mode}`)
+    }
+    const key = fp.digest('hex')
+    let seen = null
+    try {
+      seen = JSON.parse(readFileSync(memo, 'utf8'))
+    } catch {
+      /* none yet */
+    }
+    if (seen?.key === key && seen.why) return no(`${seen.why} (no file in it has changed since)`)
+    const differs = (why) => {
+      writeFileSync(memo, JSON.stringify({ key, why }))
+      return no(why)
+    }
+    const files = present.filter((x) => !x.link && !x.gitlink)
+    if (files.some((x) => x.path.includes('\n'))) return no('a file name in it has a line break')
+    if (files.length) {
+      const sums = gitWith(dir, ['hash-object', '--stdin-paths'], { input: files.map((x) => x.path).join('\n') + '\n', timeout: CHECKOUT_TIMEOUT_MS })
+      if (!sums.ok) return no(`git could not read the files in it: ${sums.out}`)
+      const got = sums.out.split('\n')
+      // A plain file where HEAD has a link is how Windows checks a link out; anywhere else it differs.
+      const off = files.find((x, i) => got[i] !== x.sha || (x.mode === '120000' && process.platform !== 'win32'))
+      if (off) return differs(`${off.path} differs from HEAD`)
+    }
+    for (const x of present.filter((y) => y.link)) {
+      const sum = x.mode === '120000' ? gitWith(dir, ['hash-object', '--stdin'], { input: readlinkSync(join(dir, x.path)) }) : null
+      if (!sum?.ok || sum.out !== x.sha) return differs(`${x.path} differs from HEAD`)
+    }
+    const have = new Set(present.map((x) => x.path))
+    const missing = [...tracked].filter(([p]) => !have.has(p))
+    const side = join(made.admin, `index.paneforge-${process.pid}`)
+    const stage = join(made.admin, `paneforge-stage-${process.pid}`)
+    const env = { GIT_INDEX_FILE: side }
+    try {
+      let r = gitWith(dir, ['read-tree', 'HEAD'], { env })
+      const write = missing.filter(([, t]) => t.mode !== '160000').map(([p]) => p)
+      if (r.ok && write.length) {
+        mkdirSync(stage)
+        r = gitWith(dir, ['checkout-index', `--prefix=${stage.split(sep).join('/')}/`, '-z', '--stdin'], { env, input: write.join('\0'), timeout: CHECKOUT_TIMEOUT_MS })
+      }
+      if (!r.ok) return no(`git could not write the missing files: ${r.out}`)
+      for (const p of write) {
+        const from = join(stage, p)
+        const to = join(dir, p)
+        mkdirSync(dirname(to), { recursive: true })
+        try {
+          if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to)
+          else linkSync(from, to)
+        } catch (e) {
+          // Something put a file there since the walk: git status below judges it.
+          if (e.code === 'EEXIST') continue
+          if (e.code !== 'EXDEV') throw e
+          // The gitdir on another disk: a plain copy, never over a file (cut off only by a kill).
+          copyFileSync(from, to, fsConstants.COPYFILE_EXCL)
+        }
+      }
+      // Not checked out = an empty folder, which is what git status expects to find.
+      for (const [p] of missing.filter(([, t]) => t.mode === '160000')) mkdirSync(join(dir, p), { recursive: true })
+      gitWith(dir, ['update-index', '-q', '--refresh'], { env, timeout: CHECKOUT_TIMEOUT_MS })
+      const left = gitWith(dir, ['status', '--porcelain', '--untracked-files=all', '--ignored'], { env, timeout: CHECKOUT_TIMEOUT_MS })
+      if (!left.ok || left.out) return no(`git still reports changes after the missing files were written: ${left.out.split('\n').slice(0, 3).join('; ')}`)
+      if (existsSync(index)) return no('git wrote its index meanwhile')
+      // git's own way in: the new index replaces the lock file, which then becomes the index.
+      renameSync(side, live)
+      renameSync(live, index)
+      held = false
+    } finally {
+      rmSync(side, { force: true })
+      rmSync(stage, { recursive: true, force: true })
+    }
+    rmSync(memo, { force: true })
+    rmSync(join(made.admin, 'locked'), { force: true })
+    return { finished: true, wrote: missing.length, kept: present.length }
+  } catch (e) {
+    return no(e.message)
+  } finally {
+    if (held) rmSync(live, { force: true })
+  }
+}
+
 function ensureWorktree(id) {
   const dir = laneDir(id)
   if (id === 'main') return dir
+  // Left half made by a killed checkout (halfMade): finished when nothing in it can be
+  // anybody's work, otherwise refused - never handed out with most of its files gone.
+  if (existsSync(dir) && halfMade(dir) && isWorktree(dir)) {
+    const done = finishCopy(id, read())
+    if (!done.finished) throw new Error(`lane ${id}'s copy never finished being made and cannot be finished safely: ${done.why}`)
+  } else if (existsSync(dir)) dropFinishedLock(dir)
   if (!existsSync(dir) || !isWorktree(dir)) {
     const branch = laneBranch(id)
     if (existsSync(dir)) {
@@ -2254,15 +2551,33 @@ function ensureWorktree(id) {
       }
     }
     const known = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).ok
+    const existed = existsSync(dir)
+    // Registered without its files, under our own lock: the checkout is the slow part and is
+    // done below by finishCopy, so no kill can leave a copy nothing recognises (halfMade).
+    const quick = ['--no-checkout', '--lock', '--reason', MAKING]
     // A reused lane branch may be behind master; start it fresh from master when new.
     const add = known
-      ? ['worktree', 'add', dir, branch]
-      : ['worktree', 'add', '-b', branch, dir, MB]
+      ? ['worktree', 'add', ...quick, dir, branch]
+      : ['worktree', 'add', ...quick, '-b', branch, dir, MB]
     let r = gitSafe(MAIN, ...add)
     // The branch still counts as checked out in a folder git has not been told is gone.
     // Only reachable once the folder above was proven empty, so nothing can be lost here.
-    if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', dir, branch)
+    if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', ...quick, dir, branch)
     if (!r.ok) throw new Error(`could not create lane ${id}: ${r.out}`)
+    const done = finishCopy(id, null)
+    // Another process (the completion clock) may have finished it meanwhile (an index now),
+    // or still be writing it (its index.lock): that copy is theirs to hand out, not ours to undo.
+    const admin = adminOf(dir)
+    if (!done.finished && halfMade(dir) && !(admin && existsSync(join(admin, 'index.lock')))) {
+      // Everything in the folder is what this call just made (it was absent or proven empty
+      // above), so taking it back loses nothing and the next claim starts clean. A folder
+      // that was there stays there. If even this cannot run, the lock stays and the next
+      // claim finishes the copy instead.
+      const undone = gitSafe(MAIN, 'worktree', 'remove', '--force', '--force', dir)
+      if (undone.ok && existed) mkdirSync(dir, { recursive: true })
+      throw new Error(`could not create lane ${id}: its files could not be written (${done.why})`)
+    }
+    if (!done.finished && halfMade(dir)) throw new Error(`lane ${id}'s copy is still being made by another process: ${done.why}`)
   }
   const link = join(dir, 'node_modules')
   if (!existsSync(link)) {
@@ -2462,6 +2777,23 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // checkout recorded at the original claim is safe only while BOTH copies are empty
     // and the requested one is unheld. A visit to another checkout never moves a hold.
     const held = Object.keys(state.lanes).find((id) => state.lanes[id].session === session)
+    // A chat whose SessionStart claim gave it `main` while standing in the lane's own folder
+    // can never claim that lane otherwise, and the only way off `main` (`release`) marks a
+    // clean ahead main ready (2026-10-07, taskdriver-mobile). Allowed only when this caller
+    // can take the lane's preserved item (dispatched to its pane, or adoptable), the lane is
+    // free, and main has nothing uncommitted beyond machine-written paths and no merge under
+    // way. The swap only moves the hold: no ready mark, no catch-up, no reset; main's commits
+    // stay on its branch for the next main holder.
+    if (held === 'main' && !state.lanes[prefer] && !state.conflicts[prefer] &&
+        !laneWork(prefer).damaged && !squattedLanes(state, session).has(prefer)) {
+      const item = preservedRecovery(state, prefer)
+      const status = gitSafe(MAIN, ...WORK_STATUS)
+      const dispatched = dispatchedHere(prefer) && gitSafe(laneDir(prefer), 'rev-parse', 'HEAD').out.trim() === item?.commit
+      if (item && (dispatched || !adoptRefusal(state, session, item, { holding: false })) &&
+          status.ok && (!status.out || machineWrittenPaths(MAIN)) && !openOperation(MAIN) && !state.conflicts.main) {
+        delete state.lanes.main
+      }
+    }
     if (held && held !== 'main' && held !== prefer && !state.lanes[prefer] && state.lanes[held].cwd &&
         inside(samePath(state.lanes[held].cwd), samePath(laneDir(prefer))) && empty(held) && (empty(prefer) || dispatchedHere(prefer))) {
       delete state.lanes[held]
@@ -2651,7 +2983,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   const damaged = new Set()
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
-    const work = laneWork(id)
+    let work = laneWork(id)
+    // Half made by a killed checkout: finished here when the proof holds (finishCopy), and
+    // then an ordinary empty lane; otherwise damaged like any other.
+    if (work.halfMade && finishCopy(id, state).finished) work = laneWork(id)
     if (work.damaged) {
       damaged.add(id)
       return false
@@ -3263,7 +3598,9 @@ function laneWorkNow(id) {
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
-  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain) }
+  // A copy a killed checkout left half made (halfMade) is unusable however few files it lacks.
+  const half = id !== 'main' && halfMade(dir) ? { damaged: true, halfMade: true } : {}
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain), ...half }
 }
 
 /**
@@ -3614,6 +3951,39 @@ function remember(state, [key, sub], value) {
   write(fresh)
 }
 
+/** The tree `dir` has committed (HEAD's), or null. The tree a push sends, so the one a PC verdict must be on. */
+function headTree(dir) {
+  const t = gitSafe(dir, 'rev-parse', 'HEAD^{tree}')
+  return t.ok ? t.out : null
+}
+
+/**
+ * Queue `words` on the PC for exactly `tree`, the committed tree of `dir`. rbuild uploads the
+ * folder as it stands, so while another chat has uncommitted edits in it the job tested a tree
+ * no commit has, and the pre-push hook (`treeVerdict` on the pushed commit's tree) never found a
+ * verdict: 2026-10-07 master sat 9 commits ahead of origin, lanes b and d merged and unpushed,
+ * for as long as main was being edited. A folder that is not exactly `tree` ships a throwaway
+ * copy of `tree` instead (`git archive`, 0.3 s for PaneForge), named like the folder so the PC
+ * labels it the same; rbuild has read every file by the time it returns, so the copy goes then.
+ */
+function submitPcTree(dir, tree, words) {
+  if (!tree || workingTree(dir) === tree) return submitPcJob(dir, words)
+  const box = mkdtempSync(join(tmpdir(), 'lane-pc-'))
+  try {
+    const copy = join(box, basename(dir))
+    mkdirSync(copy)
+    const tar = join(box, 'tree.tar')
+    const a = gitSafe(dir, 'archive', '--format=tar', '-o', tar, tree)
+    if (!a.ok) return { failed: `could not copy the committed files out of git: ${firstLine(a.out)}` }
+    const x = spawnSync('tar', ['-xf', tar, '-C', copy], { encoding: 'utf8', windowsHide: true, timeout: 120_000 })
+    if (x.status !== 0) return { failed: `could not unpack the committed files: ${firstLine(`${x.stderr ?? ''}`) || `exit ${x.status}`}` }
+    rmSync(tar, { force: true })
+    return submitPcJob(copy, words)
+  } finally {
+    rmSync(box, { recursive: true, force: true })
+  }
+}
+
 /** Queue `words` on the PC for `dir` without waiting: `{ id }`, or `{ failed }` with why not. */
 function submitPcJob(dir, words) {
   const at = process.argv.indexOf('--session')
@@ -3703,14 +4073,14 @@ const pcWaiting = (what, id) =>
  */
 function remoteTypecheckFailure(state) {
   if (!onPc()) return undefined
-  const tree = workingTree(MAIN)
+  const tree = headTree(MAIN)
   // Fresh: another chat's try may have queued this tree's job since `state` was read.
   const last = read().typecheck
   const known = tree && last?.tree === tree ? last : null
   if (known && 'verdict' in known) return known.verdict
   let id = known?.id
   if (!id) {
-    const sent = submitPcJob(MAIN, ['typecheck'])
+    const sent = submitPcTree(MAIN, tree, ['typecheck'])
     if (sent.failed) {
       return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
     }
@@ -3786,7 +4156,7 @@ function failNames(text) {
  * one still in line (`waitPcJob`); `waitS` is the wait budget.
  */
 function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_WAIT_S } = {}) {
-  const tree = workingTree(dir)
+  const tree = headTree(dir)
   const mine = tree && known?.tree === tree ? known : null
   if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
   let id = mine?.id
@@ -3797,7 +4167,7 @@ function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_
     if (!id) {
       // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
       // on Windows). The typecheck is its own gate, already passed for this tree.
-      const sent = submitPcJob(dir, ['--', 'npm', 'test'])
+      const sent = submitPcTree(dir, tree, ['--', 'npm', 'test'])
       // The record is left as it is: after a red first job it still names that job, and
       // the next try reads its answer again rather than running it again.
       if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
@@ -4187,7 +4557,7 @@ function stopStaleSuiteJob(dir, commit) {
  * node_modules is fixed outside this file and the next attempt should find out.
  *
  * On the Mac it runs on the PC instead (`pcSuite`, cached in `state.pcSuite`) on the TREE
- * rbuild ships - the commit plus whatever MAIN has uncommitted, which is what the PC tests.
+ * MAIN has committed - never another chat's uncommitted edits, which no push sends (`submitPcTree`).
  *
  * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
  * hands now, and it is typed by a person who is watching.
@@ -4509,8 +4879,13 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // Same shape as the sentence below so the sidebar's `holdWords` reads it as "main copy",
   // with the file named, because committing that one file is the whole fix.
   if (busy.length && RELEASE === 'merge') {
-    const files = mainBlockers(state).split('\n').map((l) => l.replace(/ \(.*\)$/, ''))
+    const blockers = mainBlockers(state)
+    const files = blockerFiles(blockers)
     const more = files.length > 1 ? ` and ${files.length - 1} more` : ''
+    // Said differently once nobody is on it: agents repeat this sentence, and "chats still
+    // working" was repeated all day on 7 Oct about a chat that had died at 10:25am.
+    const stuck = mainStranded(state, blockers)
+    if (stuck) return { shipped: false, reason: strandedReason(stuck) }
     return { shipped: false, reason: `waiting on chats still working: main (uncommitted edits to ${files[0]}${more} that finished work changes)` }
   }
   // Named with the evidence, not just the lane. An agent repeats this reason to a person
@@ -4879,6 +5254,12 @@ function releaseClaim(session, { gone = false, cleared = false } = {}) {
         }
       }
       delete state.lanes[id]
+      // Who walked away from uncommitted files in the main folder, so the card about them
+      // (strandedCard) can still name the chat after its hold is gone.
+      if (id === 'main') {
+        if (w.dirty) state.mainLeft = { session, at: now() }
+        else delete state.mainLeft
+      }
       // The test copy this chat opened belongs to the chat, not to the next one that
       // claims the lane - and `--minimized` means nobody sees it to close it by hand.
       closeLaneApps(laneDir(id))
@@ -4979,6 +5360,132 @@ function beatRelease(session) {
  */
 function mainBlockers(state) {
   return mainDirt(state).blockers
+}
+
+const blockerFiles = (blockers) => blockers.split('\n').filter(Boolean).map((l) => l.replace(/ \(.*\)$/, ''))
+
+/**
+ * A main-folder blocker nobody is going to clear, or null.
+ *
+ * Measured 7 Oct 2026 in clients: a Codex chat holding `main` left an untracked
+ * write-ledger.jsonl there and died at 10:25am; a finished lane brought the same path, and
+ * every release from 11:57am to 8:10pm was held behind it as "waiting on chats still
+ * working", four finished lanes deep, with nothing ever telling a person. Across every repo
+ * on the Mac that week, main-folder holds lasted a median 82 minutes and a p90 of 630, and
+ * none of them raised anything.
+ *
+ * Stranded is read off the files first, like HOLD_BUSY_MS: untouched for STRANDED_QUIET_MS
+ * and nobody holds the folder any more (its chat's app released the hold - Next's lane clock
+ * and old PaneForge's sweep do that for a closed chat - or SessionEnd stamped it ended), or
+ * untouched for HOLD_BUSY_MS whoever holds it. A chat still holding the folder is never
+ * called gone from here: a Next chat is in no inventory this engine can read, so a live one
+ * would read as dead. A file whose age cannot be read is never stranded: the failure that
+ * matters is calling somebody's open edit abandoned. Reads only; nothing here touches the files.
+ */
+function mainStranded(state, blockers = mainBlockers(state)) {
+  if (RELEASE !== 'merge' || !blockers) return null
+  const files = blockerFiles(blockers)
+  let touched = 0
+  for (const f of files) {
+    try {
+      touched = Math.max(touched, lstatSync(join(MAIN, f)).mtimeMs)
+    } catch {
+      /* deleted, or a name this platform cannot spell */
+    }
+  }
+  if (!touched) return null
+  const quiet = now() - touched
+  if (quiet < STRANDED_QUIET_MS) return null
+  const hold = state.lanes.main
+  // The chat that released the folder with these files in it, unless somebody wrote them since.
+  const left = !hold?.session && state.mainLeft?.at >= touched ? state.mainLeft : null
+  const session = hold?.session ?? left?.session ?? null
+  const gone = !hold?.session || Boolean(hold.ended)
+  if (!gone && quiet < HOLD_BUSY_MS) return null
+  const waiting = Object.keys(state.ready).filter((id) => id !== 'main').sort()
+  return { files, session, gone, waiting }
+}
+
+function strandedWho(s) {
+  if (!s.session) return 'no chat holds the main folder'
+  if (s.gone) return `the chat that left them (${s.session.slice(0, 8)}) has ended`
+  return `the chat holding the main folder (${s.session.slice(0, 8)}) has not touched them for over an hour`
+}
+
+function strandedReason(s) {
+  const more = s.files.length > 1 ? ` and ${s.files.length - 1} more` : ''
+  return (
+    `nobody is working on it - uncommitted edits to ${s.files[0]}${more} in the main folder that finished work changes, and ${strandedWho(s)}. ` +
+    `Nothing is lost while it waits; the lane clock puts one card in front of a person to commit them.`
+  )
+}
+
+/** The GuardDeck card id for this repo's stranded main folder: one per repo, replaced, then cleared. */
+const strandedCardId = () => `lane-main-${basename(MAIN).replace(/[^A-Za-z0-9._-]/g, '-')}`.slice(0, 64)
+
+/**
+ * Put ONE waiting card in front of a person for a stranded main folder, and take it down
+ * once the folder no longer blocks anything.
+ *
+ * Not a recovery: the stranded bytes are somebody's half-done work in a folder every chat
+ * shares, and on 7 Oct they were a client write ledger whose rows said which writes had
+ * already happened. Moving them anywhere a chat stops seeing them risks the writes being
+ * made twice; committing them as finished is the choice nobody made. So the bytes stay
+ * exactly where they are and a person gets the file, the holder and the waiting lanes, with
+ * the one line to paste. Raised once per blocker (files + holder), from the lane clock
+ * only (`retry`), never from a chat's own `ready`. LANE_DISPATCH_LOG stands in for GuardDeck
+ * in tests, as in clashCards; a card that could not be posted is tried again next tick.
+ */
+function strandedCard(state) {
+  const log = process.env.LANE_DISPATCH_LOG
+  const tool = [
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'waiting-card.mjs'),
+    ...(process.platform === 'win32' ? [join(homedir(), 'Desktop', 'Projects', 'claude-memory', 'claude-config', 'waiting-card.mjs')] : [])
+  ].find((p) => existsSync(p))
+  if (!log && (!tool || inTempFolder(MAIN))) return null
+  const send = (args, line) => {
+    if (log) {
+      appendFileSync(log, JSON.stringify(line) + '\n')
+      return 'logged'
+    }
+    const r = spawnSync(process.execPath, [tool, ...args], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      windowsHide: true,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    })
+    return r.status === 0 ? 'GuardDeck' : null
+  }
+  const id = strandedCardId()
+  const blockers = RELEASE === 'merge' ? mainBlockers(state) : ''
+  const was = state.stranded
+  if (!blockers) {
+    if (!was) return null
+    if (was.card && !send(['--clear', '--id', id], { id, clear: true })) return null
+    // Posting takes up to 30 s, and a chat's claim or release written meanwhile must survive.
+    const fresh = read()
+    delete fresh.stranded
+    write(fresh)
+    return was.card ? 'The main folder no longer holds the release - took its card down.' : null
+  }
+  const stuck = mainStranded(state, blockers)
+  if (!stuck) return null
+  const key = JSON.stringify([stuck.files, stuck.session])
+  if (was?.key === key && was.card) return null
+  const repo = basename(MAIN)
+  const names = stuck.files.join(', ')
+  const lanes = stuck.waiting.length ? `finished lane${stuck.waiting.length === 1 ? '' : 's'} ${stuck.waiting.join(', ')}` : 'finished work'
+  const title = `Finished work in ${repo} waits on a file nobody is working on`
+  const detail =
+    `${MAIN} has uncommitted ${names}, and ${lanes} change${stuck.waiting.length === 1 ? 's' : ''} it, so nothing merges. ` +
+    `${strandedWho(stuck)[0].toUpperCase()}${strandedWho(stuck).slice(1)}. Nothing is lost. ` +
+    `Paste into a chat in ${repo}: commit ${names} in ${MAIN} as it is (keep both sides if a lane changes it), then run lane.mjs retry --repo ${MAIN}`
+  const via = send(['--id', id, '--title', title, '--detail', detail, '--not-browser'], { id, card: true, title, detail })
+  if (!via) return null
+  const fresh = read()
+  fresh.stranded = { key, since: was?.since ?? now(), card: { at: now(), via } }
+  write(fresh)
+  return `The main folder holds the release with ${names} and nobody is on it - raised one card for a person (${via}).`
 }
 
 /**
@@ -5306,14 +5813,25 @@ function installPushGate() {
  * brought and refuses, changing nothing, when one of those has an edit of its own. `--hard`
  * here wiped every uncommitted edit in the folder. Only while HEAD is still the last merge this
  * release made: a commit somebody made in the folder since is not this release's to drop.
- * null, or why it could not.
+ * `merged` lanes get back the ready marks they went in with (`marks`): while this release
+ * waited on its checks, any other chat's lane command saw their commits on the trunk and
+ * dropped the marks (`reap`), so once the trunk is put back nothing said their finished work
+ * still had to go out (PaneForge lane a, 7 Oct 2026 8:36-8:51pm). null, or why it could not.
  */
-function undoMerges(to, landed) {
+function undoMerges(to, landed, merged, marks) {
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD').out
   if (head !== landed)
     return `${MB} is left on the merge, unpushed, because a commit was made in its folder after it (${head.slice(0, 8)}) and putting ${MB} back would drop it`
   const r = gitSafe(MAIN, 'reset', '--keep', '-q', to)
-  return r.ok ? null : `${MB} is left on the merge, unpushed, because putting it back would have overwritten an unsaved edit in its folder: ${firstLine(r.out)}`
+  if (!r.ok) return `${MB} is left on the merge, unpushed, because putting it back would have overwritten an unsaved edit in its folder: ${firstLine(r.out)}`
+  const fresh = read()
+  for (const { lane } of merged) {
+    if (fresh.ready[lane] || !marks[lane]) continue
+    fresh.ready[lane] = marks[lane]
+    if (fresh.passed) delete fresh.passed[lane]
+  }
+  write(fresh)
+  return null
 }
 
 
@@ -5510,7 +6028,7 @@ function ship(kind, session, { gated = false } = {}) {
     if (merged.length && !TASKDRIVER_PC) {
       const red = typecheckFailure(state)
       if (red) {
-        const stuck = undoMerges(beforeMerge, landedHead)
+        const stuck = undoMerges(beforeMerge, landedHead, merged, state.ready)
         throw new Error(`the lanes did not compile once merged, so nothing was pushed: ${red}${stuck ? `. ${stuck}` : ''}`)
       }
     }
@@ -5524,7 +6042,7 @@ function ship(kind, session, { gated = false } = {}) {
     if (pushes && gated) {
       const red = pushedTreeFailure(state)
       if (red) {
-        const stuck = undoMerges(beforeMerge, landedHead)
+        const stuck = undoMerges(beforeMerge, landedHead, merged, state.ready)
         throw new Error(`${red}${stuck ? ` ${stuck}` : ''}`)
       }
     } else if (pushes) {
@@ -6177,6 +6695,8 @@ function statusOf(state, session, held) {
         // The folder is a worktree of this repo and most of its files are gone (see
         // damageOf). Separate from `broken`, which stays "not a worktree at all".
         damaged: Boolean(w.damaged),
+        // Of those, one a killed checkout left half made (halfMade), which finishCopy can finish.
+        halfMade: Boolean(w.halfMade),
         missingFiles: w.missingFiles ?? 0,
         trackedFiles: w.trackedFiles ?? 0,
         ready: Boolean(state.ready[id]),
@@ -6332,7 +6852,11 @@ function doctor() {
       what.push(
         `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
-    if (l.damaged)
+    if (l.halfMade)
+      what.push(
+        `its copy never finished being made (git was stopped part way through writing its files). It is not handed to a new chat; it is finished automatically when nothing in it differs from ${l.branch}, and \`node ${join(own, 'scripts', 'lane.mjs')} finish-copy --repo ${MAIN} --lane ${l.lane}\` says why not`
+      )
+    else if (l.damaged)
       what.push(
         `its folder is missing most of its files (${l.missingFiles} of ${l.trackedFiles}) - a copy that never finished being made. It is not handed to a new chat; check it and move it out of the way`
       )
@@ -7296,6 +7820,13 @@ try {
         `Promoted ${r.tag}. /releases/latest now serves it, and every stable install updates within the half hour.`
       )
     else console.log(`Not promoted: ${r.reason}`)
+  } else if (cmd === 'finish-copy') {
+    // By hand, for a copy the chooser keeps passing over: the same proof, and the reason when it fails.
+    const lane = arg('lane')
+    if (!lane || !POOL.includes(lane) || lane === 'main') throw new Error('finish-copy needs --lane <letter> from this repo\'s pool')
+    const done = finishCopy(lane, read())
+    console.log(JSON.stringify({ lane, ...done }))
+    if (!done.finished) throw new Error(`lane ${lane} not finished: ${done.why}`)
   } else if (cmd === 'recover') {
     console.log(JSON.stringify(recover(session, arg('key'), arg('disposition'), arg('receipt'), arg('lane'))))
   } else if (cmd === 'retry') {
@@ -7327,7 +7858,10 @@ try {
     // What is left is a real disagreement. One nobody is on gets one card for a person.
     const sent = clashCards(state)
     if (sent.length) {
-      write(state)
+      // Each card took up to 20 s to post; a chat's claim or release written meanwhile must survive.
+      const fresh = read()
+      for (const o of sent) if (fresh.conflicts[o.id]) fresh.conflicts[o.id].card = state.conflicts[o.id].card
+      write(fresh)
       for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - raised one card for a person (${o.via}).`)
     }
     const completion = dispatchCompletion()
@@ -7338,6 +7872,10 @@ try {
     // The clock is what was missing. autoship is a no-op unless there is something to put
     // out, nobody is mid-edit and the cooldown has passed.
     sayRelease(autoship('auto', session ?? 'auto'))
+    // A main folder holding that release with a file nobody is on gets one card, and loses it
+    // once it holds nothing (strandedCard).
+    const stranded = strandedCard(reap(read()))
+    if (stranded) console.log(stranded)
     // The folder sweep rides the same clocks (the app's timer on the Mac, lane-cron on the
     // PC), every SWEEP_EVERY_MS. Detached, because archiving one big folder took 7 minutes
     // on 2026-09-23 and the retry must not wait on it; what it removes lands in
