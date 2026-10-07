@@ -65,13 +65,21 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   The dispatcher preserves files and staging, including empty-index, missing and foreign
   worktrees; subfolder panes/processes protect the whole checkout. Claims preserve unready
   clean-ahead HEAD/index until explicit adoption; damaged recovery folders require backup
-  and diagnosis before claim. It never auto-stages deletions or reconstructs folders
-  (`test:lanecompletion`). A worktree missing more than half of its HEAD files reads
+  and diagnosis before claim. It never auto-stages deletions or reconstructs folders, except
+  finishing a half-made copy under the proof below (`test:lanecompletion`). A worktree missing more than half of its HEAD files reads
   `damaged` in `status`/`doctor` and is never handed to a chat, not even one standing in it
   (`test:lanedamaged`).
   If a completion pane ends before adopting a native owner, the pinned task becomes
   durably blocked for explicit delivery/intent inspection. An unconfirmed launch is not
   completion and does not trigger another automatic replay.
+- A lane copy is created `worktree add --no-checkout --lock` (reason `paneforge: copy still
+  being made`), then `finishCopy` writes its files under `CHECKOUT_TIMEOUT_MS`; a failure in
+  that call removes only what the call made. A copy a kill left half made (gitdir `locked` =
+  git's `initializing` or ours, no index: `halfMade`, `status.halfMade`) is finished by claim,
+  the completion clock or `lane.mjs finish-copy --lane <x>` ONLY when: no fresh index.lock,
+  HEAD = lane branch tip, no open recovery item, nothing on disk outside HEAD, every present
+  file = HEAD. It writes the index (side file, renamed) and ONLY the missing files, then drops
+  the lock. Any doubt: left as is, `damaged` (`test:lanehalfmade`; taskdriver.ai d/f 2026-10-07).
 - `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
   binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
   nonempty successful `{command, exitCode: 0}` checks and accepted independent

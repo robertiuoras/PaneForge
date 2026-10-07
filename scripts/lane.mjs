@@ -54,6 +54,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -1142,6 +1143,9 @@ function dispatchCompletion() {
     if (!existsSync(dir)) problem = 'The checkout is missing; pinned local commits must be backed up before rebuilding.'
     else if (!isWorktree(dir)) problem = 'The folder is foreign or damaged; preserve it and diagnose before any repair.'
     else {
+      // A copy a killed checkout left half made is not abandoned work: finish it when the
+      // proof holds (finishCopy) and there is then nothing here to dispatch.
+      if (halfMade(dir)) finishCopy(id, state)
       const head = gitSafe(dir, 'rev-parse', 'HEAD')
       const status = gitSafe(dir, ...WORK_STATUS)
       const index = gitSafe(dir, 'ls-files', '-z')
@@ -2218,9 +2222,173 @@ function isWorktree(dir) {
   return Boolean(ownRepo && theirs && ownRepo === theirs)
 }
 
+/**
+ * A lane copy whose checkout never finished.
+ *
+ * `git worktree add` writes `locked` = "initializing" into the new worktree's gitdir, checks
+ * the files out, writes the index LAST, and only then removes the lock. Killed part way - the
+ * 20s git deadline, a hook deadline taking the whole process tree - it leaves a registered
+ * worktree with that lock, NO index and only the head of HEAD's files (index order) on disk.
+ * isWorktree() calls that whole, so nothing rebuilt it; damageOf() calls it damaged (every
+ * file reads as a staged deletion), so it left the pool for good; and the completion clock
+ * sent a recovery pane at it. Measured on taskdriver.ai 7 Oct 2026: lane d (1,401 of 4,832
+ * files missing) and lane f (531 of 4,831), every present file byte-identical to HEAD.
+ *
+ * ensureWorktree now adds with `--no-checkout` under its own lock (MAKING) and writes the
+ * files itself (finishCopy), so the same kill leaves the same recognisable shape. Read from
+ * the filesystem only: this runs for every lane on every `status`.
+ */
+const MAKING = 'paneforge: copy still being made'
+// Writing a whole checkout is the one slow git call here (4,800 files ~9s on a Mac). It gets
+// its own bound; a hook deadline still caps it (hookTimeout), and a kill leaves MAKING behind.
+const CHECKOUT_TIMEOUT_MS = 10 * 60_000
+function adminOf(dir) {
+  try {
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(join(dir, '.git'), 'utf8'))
+    return m ? resolve(dir, m[1]) : null
+  } catch {
+    return null
+  }
+}
+function halfMade(dir) {
+  const admin = adminOf(dir)
+  if (!admin || existsSync(join(admin, 'index'))) return null
+  let lock
+  try {
+    lock = readFileSync(join(admin, 'locked'), 'utf8').trim()
+  } catch {
+    return null
+  }
+  return lock === 'initializing' || lock === MAKING ? { admin, lock } : null
+}
+
+/** git with its own env, stdin and bound; never throws (same contract as gitSafe). */
+function gitWith(cwd, args, { env, input, timeout = GIT_TIMEOUT_MS } = {}) {
+  try {
+    const out = execFileSync('git', args, {
+      windowsHide: true,
+      cwd,
+      encoding: 'utf8',
+      input,
+      env: env ? { ...process.env, ...env } : undefined,
+      stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      maxBuffer: 256 * 1024 * 1024,
+      timeout: hookTimeout(timeout),
+      killSignal: 'SIGKILL'
+    })
+    return { ok: true, out: out.trim() }
+  } catch (e) {
+    return { ok: false, out: errText(e) }
+  }
+}
+
+/**
+ * Finish a half-made lane copy (halfMade) - only when nothing in it can be anybody's work.
+ *
+ * The gate, every part of it required: the gitdir lock is git's "initializing" or ours, there
+ * is no index, no git is writing it now (no index.lock younger than STALE_LOCK_MS), HEAD is
+ * the lane branch and its tip, no open recovery item is pinned to the lane (`state`; only
+ * reviewed/complete ones pass), nothing on disk is outside HEAD (no untracked or ignored
+ * file), and every file that IS there is HEAD's byte for byte. Then: the index is built from
+ * HEAD in a side file, ONLY the missing files are written from it, git must report nothing,
+ * the side file becomes the index (one rename), and the lock goes last - so a kill anywhere
+ * in here leaves a copy this recognises again. Files already there are never rewritten.
+ *
+ * Anything short of that is `{ finished: false, why }` and the copy is left exactly as it
+ * was: still damaged, never handed out, for a person (docs/agents/lanes-and-releases.md).
+ */
+function finishCopy(id, state) {
+  const dir = laneDir(id)
+  const made = id !== 'main' && existsSync(dir) ? halfMade(dir) : null
+  if (!made) return { finished: false, why: `lane ${id}'s copy is not one that never finished being made` }
+  const no = (why) => ({ finished: false, why })
+  try {
+    if (state && preservedRecovery(state, id)) return no('a recovery item is still open on it')
+    const live = join(made.admin, 'index.lock')
+    if (existsSync(live) && now() - statSync(live).mtimeMs < STALE_LOCK_MS) return no('a git process may still be writing it (its index.lock is fresh)')
+    const branch = laneBranch(id)
+    const sym = gitWith(dir, ['symbolic-ref', '-q', 'HEAD'])
+    const head = gitWith(dir, ['rev-parse', '--verify', '-q', 'HEAD'])
+    const tip = gitWith(MAIN, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])
+    if (!sym.ok || sym.out !== `refs/heads/${branch}` || !head.ok || !tip.ok || head.out !== tip.out) return no(`its HEAD is not the tip of ${branch}`)
+    const listing = gitWith(dir, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'])
+    if (!listing.ok || !listing.out) return no(`git could not list HEAD: ${listing.out}`)
+    const tracked = new Map()
+    for (const rec of listing.out.split('\0')) {
+      const tab = rec.indexOf('\t')
+      if (tab < 0) continue
+      const [mode, , sha] = rec.slice(0, tab).split(' ')
+      tracked.set(rec.slice(tab + 1), { mode, sha })
+    }
+    const folders = new Set()
+    for (const p of tracked.keys()) for (let i = p.indexOf('/'); i >= 0; i = p.indexOf('/', i + 1)) folders.add(p.slice(0, i))
+    // Stops at the first thing HEAD does not have: a chat's file, a build output, an ignored
+    // folder - never walked into, so a stray node_modules costs one readdir, not a million.
+    const present = []
+    const walk = (rel) => {
+      for (const e of readdirSync(rel ? join(dir, rel) : dir, { withFileTypes: true })) {
+        const p = rel ? `${rel}/${e.name}` : e.name
+        if (!rel && e.name === '.git') continue
+        const t = tracked.get(p)
+        if (e.isDirectory()) {
+          if (t?.mode === '160000' && !readdirSync(join(dir, p)).length) continue
+          if (!folders.has(p)) return p
+          const stray = walk(p)
+          if (stray) return stray
+        } else if (!t || t.mode === '160000') return p
+        else present.push({ path: p, link: e.isSymbolicLink(), ...t })
+      }
+      return null
+    }
+    const stray = walk('')
+    if (stray) return no(`${stray} is in it and is not a file of HEAD (untracked or ignored)`)
+    const files = present.filter((x) => !x.link)
+    if (files.some((x) => x.path.includes('\n'))) return no('a file name in it has a line break')
+    if (files.length) {
+      const sums = gitWith(dir, ['hash-object', '--stdin-paths'], { input: files.map((x) => x.path).join('\n') + '\n', timeout: CHECKOUT_TIMEOUT_MS })
+      if (!sums.ok) return no(`git could not read the files in it: ${sums.out}`)
+      const got = sums.out.split('\n')
+      // A plain file where HEAD has a link is how Windows checks a link out; anywhere else it differs.
+      const off = files.find((x, i) => got[i] !== x.sha || (x.mode === '120000' && process.platform !== 'win32'))
+      if (off) return no(`${off.path} differs from HEAD`)
+    }
+    for (const x of present.filter((y) => y.link)) {
+      const sum = x.mode === '120000' ? gitWith(dir, ['hash-object', '--stdin'], { input: readlinkSync(join(dir, x.path)) }) : null
+      if (!sum?.ok || sum.out !== x.sha) return no(`${x.path} differs from HEAD`)
+    }
+    const have = new Set(present.map((x) => x.path))
+    const missing = [...tracked].filter(([p, t]) => t.mode !== '160000' && !have.has(p)).map(([p]) => p)
+    const side = join(made.admin, `index.paneforge-${process.pid}`)
+    const env = { GIT_INDEX_FILE: side }
+    try {
+      let r = gitWith(dir, ['read-tree', 'HEAD'], { env })
+      if (r.ok && missing.length) r = gitWith(dir, ['checkout-index', '-z', '--stdin'], { env, input: missing.join('\0'), timeout: CHECKOUT_TIMEOUT_MS })
+      if (!r.ok) return no(`git could not write the missing files: ${r.out}`)
+      gitWith(dir, ['update-index', '-q', '--refresh'], { env, timeout: CHECKOUT_TIMEOUT_MS })
+      const left = gitWith(dir, ['status', '--porcelain', '--untracked-files=all', '--ignored'], { env, timeout: CHECKOUT_TIMEOUT_MS })
+      if (!left.ok || left.out) return no(`git still reports changes after the missing files were written: ${left.out.split('\n').slice(0, 3).join('; ')}`)
+      // Abandoned (checked above): it would refuse every later git write in the copy.
+      rmSync(live, { force: true })
+      renameSync(side, join(made.admin, 'index'))
+    } finally {
+      rmSync(side, { force: true })
+    }
+    rmSync(join(made.admin, 'locked'), { force: true })
+    return { finished: true, wrote: missing.length, kept: present.length }
+  } catch (e) {
+    return no(e.message)
+  }
+}
+
 function ensureWorktree(id) {
   const dir = laneDir(id)
   if (id === 'main') return dir
+  // Left half made by a killed checkout (halfMade): finished when nothing in it can be
+  // anybody's work, otherwise refused - never handed out with most of its files gone.
+  if (existsSync(dir) && halfMade(dir) && isWorktree(dir)) {
+    const done = finishCopy(id, read())
+    if (!done.finished) throw new Error(`lane ${id}'s copy never finished being made and cannot be finished safely: ${done.why}`)
+  }
   if (!existsSync(dir) || !isWorktree(dir)) {
     const branch = laneBranch(id)
     if (existsSync(dir)) {
@@ -2254,15 +2422,29 @@ function ensureWorktree(id) {
       }
     }
     const known = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).ok
+    const existed = existsSync(dir)
+    // Registered without its files, under our own lock: the checkout is the slow part and is
+    // done below by finishCopy, so no kill can leave a copy nothing recognises (halfMade).
+    const quick = ['--no-checkout', '--lock', '--reason', MAKING]
     // A reused lane branch may be behind master; start it fresh from master when new.
     const add = known
-      ? ['worktree', 'add', dir, branch]
-      : ['worktree', 'add', '-b', branch, dir, MB]
+      ? ['worktree', 'add', ...quick, dir, branch]
+      : ['worktree', 'add', ...quick, '-b', branch, dir, MB]
     let r = gitSafe(MAIN, ...add)
     // The branch still counts as checked out in a folder git has not been told is gone.
     // Only reachable once the folder above was proven empty, so nothing can be lost here.
-    if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', dir, branch)
+    if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', ...quick, dir, branch)
     if (!r.ok) throw new Error(`could not create lane ${id}: ${r.out}`)
+    const done = finishCopy(id, null)
+    if (!done.finished) {
+      // Everything in the folder is what this call just made (it was absent or proven empty
+      // above), so taking it back loses nothing and the next claim starts clean. A folder
+      // that was there stays there. If even this cannot run, the lock stays and the next
+      // claim finishes the copy instead.
+      const undone = gitSafe(MAIN, 'worktree', 'remove', '--force', '--force', dir)
+      if (undone.ok && existed) mkdirSync(dir, { recursive: true })
+      throw new Error(`could not create lane ${id}: its files could not be written (${done.why})`)
+    }
   }
   const link = join(dir, 'node_modules')
   if (!existsSync(link)) {
@@ -2651,7 +2833,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   const damaged = new Set()
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
-    const work = laneWork(id)
+    let work = laneWork(id)
+    // Half made by a killed checkout: finished here when the proof holds (finishCopy), and
+    // then an ordinary empty lane; otherwise damaged like any other.
+    if (work.halfMade && finishCopy(id, state).finished) work = laneWork(id)
     if (work.damaged) {
       damaged.add(id)
       return false
@@ -3263,7 +3448,9 @@ function laneWorkNow(id) {
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
-  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain) }
+  // A copy a killed checkout left half made (halfMade) is unusable however few files it lacks.
+  const half = id !== 'main' && halfMade(dir) ? { damaged: true, halfMade: true } : {}
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain), ...half }
 }
 
 /**
@@ -6177,6 +6364,8 @@ function statusOf(state, session, held) {
         // The folder is a worktree of this repo and most of its files are gone (see
         // damageOf). Separate from `broken`, which stays "not a worktree at all".
         damaged: Boolean(w.damaged),
+        // Of those, one a killed checkout left half made (halfMade), which finishCopy can finish.
+        halfMade: Boolean(w.halfMade),
         missingFiles: w.missingFiles ?? 0,
         trackedFiles: w.trackedFiles ?? 0,
         ready: Boolean(state.ready[id]),
@@ -6332,7 +6521,11 @@ function doctor() {
       what.push(
         `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
-    if (l.damaged)
+    if (l.halfMade)
+      what.push(
+        `its copy never finished being made (git was stopped part way through writing its files). It is not handed to a new chat; it is finished automatically when nothing in it differs from ${l.branch}, and \`node ${join(own, 'scripts', 'lane.mjs')} finish-copy --repo ${MAIN} --lane ${l.lane}\` says why not`
+      )
+    else if (l.damaged)
       what.push(
         `its folder is missing most of its files (${l.missingFiles} of ${l.trackedFiles}) - a copy that never finished being made. It is not handed to a new chat; check it and move it out of the way`
       )
@@ -7296,6 +7489,13 @@ try {
         `Promoted ${r.tag}. /releases/latest now serves it, and every stable install updates within the half hour.`
       )
     else console.log(`Not promoted: ${r.reason}`)
+  } else if (cmd === 'finish-copy') {
+    // By hand, for a copy the chooser keeps passing over: the same proof, and the reason when it fails.
+    const lane = arg('lane')
+    if (!lane || !POOL.includes(lane) || lane === 'main') throw new Error('finish-copy needs --lane <letter> from this repo\'s pool')
+    const done = finishCopy(lane, read())
+    console.log(JSON.stringify({ lane, ...done }))
+    if (!done.finished) throw new Error(`lane ${lane} not finished: ${done.why}`)
   } else if (cmd === 'recover') {
     console.log(JSON.stringify(recover(session, arg('key'), arg('disposition'), arg('receipt'), arg('lane'))))
   } else if (cmd === 'retry') {
