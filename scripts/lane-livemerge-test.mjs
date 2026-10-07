@@ -58,7 +58,8 @@ echo "$line" >> .git/ledger-written
 // The fixture's typecheck. In the main folder only, and only when the test asks: save another
 // chat's edit (once, after \`skip\` runs: autoship checks master once before \`ship\` reads the
 // folder), or fail while a file is present (two lanes that compile apart, not together).
-const CHECK = `import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+const CHECK = `import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 if (!statSync('.git').isDirectory() || !existsSync('.git/check.json')) process.exit(0)
 const ask = JSON.parse(readFileSync('.git/check.json', 'utf8'))
 if (ask.write && ask.skip > 0) writeFileSync('.git/check.json', JSON.stringify({ ...ask, skip: ask.skip - 1 }))
@@ -67,6 +68,8 @@ else if (ask.write) {
   unlinkSync('.git/check.json')
 }
 if (ask.failIf && existsSync(ask.failIf)) {
+  // Another chat's lane command, run while the release is still checking what it merged.
+  if (ask.during) execFileSync(process.execPath, ['scripts/lane.mjs', ...ask.during], { stdio: 'ignore' })
   console.log('src/x.ts(1,1): error TS2304: they do not compile together')
   process.exit(1)
 }
@@ -267,6 +270,28 @@ const SRC = (extra) =>
   )
   const kept = f.ledgerKept()
   ok('every ledger line is still there', kept.written > 0 && !kept.lost.length, `${kept.written} written, lost: ${kept.lost.join(', ')}`)
+}
+
+// ------------------------- a lane put back off master is still waiting to go out
+//
+// 2026-10-07, 8:36-8:51pm, PaneForge: a release merged lane a into master and waited on the
+// PC for master's suite. Meanwhile another chat's lane command found lane a's commits on
+// master and dropped its ready mark ("nothing on lane-a that master does not already
+// have"). The suite never got its turn, the release put master back - and lane a's finished
+// work sat on its branch with nothing left saying it was ready to go out.
+
+{
+  const f = fixture('put-back-stays-ready')
+  const work = f.claim('sess-b')
+  f.commit(work.dir, 'breaks.txt', 'x\n', 'lane adds what breaks the build with master')
+  f.arm({ failIf: 'breaks.txt', during: ['release', '--session', 'sess-elsewhere'] })
+  const before = git(f.repo, 'rev-parse', 'master')
+  const done = f.lane('ready', '--session', 'sess-b')
+  const said = `${done.out}\n${done.err}`
+  ok('the release puts master back', /did not compile once merged/.test(said) && git(f.repo, 'rev-parse', 'master') === before, said)
+  const after = f.state()
+  ok('the lane it put back is still marked ready', Boolean(after.ready?.[work.lane]), JSON.stringify({ ready: after.ready, passed: after.passed }))
+  ok('and is not noted as passed over', !after.passed?.[work.lane], JSON.stringify(after.passed))
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
