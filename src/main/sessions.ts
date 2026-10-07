@@ -68,7 +68,7 @@ import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneS
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, isCounterRepaint, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_FORCE_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, isCounterRepaint, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -97,6 +97,8 @@ export interface AutoClearArm {
   command?: string
   /** Roughly how much context this frees, for the card to say a number. */
   tokens?: number
+  /** When the quiet hold began, so repaint cannot extend it past ARM_FORCE_MS. Set by armAutoClear. */
+  heldSince?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { claimFromCli, claimCodexFromProcess, CLAUDE_HOOKS_MAX_MS, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
@@ -3611,8 +3613,10 @@ export class SessionManager extends EventEmitter {
     // remainder and asks again - by which time `dropFor` sees the new turn and queues it
     // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
     const quiet = Date.now() - s.contentAt
-    if (!quietEnoughToArm(quiet)) {
-      const wait = Math.max(250, ARM_QUIET_MS - quiet)
+    const heldMs = ask.heldSince ? Date.now() - ask.heldSince : 0
+    if (!quietEnoughToArm(quiet, heldMs)) {
+      if (!ask.heldSince) ask.heldSince = Date.now()
+      const wait = Math.max(250, Math.min(ARM_QUIET_MS - quiet, ARM_FORCE_MS - heldMs))
       const prev = this.autoClearArmTimers.get(id)
       if (prev) clearTimeout(prev)
       acLog(`${id} holding ${wait}ms: the pane printed ${quiet}ms ago and may not be finished`)
@@ -3683,7 +3687,8 @@ export class SessionManager extends EventEmitter {
         armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
-        quietMs: live ? Date.now() - live.contentAt : undefined
+        quietMs: live ? Date.now() - live.contentAt : undefined,
+        heldMs: ask.heldSince ? Date.now() - ask.heldSince : 0
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -3770,7 +3775,7 @@ export class SessionManager extends EventEmitter {
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
         const lateQuiet = Date.now() - current.contentAt
-        if (!late && !quietEnoughToArm(lateQuiet)) {
+        if (!late && !quietEnoughToArm(lateQuiet, ask.heldSince ? Date.now() - ask.heldSince : 0)) {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
           const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)

@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, briefAnchor, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, briefAnchor, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS, ARM_FORCE_MS,
   isCounterRepaint, contentStampAfter,
   expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
@@ -227,6 +227,11 @@ console.log('a ticking counter is not output the quiet floor waits on')
   ok('...and the expiry fires instead of settling for ever',
     expiryDecision({ exists: true, metaAt: 5, armedAt: 5, now: 6, drop: null, quietMs: 30_000 - stuck }) === 'fire')
   ok('the floor opens at the floor, not before', !quietEnoughToArm(ARM_QUIET_MS - 1 - stuck) && quietEnoughToArm(ARM_QUIET_MS - stuck))
+  // Busy repaint (spinner/status text, not a counter) never lets the quiet floor open: the hold is bounded.
+  ok('a pane that keeps printing is held, not released at once', !quietEnoughToArm(100, ARM_FORCE_MS - 1))
+  ok('...but a hold older than ARM_FORCE_MS lets go whatever it prints', quietEnoughToArm(100, ARM_FORCE_MS))
+  ok('...and the expiry fires on it', expiryDecision({ exists: true, metaAt: 5, armedAt: 5, now: 6, drop: null, quietMs: 100, heldMs: ARM_FORCE_MS }) === 'fire')
+  ok('...never while the pane is working', expiryDecision({ exists: true, metaAt: 5, armedAt: 5, now: 6, drop: 'working', quietMs: 100, heldMs: ARM_FORCE_MS }) === 'working')
   // Same events on a pane that is WORKING: every chunk is output, as it always was.
   const working = run([[0, reply], ...ticks(1, 30)], false)
   ok('a working pane stamps every chunk, as before', working === 30_000 && !quietEnoughToArm(0))
