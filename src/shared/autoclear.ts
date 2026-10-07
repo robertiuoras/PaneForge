@@ -431,6 +431,8 @@ export function expiryDecision(p: {
    * a stand-down - the card and its button stay, and the timer asks again.
    */
   quietMs?: number
+  /** How long this ask has been held for quiet (ARM_FORCE_MS lets it go whatever the pane prints). */
+  heldMs?: number
 }): ExpiryVerdict {
   if (!p.exists) return 'vanished'
   if (p.metaAt !== p.armedAt) {
@@ -446,7 +448,7 @@ export function expiryDecision(p: {
   // Still printing: not finished, whatever `runSince` says. Checked BEFORE the other drops
   // only in the sense that a clean-looking pane can still be busy; a real drop below still
   // wins for a pane that is plainly working.
-  if (!p.drop && typeof p.quietMs === 'number' && !quietEnoughToArm(p.quietMs)) return 'settling'
+  if (!p.drop && typeof p.quietMs === 'number' && !quietEnoughToArm(p.quietMs, p.heldMs)) return 'settling'
   // 'working' does NOT type. Claude Code queues pty input arriving mid-turn, and this
   // sequence is THREE chunks: `/clear`, the resume prompt, the submit CR. All three land
   // in that queue, the `/clear` runs first at the turn boundary, and a clear throws the
@@ -485,9 +487,19 @@ export const ARM_QUIET_MS = Number(process.env.PF_ARM_QUIET_MS ?? 10_000)
  * Separate from `armDecision` so the caller can say how long to wait rather than being
  * told yes or no: the arm path re-asks after the remainder instead of dropping the ask.
  */
-export function quietEnoughToArm(quietMs: number): boolean {
-  return quietMs >= ARM_QUIET_MS
+export function quietEnoughToArm(quietMs: number, heldMs = 0): boolean {
+  return quietMs >= ARM_QUIET_MS || heldMs >= ARM_FORCE_MS
 }
+
+/**
+ * The bound on the quiet floor. A busy pane never goes silent: spinners, status lines and
+ * re-asks repaint every 0-6s (PC autoclear-app.log 2026-10-04..07: 234 `holding: the pane
+ * printed Nms ago` lines, 69 arms, only 11 `/clear` typed, sessions ran to 250-320k).
+ * `dropFor` (not working, no question, no draft) is what says the turn ended and still
+ * guards the fire; this only stops repaint from resetting the hold for ever. 30s = the
+ * 2-6s hook chain plus three of the 10s quiet windows a calm pane needs.
+ */
+export const ARM_FORCE_MS = Number(process.env.PF_ARM_FORCE_MS ?? 30_000)
 
 // A tick is ~250 bytes; two or three glued together by a stalled main thread are still < 1KB.
 const COUNTER_REPAINT_MAX = 4096
