@@ -94,6 +94,10 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   not show it living, and the lane HEAD equals or descends from the pinned commit; status resets to
   `owned` so the adopter re-verifies. (D) `claim` closes the requested lane's items whose pinned commit
   trunk already holds (`closeShippedRecovery`), so a blocked dead-owner item no longer bars the lane.
+  (E) a chat whose start gave it `main` while standing in that lane's folder moves to the lane on `claim --prefer`
+  when it could dispatch-begin at the pinned HEAD or adopt the lane's item (`adoptRefusal`), main has no hand
+  edits or Git operation open, and the lane is healthy, free, unconflicted and unsquatted. Main is not
+  marked ready and keeps its commits.
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).

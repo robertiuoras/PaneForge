@@ -562,6 +562,50 @@ for (const shipped of [true, false]) {
   else check('claim leaves a blocked item trunk does not hold untouched', it.status === 'blocked' && it.owner === 'dead-owner', r.stdout + r.stderr + JSON.stringify(it))
 }
 
+// Defect E (2026-10-07, taskdriver-mobile): a chat whose SessionStart claim gave it `main`
+// (standing in the lane's folder) could never reach the lane it must adopt or begin on.
+const mainFixture = (name, { dispatched = false, ownerHoldsLane = false, dirty = false, diverge = false, conflict = false, squatted = false, operation = false } = {}) => {
+  const x = fixture(name)
+  writeFileSync(join(x.dir, 'intent.txt'), name); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  if (diverge) { git(x.dir, 'checkout', '-q', '--detach', 'v0.0.1') }
+  writeFileSync(join(x.repo, 'ahead.txt'), 'main work'); git(x.repo, 'add', 'ahead.txt'); git(x.repo, 'commit', '-qm', 'main ahead')
+  if (conflict) {
+    writeFileSync(join(x.dir, 'source.txt'), 'preserved lane edit\n'); git(x.dir, 'add', 'source.txt'); git(x.dir, 'commit', '-qm', 'lane edit')
+    writeFileSync(join(x.repo, 'source.txt'), 'main edit\n'); git(x.repo, 'add', 'source.txt'); git(x.repo, 'commit', '-qm', 'main edit')
+  }
+  if (dirty) writeFileSync(join(x.repo, 'source.txt'), 'hand edit\n')
+  if (operation) writeFileSync(join(git(x.repo, 'rev-parse', '--absolute-git-dir'), 'CHERRY_PICK_HEAD'), git(x.repo, 'rev-parse', 'HEAD') + '\n')
+  x.patch((st) => {
+    const it = st.recovery.items[k]
+    if (dispatched) Object.assign(it, { status: 'dispatched', pane: 'pane-X' })
+    else Object.assign(it, { owner: 'dead-owner', status: 'owned' })
+    st.lanes.main = { session: 'successor', cwd: x.repo, seen: Date.now(), at: Date.now() }
+    if (ownerHoldsLane) st.lanes.b = { session: 'dead-owner', cwd: join(x.repo, 'nowhere'), seen: Date.now(), at: Date.now() }
+    if (conflict) st.conflicts.a = { detail: 'source.txt' }
+    if (squatted) st.lanes.b = { session: 'other-chat', cwd: x.dir, seen: Date.now(), at: Date.now() }
+  })
+  const claim = () => {
+    const r = spawnSync(process.execPath, [x.cli, 'claim', '--prefer', 'a', '--cwd', x.dir, '--session', 'successor'], { cwd: x.repo, env: { ...x.env, PF_PANE: dispatched ? 'pane-X' : '' }, encoding: 'utf8', timeout: 90_000 })
+    let lane = null; try { lane = JSON.parse(r.stdout).lane } catch {}
+    return { r, lane }
+  }
+  return { x, k, claim, mainHead: git(x.repo, 'rev-parse', 'HEAD') }
+}
+for (const dispatched of [false, true]) {
+  const { x, k, claim, mainHead } = mainFixture(`main-swap-${dispatched ? 'dispatched' : 'adopt'}`, { dispatched })
+  const c = claim(); const st = x.state()
+  check(`main holder takes the lane (${dispatched ? 'dispatched to its pane' : 'adoptable'}) and leaves main untouched`, c.lane === 'a' && st.lanes.a?.session === 'successor' && !st.lanes.main && !st.ready.main && git(x.repo, 'rev-parse', 'HEAD') === mainHead, c.r.stdout + c.r.stderr + JSON.stringify(st.lanes) + JSON.stringify(st.ready))
+  const next = x.run('recover', '--key', k, '--session', 'successor', '--disposition', dispatched ? 'begin' : 'adopt')
+  check(`${dispatched ? 'begin' : 'adopt'} succeeds after leaving main`, next.code === 0, next.out + next.err)
+}
+for (const [what, opts] of [['main has a hand edit', { dirty: true }], ['main has an unfinished cherry-pick', { operation: true }], ['the old owner still holds a lane', { ownerHoldsLane: true }], ['the lane does not contain the pinned commit', { diverge: true }], ['the dispatched lane HEAD changed', { dispatched: true, diverge: true }], ['the target lane is conflicted', { conflict: true }], ['another chat is standing in the target lane', { squatted: true }]]) {
+  const { x, claim } = mainFixture(`main-stays-${what.replace(/\W+/g, '-')}`, opts)
+  const c = claim()
+  check(`${what}: the chat stays on main`, c.lane !== 'a' && x.state().lanes.main?.session === 'successor', c.r.stdout + c.r.stderr)
+}
+
 console.log(`${failures ? 'FAIL' : 'ok'} completion fixture: ${failures} failures`)
 if (!failures) rmSync(root, { recursive: true, force: true })
 process.exitCode = failures ? 1 : 0

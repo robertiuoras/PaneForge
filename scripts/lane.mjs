@@ -1201,6 +1201,22 @@ function dispatchCompletion() {
   return pane ? { key: r.key, pane } : null
 }
 
+// Why `session` may NOT adopt lane item `r`, or null when it may. ONE predicate for `recover
+// --disposition adopt` (holding: the caller must already hold the lane) and for claim's
+// swap off `main` (holding: false, the lane is not yet the caller's), so they cannot drift.
+function adoptRefusal(state, session, r, { holding }) {
+  if (r.ref) return 'adopt is for lane items; a parked ref is reviewed through begin'
+  if (!r.owner || r.owner === session) return 'this item has no other owner to take over from; use begin'
+  if (!['owned', 'verified'].includes(r.status)) return `a ${r.status} item cannot be adopted; use begin or review it`
+  if (holding && state.lanes[r.lane]?.session !== session) return 'claim the exact ordinary lane first: only its holder can adopt'
+  if (Object.values(state.lanes).some((l) => l.session === r.owner)) return 'the previous owner still holds a lane'
+  // null = inventory unknown. Allowed: the lane hold is the proof the old owner cannot
+  // continue, since a lane is held by one chat at a time and the old owner holds none.
+  if (recoveryLiving()?.has(r.owner)) return 'its owner is still running'
+  if (!gitSafe(laneDir(r.lane), 'merge-base', '--is-ancestor', r.commit, 'HEAD').ok) return 'this lane does not contain the pinned commit; its work is not a continuation'
+  return null
+}
+
 function recover(session, key, disposition, receiptPath, wanted) {
   if (!session || !key) throw new Error('recover needs an actual session and pinned key')
   const unlock = recoveryLock()
@@ -1212,15 +1228,8 @@ function recover(session, key, disposition, receiptPath, wanted) {
     if (disposition === 'adopt') {
       // A successor chat in ANOTHER pane takes over a dead owner's item (2026-10-07,
       // taskdriver-mobile): carryRecovery only follows a same-pane clear.
-      if (r.ref) throw new Error('adopt is for lane items; a parked ref is reviewed through begin')
-      if (!r.owner || r.owner === session) throw new Error('this item has no other owner to take over from; use begin')
-      if (!['owned', 'verified'].includes(r.status)) throw new Error(`a ${r.status} item cannot be adopted; use begin or review it`)
-      if (state.lanes[r.lane]?.session !== session) throw new Error('claim the exact ordinary lane first: only its holder can adopt')
-      if (Object.values(state.lanes).some((l) => l.session === r.owner)) throw new Error('the previous owner still holds a lane')
-      // null = inventory unknown. Allowed: the lane hold is the proof the old owner cannot
-      // continue, since a lane is held by one chat at a time and the old owner holds none.
-      if (recoveryLiving()?.has(r.owner)) throw new Error('its owner is still running')
-      if (!gitSafe(laneDir(r.lane), 'merge-base', '--is-ancestor', r.commit, 'HEAD').ok) throw new Error('this lane does not contain the pinned commit; its work is not a continuation')
+      const refusal = adoptRefusal(state, session, r, { holding: true })
+      if (refusal) throw new Error(refusal)
       r.adoptedFrom = [...(r.adoptedFrom ?? []), r.owner]
       r.owner = session; r.status = 'owned' // a verified receipt belonged to the old owner
       r.at = now()
@@ -2462,6 +2471,23 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // checkout recorded at the original claim is safe only while BOTH copies are empty
     // and the requested one is unheld. A visit to another checkout never moves a hold.
     const held = Object.keys(state.lanes).find((id) => state.lanes[id].session === session)
+    // A chat whose SessionStart claim gave it `main` while standing in the lane's own folder
+    // can never claim that lane otherwise, and the only way off `main` (`release`) marks a
+    // clean ahead main ready (2026-10-07, taskdriver-mobile). Allowed only when this caller
+    // can take the lane's preserved item (dispatched to its pane, or adoptable), the lane is
+    // free, and main has nothing uncommitted beyond machine-written paths and no merge under
+    // way. The swap only moves the hold: no ready mark, no catch-up, no reset; main's commits
+    // stay on its branch for the next main holder.
+    if (held === 'main' && !state.lanes[prefer] && !state.conflicts[prefer] &&
+        !laneWork(prefer).damaged && !squattedLanes(state, session).has(prefer)) {
+      const item = preservedRecovery(state, prefer)
+      const status = gitSafe(MAIN, ...WORK_STATUS)
+      const dispatched = dispatchedHere(prefer) && gitSafe(laneDir(prefer), 'rev-parse', 'HEAD').out.trim() === item?.commit
+      if (item && (dispatched || !adoptRefusal(state, session, item, { holding: false })) &&
+          status.ok && (!status.out || machineWrittenPaths(MAIN)) && !openOperation(MAIN) && !state.conflicts.main) {
+        delete state.lanes.main
+      }
+    }
     if (held && held !== 'main' && held !== prefer && !state.lanes[prefer] && state.lanes[held].cwd &&
         inside(samePath(state.lanes[held].cwd), samePath(laneDir(prefer))) && empty(held) && (empty(prefer) || dispatchedHere(prefer))) {
       delete state.lanes[held]
