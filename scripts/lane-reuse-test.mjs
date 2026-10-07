@@ -77,6 +77,35 @@ patch((s) => { for (const [id, c] of Object.entries(s.lanes)) if (id !== 'main')
 const six = JSON.parse(claim('six').out)
 ok('a copy nobody holds is taken before one somebody left', six.lane === five.lane, `got ${six.lane}, wanted ${five.lane}`)
 
+// ---- a later unheld checkout beats making a missing earlier letter
+// The prompt hook has a deadline. Copying a repository unnecessarily can exhaust it
+// even though a clean checkout is already available further down the pool.
+const gapRepo = join(root, 'gap')
+mkdirSync(join(gapRepo, 'scripts'), { recursive: true })
+writeFileSync(join(gapRepo, 'package.json'), JSON.stringify({ name: 'gap', version: '0.0.1' }) + '\n')
+writeFileSync(join(gapRepo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c', 'd'] }) + '\n')
+installLane(here, gapRepo)
+git(gapRepo, 'init', '-q', '-b', 'master')
+git(gapRepo, 'config', 'user.email', 'test@example.com')
+git(gapRepo, 'config', 'user.name', 'test')
+git(gapRepo, 'add', '-A')
+git(gapRepo, 'commit', '-qm', 'first')
+const gapClaim = (session, ...args) => JSON.parse(execFileSync(process.execPath,
+  [join(gapRepo, 'scripts', 'lane.mjs'), 'claim', '--session', session, ...args],
+  { cwd: gapRepo, encoding: 'utf8', stdio: 'pipe' }))
+gapClaim('gap-main')
+git(gapRepo, 'worktree', 'add', '-q', '-b', 'lane-d', join(root, 'gap-d'), 'master')
+const later = gapClaim('gap-next')
+ok('a later existing checkout is reused before a missing earlier letter', later.lane === 'd', `got ${later.lane}, wanted d`)
+ok('reusing the later checkout does not create a', !existsSync(join(root, 'gap-a')))
+const preferred = gapClaim('gap-preferred', '--prefer', 'b')
+ok('an explicit safe preference still takes its requested letter', preferred.lane === 'b', preferred.lane)
+for (const session of ['gap-main', 'gap-next']) execFileSync(process.execPath,
+  [join(gapRepo, 'scripts', 'lane.mjs'), 'release', '--session', session],
+  { cwd: gapRepo, encoding: 'utf8', stdio: 'pipe' })
+const visiting = gapClaim('gap-visitor', '--visitor')
+ok('a visitor reuses a later checkout without taking free main', visiting.lane === 'd', visiting.lane)
+
 // ---- a chat that speaks is awake, whatever the app said
 const [mainId] = holdOf('four')
 patch((s) => { s.lanes[mainId].asleep = Date.now() - 55 * 60 * 60 * 1000; s.lanes[mainId].seen = Date.now() - 64 * 60 * 60 * 1000 })

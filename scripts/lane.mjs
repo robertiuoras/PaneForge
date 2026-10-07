@@ -3041,10 +3041,16 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // conflicted lane over a clean squatted one. It is reachable with no holder at all:
   // `releaseClaim` calls `noteConflict` and then deletes the lane, and `reap` only clears a
   // conflict for a branch that is no longer ahead of master - which a real conflict is.
-  const pick = (ids) =>
-    ids.find((id) => !squatted.has(id) && !state.ready[id] && !state.conflicts[id]) ??
-    ids.find((id) => !squatted.has(id) && !state.conflicts[id]) ??
-    ids.find((id) => !state.ready[id] && !state.conflicts[id])
+  const pick = (ids) => {
+    // Reuse a checkout before paying to create one. Keep the safety tiers below:
+    // existing does not outrank another chat's cwd or an unready clean lane.
+    // Visitors still leave main for its home chat, even when no letter exists yet.
+    const existing = ids.filter((id) => (!visitor || id !== 'main') && existsSync(laneDir(id)))
+    const ordered = [...existing, ...ids.filter((id) => !existing.includes(id))]
+    return ordered.find((id) => !squatted.has(id) && !state.ready[id] && !state.conflicts[id]) ??
+      ordered.find((id) => !squatted.has(id) && !state.conflicts[id]) ??
+      ordered.find((id) => !state.ready[id] && !state.conflicts[id])
+  }
   // A preference is a chat protecting work in the folder it is standing in - but a folder
   // ANOTHER chat is also standing in protects nothing, it just moves the collision one lane
   // over. So a squatted preference is honoured only when there is no unsquatted lane left,
