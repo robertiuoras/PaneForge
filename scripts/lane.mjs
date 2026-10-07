@@ -494,6 +494,13 @@ const TENTATIVE_MS = 20 * 60 * 1000
 // Nothing can be lost by not waiting. An ignored lane's work stays on its own branch and
 // merges with the next release the moment its chat marks it ready.
 const HOLD_BUSY_MS = 60 * 60 * 1000
+// How long a main-folder file must sit untouched, with the chat holding the folder gone,
+// before it is called stranded (`mainStranded`). The app's own figure for "no window hosts
+// this chat and it has been quiet": GONE_MS in src/main/laneBoard.ts. With the holder still
+// alive the bound is HOLD_BUSY_MS above, the measured "untouched this long is not mid-edit".
+const STRANDED_QUIET_MS = 15 * 60 * 1000
+// An app inventory older than this is from a copy that has quit (BEAT_STALE_MS in laneBoard.ts).
+const BEAT_STALE_MS = 5 * 60 * 1000
 // A ship that has not finished in this long crashed or was killed mid-way.
 const LOCK_MS = 20 * 60 * 1000
 // Automatic releases batch inside this window. Without it every finished chunk of work
@@ -922,12 +929,15 @@ function recoveryFor(state, session, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => r.owner === session && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
-function recoveryLiving() {
+// `maxAge`: skip a beat older than this, so a pid the OS has since handed to another process
+// cannot pass an app that quit days ago off as running.
+function recoveryLiving(maxAge = Infinity) {
   try {
     const living = new Set()
     let known = false
     const see = (beat, pid) => {
       if (!beat || !Number.isFinite(beat.at) || !Array.isArray(beat.chats) || !beat.chats.every((s) => typeof s === 'string')) throw new Error('invalid inventory')
+      if (now() - beat.at > maxAge) return
       if (pid) {
         try { process.kill(pid, 0) } catch (e) {
           if (e.code === 'ESRCH') return
@@ -3946,6 +3956,39 @@ function remember(state, [key, sub], value) {
   write(fresh)
 }
 
+/** The tree `dir` has committed (HEAD's), or null. The tree a push sends, so the one a PC verdict must be on. */
+function headTree(dir) {
+  const t = gitSafe(dir, 'rev-parse', 'HEAD^{tree}')
+  return t.ok ? t.out : null
+}
+
+/**
+ * Queue `words` on the PC for exactly `tree`, the committed tree of `dir`. rbuild uploads the
+ * folder as it stands, so while another chat has uncommitted edits in it the job tested a tree
+ * no commit has, and the pre-push hook (`treeVerdict` on the pushed commit's tree) never found a
+ * verdict: 2026-10-07 master sat 9 commits ahead of origin, lanes b and d merged and unpushed,
+ * for as long as main was being edited. A folder that is not exactly `tree` ships a throwaway
+ * copy of `tree` instead (`git archive`, 0.3 s for PaneForge), named like the folder so the PC
+ * labels it the same; rbuild has read every file by the time it returns, so the copy goes then.
+ */
+function submitPcTree(dir, tree, words) {
+  if (!tree || workingTree(dir) === tree) return submitPcJob(dir, words)
+  const box = mkdtempSync(join(tmpdir(), 'lane-pc-'))
+  try {
+    const copy = join(box, basename(dir))
+    mkdirSync(copy)
+    const tar = join(box, 'tree.tar')
+    const a = gitSafe(dir, 'archive', '--format=tar', '-o', tar, tree)
+    if (!a.ok) return { failed: `could not copy the committed files out of git: ${firstLine(a.out)}` }
+    const x = spawnSync('tar', ['-xf', tar, '-C', copy], { encoding: 'utf8', windowsHide: true, timeout: 120_000 })
+    if (x.status !== 0) return { failed: `could not unpack the committed files: ${firstLine(`${x.stderr ?? ''}`) || `exit ${x.status}`}` }
+    rmSync(tar, { force: true })
+    return submitPcJob(copy, words)
+  } finally {
+    rmSync(box, { recursive: true, force: true })
+  }
+}
+
 /** Queue `words` on the PC for `dir` without waiting: `{ id }`, or `{ failed }` with why not. */
 function submitPcJob(dir, words) {
   const at = process.argv.indexOf('--session')
@@ -4035,14 +4078,14 @@ const pcWaiting = (what, id) =>
  */
 function remoteTypecheckFailure(state) {
   if (!onPc()) return undefined
-  const tree = workingTree(MAIN)
+  const tree = headTree(MAIN)
   // Fresh: another chat's try may have queued this tree's job since `state` was read.
   const last = read().typecheck
   const known = tree && last?.tree === tree ? last : null
   if (known && 'verdict' in known) return known.verdict
   let id = known?.id
   if (!id) {
-    const sent = submitPcJob(MAIN, ['typecheck'])
+    const sent = submitPcTree(MAIN, tree, ['typecheck'])
     if (sent.failed) {
       return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
     }
@@ -4118,7 +4161,7 @@ function failNames(text) {
  * one still in line (`waitPcJob`); `waitS` is the wait budget.
  */
 function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_WAIT_S } = {}) {
-  const tree = workingTree(dir)
+  const tree = headTree(dir)
   const mine = tree && known?.tree === tree ? known : null
   if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
   let id = mine?.id
@@ -4129,7 +4172,7 @@ function pcSuite(dir, known, save, { sendOnly = false, once = false, waitS = PC_
     if (!id) {
       // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
       // on Windows). The typecheck is its own gate, already passed for this tree.
-      const sent = submitPcJob(dir, ['--', 'npm', 'test'])
+      const sent = submitPcTree(dir, tree, ['--', 'npm', 'test'])
       // The record is left as it is: after a red first job it still names that job, and
       // the next try reads its answer again rather than running it again.
       if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
@@ -4519,7 +4562,7 @@ function stopStaleSuiteJob(dir, commit) {
  * node_modules is fixed outside this file and the next attempt should find out.
  *
  * On the Mac it runs on the PC instead (`pcSuite`, cached in `state.pcSuite`) on the TREE
- * rbuild ships - the commit plus whatever MAIN has uncommitted, which is what the PC tests.
+ * MAIN has committed - never another chat's uncommitted edits, which no push sends (`submitPcTree`).
  *
  * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
  * hands now, and it is typed by a person who is watching.
@@ -4841,8 +4884,13 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // Same shape as the sentence below so the sidebar's `holdWords` reads it as "main copy",
   // with the file named, because committing that one file is the whole fix.
   if (busy.length && RELEASE === 'merge') {
-    const files = mainBlockers(state).split('\n').map((l) => l.replace(/ \(.*\)$/, ''))
+    const blockers = mainBlockers(state)
+    const files = blockerFiles(blockers)
     const more = files.length > 1 ? ` and ${files.length - 1} more` : ''
+    // Said differently once nobody is on it: agents repeat this sentence, and "chats still
+    // working" was repeated all day on 7 Oct about a chat that had died at 10:25am.
+    const stuck = mainStranded(state, blockers)
+    if (stuck) return { shipped: false, reason: strandedReason(stuck) }
     return { shipped: false, reason: `waiting on chats still working: main (uncommitted edits to ${files[0]}${more} that finished work changes)` }
   }
   // Named with the evidence, not just the lane. An agent repeats this reason to a person
@@ -5311,6 +5359,131 @@ function beatRelease(session) {
  */
 function mainBlockers(state) {
   return mainDirt(state).blockers
+}
+
+const blockerFiles = (blockers) => blockers.split('\n').filter(Boolean).map((l) => l.replace(/ \(.*\)$/, ''))
+
+/**
+ * A main-folder blocker nobody is going to clear, or null.
+ *
+ * Measured 7 Oct 2026 in clients: a Codex chat holding `main` left an untracked
+ * write-ledger.jsonl there and died at 10:25am; a finished lane brought the same path, and
+ * every release from 11:57am to 8:10pm was held behind it as "waiting on chats still
+ * working", four finished lanes deep, with nothing ever telling a person. Across every repo
+ * on the Mac that week, main-folder holds lasted a median 82 minutes and a p90 of 630, and
+ * none of them raised anything.
+ *
+ * Stranded is read off the files first, like HOLD_BUSY_MS: untouched for STRANDED_QUIET_MS
+ * and the folder's holder is gone (no hold, its chat ended, or quiet that long and in no
+ * running app's inventory) - or untouched for HOLD_BUSY_MS whoever holds it. A file whose
+ * age cannot be read is never stranded: the failure that matters is calling somebody's
+ * open edit abandoned. Reads only; nothing here touches the files.
+ */
+function mainStranded(state, blockers = mainBlockers(state)) {
+  if (RELEASE !== 'merge' || !blockers) return null
+  const files = blockerFiles(blockers)
+  let touched = 0
+  for (const f of files) {
+    try {
+      touched = Math.max(touched, lstatSync(join(MAIN, f)).mtimeMs)
+    } catch {
+      /* deleted, or a name this platform cannot spell */
+    }
+  }
+  if (!touched) return null
+  const quiet = now() - touched
+  if (quiet < STRANDED_QUIET_MS) return null
+  const hold = state.lanes.main
+  const session = hold?.session ?? null
+  const seen = hold?.seen ?? hold?.claimed ?? 0
+  let gone = !session || Boolean(hold.ended)
+  if (!gone && now() - seen > STRANDED_QUIET_MS) {
+    // Only a running app's word counts: unknown is never "the chat is gone".
+    const living = recoveryLiving(BEAT_STALE_MS)
+    gone = Boolean(living) && !living.has(session) && !(hold.pane && living.has(hold.pane))
+  }
+  if (!gone && quiet < HOLD_BUSY_MS) return null
+  const waiting = Object.keys(state.ready).filter((id) => id !== 'main').sort()
+  return { files, session, gone, waiting }
+}
+
+function strandedWho(s) {
+  if (!s.session) return 'no chat holds the main folder'
+  if (s.gone) return `the chat holding the main folder (${s.session.slice(0, 8)}) has ended`
+  return `the chat holding the main folder (${s.session.slice(0, 8)}) has not touched them for over an hour`
+}
+
+function strandedReason(s) {
+  const more = s.files.length > 1 ? ` and ${s.files.length - 1} more` : ''
+  return (
+    `nobody is working on it - uncommitted edits to ${s.files[0]}${more} in the main folder that finished work changes, and ${strandedWho(s)}. ` +
+    `Nothing is lost while it waits; the lane clock puts one card in front of a person to commit them.`
+  )
+}
+
+/** The GuardDeck card id for this repo's stranded main folder: one per repo, replaced, then cleared. */
+const strandedCardId = () => `lane-main-${basename(MAIN).replace(/[^A-Za-z0-9._-]/g, '-')}`.slice(0, 64)
+
+/**
+ * Put ONE waiting card in front of a person for a stranded main folder, and take it down
+ * once the folder no longer blocks anything.
+ *
+ * Not a recovery: the stranded bytes are somebody's half-done work in a folder every chat
+ * shares, and on 7 Oct they were a client write ledger whose rows said which writes had
+ * already happened. Moving them anywhere a chat stops seeing them risks the writes being
+ * made twice; committing them as finished is the choice nobody made. So the bytes stay
+ * exactly where they are and a person gets the file, the holder and the waiting lanes, with
+ * the one line to paste. Raised once per blocker (files + holder), from the lane clock
+ * only (`retry`), never from a chat's own `ready`. LANE_DISPATCH_LOG stands in for GuardDeck
+ * in tests, as in clashCards; a card that could not be posted is tried again next tick.
+ */
+function strandedCard(state) {
+  const log = process.env.LANE_DISPATCH_LOG
+  const tool = [
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'waiting-card.mjs'),
+    ...(process.platform === 'win32' ? [join(homedir(), 'Desktop', 'Projects', 'claude-memory', 'claude-config', 'waiting-card.mjs')] : [])
+  ].find((p) => existsSync(p))
+  if (!log && (!tool || inTempFolder(MAIN))) return null
+  const send = (args, line) => {
+    if (log) {
+      appendFileSync(log, JSON.stringify(line) + '\n')
+      return 'logged'
+    }
+    const r = spawnSync(process.execPath, [tool, ...args], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      windowsHide: true,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    })
+    return r.status === 0 ? 'GuardDeck' : null
+  }
+  const id = strandedCardId()
+  const blockers = RELEASE === 'merge' ? mainBlockers(state) : ''
+  const was = state.stranded
+  if (!blockers) {
+    if (!was) return null
+    if (was.card && !send(['--clear', '--id', id], { id, clear: true })) return null
+    delete state.stranded
+    write(state)
+    return was.card ? 'The main folder no longer holds the release - took its card down.' : null
+  }
+  const stuck = mainStranded(state, blockers)
+  if (!stuck) return null
+  const key = JSON.stringify([stuck.files, stuck.session])
+  if (was?.key === key && was.card) return null
+  const repo = basename(MAIN)
+  const names = stuck.files.join(', ')
+  const lanes = stuck.waiting.length ? `finished lane${stuck.waiting.length === 1 ? '' : 's'} ${stuck.waiting.join(', ')}` : 'finished work'
+  const title = `Finished work in ${repo} waits on a file nobody is working on`
+  const detail =
+    `${MAIN} has uncommitted ${names}, and ${lanes} change${stuck.waiting.length === 1 ? 's' : ''} it, so nothing merges. ` +
+    `${strandedWho(stuck)[0].toUpperCase()}${strandedWho(stuck).slice(1)}. Nothing is lost. ` +
+    `Paste into a chat in ${repo}: commit ${names} in ${MAIN} as it is (keep both sides if a lane changes it), then run lane.mjs retry --repo ${MAIN}`
+  const via = send(['--id', id, '--title', title, '--detail', detail, '--not-browser'], { id, card: true, title, detail })
+  if (!via) return null
+  state.stranded = { key, since: was?.since ?? now(), card: { at: now(), via } }
+  write(state)
+  return `The main folder holds the release with ${names} and nobody is on it - raised one card for a person (${via}).`
 }
 
 /**
@@ -7683,6 +7856,10 @@ try {
     // The clock is what was missing. autoship is a no-op unless there is something to put
     // out, nobody is mid-edit and the cooldown has passed.
     sayRelease(autoship('auto', session ?? 'auto'))
+    // A main folder holding that release with a file nobody is on gets one card, and loses it
+    // once it holds nothing (strandedCard).
+    const stranded = strandedCard(reap(read()))
+    if (stranded) console.log(stranded)
     // The folder sweep rides the same clocks (the app's timer on the Mac, lane-cron on the
     // PC), every SWEEP_EVERY_MS. Detached, because archiving one big folder took 7 minutes
     // on 2026-09-23 and the retry must not wait on it; what it removes lands in
