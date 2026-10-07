@@ -5780,14 +5780,25 @@ function installPushGate() {
  * brought and refuses, changing nothing, when one of those has an edit of its own. `--hard`
  * here wiped every uncommitted edit in the folder. Only while HEAD is still the last merge this
  * release made: a commit somebody made in the folder since is not this release's to drop.
- * null, or why it could not.
+ * `merged` lanes get back the ready marks they went in with (`marks`): while this release
+ * waited on its checks, any other chat's lane command saw their commits on the trunk and
+ * dropped the marks (`reap`), so once the trunk is put back nothing said their finished work
+ * still had to go out (PaneForge lane a, 7 Oct 2026 8:36-8:51pm). null, or why it could not.
  */
-function undoMerges(to, landed) {
+function undoMerges(to, landed, merged, marks) {
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD').out
   if (head !== landed)
     return `${MB} is left on the merge, unpushed, because a commit was made in its folder after it (${head.slice(0, 8)}) and putting ${MB} back would drop it`
   const r = gitSafe(MAIN, 'reset', '--keep', '-q', to)
-  return r.ok ? null : `${MB} is left on the merge, unpushed, because putting it back would have overwritten an unsaved edit in its folder: ${firstLine(r.out)}`
+  if (!r.ok) return `${MB} is left on the merge, unpushed, because putting it back would have overwritten an unsaved edit in its folder: ${firstLine(r.out)}`
+  const fresh = read()
+  for (const { lane } of merged) {
+    if (fresh.ready[lane] || !marks[lane]) continue
+    fresh.ready[lane] = marks[lane]
+    if (fresh.passed) delete fresh.passed[lane]
+  }
+  write(fresh)
+  return null
 }
 
 
@@ -5984,7 +5995,7 @@ function ship(kind, session, { gated = false } = {}) {
     if (merged.length && !TASKDRIVER_PC) {
       const red = typecheckFailure(state)
       if (red) {
-        const stuck = undoMerges(beforeMerge, landedHead)
+        const stuck = undoMerges(beforeMerge, landedHead, merged, state.ready)
         throw new Error(`the lanes did not compile once merged, so nothing was pushed: ${red}${stuck ? `. ${stuck}` : ''}`)
       }
     }
@@ -5998,7 +6009,7 @@ function ship(kind, session, { gated = false } = {}) {
     if (pushes && gated) {
       const red = pushedTreeFailure(state)
       if (red) {
-        const stuck = undoMerges(beforeMerge, landedHead)
+        const stuck = undoMerges(beforeMerge, landedHead, merged, state.ready)
         throw new Error(`${red}${stuck ? ` ${stuck}` : ''}`)
       }
     } else if (pushes) {
