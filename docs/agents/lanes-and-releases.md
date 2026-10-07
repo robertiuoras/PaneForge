@@ -78,8 +78,13 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   git's `initializing` or ours, no index: `halfMade`, `status.halfMade`) is finished by claim,
   the completion clock or `lane.mjs finish-copy --lane <x>` ONLY when: no fresh index.lock,
   HEAD = lane branch tip, no open recovery item, nothing on disk outside HEAD, every present
-  file = HEAD. It writes the index (side file, renamed) and ONLY the missing files, then drops
-  the lock. Any doubt: left as is, `damaged` (`test:lanehalfmade`; taskdriver.ai d/f 2026-10-07).
+  file = HEAD. It holds index.lock (marked with its pid: a dead run's lock is taken over at
+  once) from the file check on, writes ONLY the missing files into the gitdir and links each in
+  whole (a kill never leaves a cut-off file), creates empty submodule folders, installs the
+  index through the lock, then drops `locked` (a whole copy still `locked` by a kill there gets
+  it dropped: `dropFinishedLock`). A refusal over contents is remembered against file sizes and
+  times (`paneforge-refused`; 4.4s to re-read 4,879 files). Any doubt: left as is, `damaged`
+  (`test:lanehalfmade`; taskdriver.ai d/f 2026-10-07).
 - `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
   binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
   nonempty successful `{command, exitCode: 0}` checks and accepted independent

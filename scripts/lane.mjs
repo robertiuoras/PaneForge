@@ -47,14 +47,19 @@ import { randomUUID, createHash } from 'node:crypto'
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  readSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -1146,6 +1151,7 @@ function dispatchCompletion() {
       // A copy a killed checkout left half made is not abandoned work: finish it when the
       // proof holds (finishCopy) and there is then nothing here to dispatch.
       if (halfMade(dir)) finishCopy(id, state)
+      else dropFinishedLock(dir)
       const head = gitSafe(dir, 'rev-parse', 'HEAD')
       const status = gitSafe(dir, ...WORK_STATUS)
       const index = gitSafe(dir, 'ls-files', '-z')
@@ -2282,6 +2288,37 @@ function gitWith(cwd, args, { env, input, timeout = GIT_TIMEOUT_MS } = {}) {
   }
 }
 
+// What finishCopy writes into the index.lock it holds. git's own lock holds index bytes, never
+// this, so a lock carrying it whose process is gone is abandoned now, not in STALE_LOCK_MS.
+const FINISHING = 'paneforge finishing this copy, process '
+function finisherGone(lock) {
+  try {
+    const fd = openSync(lock, 'r')
+    const head = Buffer.alloc(80)
+    const n = readSync(fd, head, 0, 80, 0)
+    closeSync(fd)
+    const m = new RegExp(`^${FINISHING}(\\d+)\n`).exec(head.toString('utf8', 0, n))
+    if (!m) return false
+    process.kill(Number(m[1]), 0)
+    return false
+  } catch (e) {
+    return e.code === 'ESRCH'
+  }
+}
+
+/** The lock left on a copy that IS whole: a kill landed between the index and the lock. */
+function dropFinishedLock(dir) {
+  const admin = adminOf(dir)
+  if (!admin || !existsSync(join(admin, 'index'))) return
+  try {
+    const lock = readFileSync(join(admin, 'locked'), 'utf8').trim()
+    // git writes the index last and only then unlinks "initializing"; ours goes the same way.
+    if (lock === 'initializing' || lock === MAKING) unlinkSync(join(admin, 'locked'))
+  } catch {
+    /* no lock, or a person's own `git worktree lock` - left alone */
+  }
+}
+
 /**
  * Finish a half-made lane copy (halfMade) - only when nothing in it can be anybody's work.
  *
@@ -2289,28 +2326,57 @@ function gitWith(cwd, args, { env, input, timeout = GIT_TIMEOUT_MS } = {}) {
  * is no index, no git is writing it now (no index.lock younger than STALE_LOCK_MS), HEAD is
  * the lane branch and its tip, no open recovery item is pinned to the lane (`state`; only
  * reviewed/complete ones pass), nothing on disk is outside HEAD (no untracked or ignored
- * file), and every file that IS there is HEAD's byte for byte. Then: the index is built from
- * HEAD in a side file, ONLY the missing files are written from it, git must report nothing,
- * the side file becomes the index (one rename), and the lock goes last - so a kill anywhere
- * in here leaves a copy this recognises again. Files already there are never rewritten.
+ * file), and every file that IS there is HEAD's byte for byte. It holds index.lock from the
+ * file check to the end, so no git command can write the index meanwhile. Then: the index is
+ * built from HEAD in a side file, ONLY the missing files are written - into a folder in the
+ * gitdir first, each then linked in whole, so a kill never leaves a cut-off file in the copy -
+ * git must report nothing, the side file becomes the index (two renames through the lock),
+ * and the lock goes last. A kill anywhere in here leaves a copy this recognises again.
+ * Files already there are never rewritten.
  *
- * Anything short of that is `{ finished: false, why }` and the copy is left exactly as it
- * was: still damaged, never handed out, for a person (docs/agents/lanes-and-releases.md).
+ * Anything short of that is `{ finished: false, why }` and the copy is left as it was (an
+ * abandoned index.lock aside): still damaged, never handed out, for a person
+ * (docs/agents/lanes-and-releases.md). A refusal over file contents is remembered against the
+ * files' sizes and times, so an unchanged copy is not read again on every claim (4,879 files
+ * took 4.4s to read on a Mac).
  */
 function finishCopy(id, state) {
   const dir = laneDir(id)
   const made = id !== 'main' && existsSync(dir) ? halfMade(dir) : null
   if (!made) return { finished: false, why: `lane ${id}'s copy is not one that never finished being made` }
   const no = (why) => ({ finished: false, why })
+  const index = join(made.admin, 'index')
+  const live = join(made.admin, 'index.lock')
+  let held = false
   try {
     if (state && preservedRecovery(state, id)) return no('a recovery item is still open on it')
-    const live = join(made.admin, 'index.lock')
-    if (existsSync(live) && now() - statSync(live).mtimeMs < STALE_LOCK_MS) return no('a git process may still be writing it (its index.lock is fresh)')
+    if (existsSync(live) && now() - statSync(live).mtimeMs < STALE_LOCK_MS && !finisherGone(live)) return no('a git process may still be writing it (its index.lock is fresh)')
     const branch = laneBranch(id)
     const sym = gitWith(dir, ['symbolic-ref', '-q', 'HEAD'])
     const head = gitWith(dir, ['rev-parse', '--verify', '-q', 'HEAD'])
     const tip = gitWith(MAIN, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])
     if (!sym.ok || sym.out !== `refs/heads/${branch}` || !head.ok || !tip.ok || head.out !== tip.out) return no(`its HEAD is not the tip of ${branch}`)
+    // Abandoned (older than STALE_LOCK_MS, or a killed run of this, checked above). Moved
+    // aside first so two of these racing for it cannot both take the lock: one rename finds it.
+    const aside = `${live}.paneforge-${process.pid}`
+    try {
+      renameSync(live, aside)
+      rmSync(aside, { force: true })
+    } catch {
+      /* none, or another one got it first - the exclusive create below settles which */
+    }
+    try {
+      const fd = openSync(live, 'wx')
+      held = true
+      writeFileSync(fd, `${FINISHING}${process.pid}\n`)
+      closeSync(fd)
+    } catch {
+      if (!held) return no('a git process started writing it')
+      throw new Error('could not mark its index.lock as held')
+    }
+    if (existsSync(index)) return no('git wrote its index meanwhile')
+    // What a killed run of this left in the gitdir (only reachable holding the lock).
+    for (const n of readdirSync(made.admin)) if (/^(index\.paneforge-|index\.lock\.paneforge-|paneforge-stage-)\d+$/.test(n)) rmSync(join(made.admin, n), { recursive: true, force: true })
     const listing = gitWith(dir, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'])
     if (!listing.ok || !listing.out) return no(`git could not list HEAD: ${listing.out}`)
     const tracked = new Map()
@@ -2331,7 +2397,10 @@ function finishCopy(id, state) {
         if (!rel && e.name === '.git') continue
         const t = tracked.get(p)
         if (e.isDirectory()) {
-          if (t?.mode === '160000' && !readdirSync(join(dir, p)).length) continue
+          if (t?.mode === '160000' && !readdirSync(join(dir, p)).length) {
+            present.push({ path: p, gitlink: true, ...t })
+            continue
+          }
           if (!folders.has(p)) return p
           const stray = walk(p)
           if (stray) return stray
@@ -2342,7 +2411,25 @@ function finishCopy(id, state) {
     }
     const stray = walk('')
     if (stray) return no(`${stray} is in it and is not a file of HEAD (untracked or ignored)`)
-    const files = present.filter((x) => !x.link)
+    const memo = join(made.admin, 'paneforge-refused')
+    const fp = createHash('sha256').update(head.out)
+    for (const x of present) {
+      const st = lstatSync(join(dir, x.path))
+      fp.update(`\0${x.path}\0${st.size}\0${st.mtimeMs}\0${st.mode}`)
+    }
+    const key = fp.digest('hex')
+    let seen = null
+    try {
+      seen = JSON.parse(readFileSync(memo, 'utf8'))
+    } catch {
+      /* none yet */
+    }
+    if (seen?.key === key && seen.why) return no(`${seen.why} (no file in it has changed since)`)
+    const differs = (why) => {
+      writeFileSync(memo, JSON.stringify({ key, why }))
+      return no(why)
+    }
+    const files = present.filter((x) => !x.link && !x.gitlink)
     if (files.some((x) => x.path.includes('\n'))) return no('a file name in it has a line break')
     if (files.length) {
       const sums = gitWith(dir, ['hash-object', '--stdin-paths'], { input: files.map((x) => x.path).join('\n') + '\n', timeout: CHECKOUT_TIMEOUT_MS })
@@ -2350,33 +2437,61 @@ function finishCopy(id, state) {
       const got = sums.out.split('\n')
       // A plain file where HEAD has a link is how Windows checks a link out; anywhere else it differs.
       const off = files.find((x, i) => got[i] !== x.sha || (x.mode === '120000' && process.platform !== 'win32'))
-      if (off) return no(`${off.path} differs from HEAD`)
+      if (off) return differs(`${off.path} differs from HEAD`)
     }
     for (const x of present.filter((y) => y.link)) {
       const sum = x.mode === '120000' ? gitWith(dir, ['hash-object', '--stdin'], { input: readlinkSync(join(dir, x.path)) }) : null
-      if (!sum?.ok || sum.out !== x.sha) return no(`${x.path} differs from HEAD`)
+      if (!sum?.ok || sum.out !== x.sha) return differs(`${x.path} differs from HEAD`)
     }
     const have = new Set(present.map((x) => x.path))
-    const missing = [...tracked].filter(([p, t]) => t.mode !== '160000' && !have.has(p)).map(([p]) => p)
+    const missing = [...tracked].filter(([p]) => !have.has(p))
     const side = join(made.admin, `index.paneforge-${process.pid}`)
+    const stage = join(made.admin, `paneforge-stage-${process.pid}`)
     const env = { GIT_INDEX_FILE: side }
     try {
       let r = gitWith(dir, ['read-tree', 'HEAD'], { env })
-      if (r.ok && missing.length) r = gitWith(dir, ['checkout-index', '-z', '--stdin'], { env, input: missing.join('\0'), timeout: CHECKOUT_TIMEOUT_MS })
+      const write = missing.filter(([, t]) => t.mode !== '160000').map(([p]) => p)
+      if (r.ok && write.length) {
+        mkdirSync(stage)
+        r = gitWith(dir, ['checkout-index', `--prefix=${stage.split(sep).join('/')}/`, '-z', '--stdin'], { env, input: write.join('\0'), timeout: CHECKOUT_TIMEOUT_MS })
+      }
       if (!r.ok) return no(`git could not write the missing files: ${r.out}`)
+      for (const p of write) {
+        const from = join(stage, p)
+        const to = join(dir, p)
+        mkdirSync(dirname(to), { recursive: true })
+        try {
+          if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to)
+          else linkSync(from, to)
+        } catch (e) {
+          // Something put a file there since the walk: git status below judges it.
+          if (e.code === 'EEXIST') continue
+          if (e.code !== 'EXDEV') throw e
+          // The gitdir on another disk: a plain copy, never over a file (cut off only by a kill).
+          copyFileSync(from, to, fsConstants.COPYFILE_EXCL)
+        }
+      }
+      // Not checked out = an empty folder, which is what git status expects to find.
+      for (const [p] of missing.filter(([, t]) => t.mode === '160000')) mkdirSync(join(dir, p), { recursive: true })
       gitWith(dir, ['update-index', '-q', '--refresh'], { env, timeout: CHECKOUT_TIMEOUT_MS })
       const left = gitWith(dir, ['status', '--porcelain', '--untracked-files=all', '--ignored'], { env, timeout: CHECKOUT_TIMEOUT_MS })
       if (!left.ok || left.out) return no(`git still reports changes after the missing files were written: ${left.out.split('\n').slice(0, 3).join('; ')}`)
-      // Abandoned (checked above): it would refuse every later git write in the copy.
-      rmSync(live, { force: true })
-      renameSync(side, join(made.admin, 'index'))
+      if (existsSync(index)) return no('git wrote its index meanwhile')
+      // git's own way in: the new index replaces the lock file, which then becomes the index.
+      renameSync(side, live)
+      renameSync(live, index)
+      held = false
     } finally {
       rmSync(side, { force: true })
+      rmSync(stage, { recursive: true, force: true })
     }
+    rmSync(memo, { force: true })
     rmSync(join(made.admin, 'locked'), { force: true })
     return { finished: true, wrote: missing.length, kept: present.length }
   } catch (e) {
     return no(e.message)
+  } finally {
+    if (held) rmSync(live, { force: true })
   }
 }
 
@@ -2388,7 +2503,7 @@ function ensureWorktree(id) {
   if (existsSync(dir) && halfMade(dir) && isWorktree(dir)) {
     const done = finishCopy(id, read())
     if (!done.finished) throw new Error(`lane ${id}'s copy never finished being made and cannot be finished safely: ${done.why}`)
-  }
+  } else if (existsSync(dir)) dropFinishedLock(dir)
   if (!existsSync(dir) || !isWorktree(dir)) {
     const branch = laneBranch(id)
     if (existsSync(dir)) {
@@ -2436,7 +2551,10 @@ function ensureWorktree(id) {
     if (!r.ok && known) r = gitSafe(MAIN, 'worktree', 'add', '--force', ...quick, dir, branch)
     if (!r.ok) throw new Error(`could not create lane ${id}: ${r.out}`)
     const done = finishCopy(id, null)
-    if (!done.finished) {
+    // Another process (the completion clock) may have finished it meanwhile (an index now),
+    // or still be writing it (its index.lock): that copy is theirs to hand out, not ours to undo.
+    const admin = adminOf(dir)
+    if (!done.finished && halfMade(dir) && !(admin && existsSync(join(admin, 'index.lock')))) {
       // Everything in the folder is what this call just made (it was absent or proven empty
       // above), so taking it back loses nothing and the next claim starts clean. A folder
       // that was there stays there. If even this cannot run, the lock stays and the next
@@ -2445,6 +2563,7 @@ function ensureWorktree(id) {
       if (undone.ok && existed) mkdirSync(dir, { recursive: true })
       throw new Error(`could not create lane ${id}: its files could not be written (${done.why})`)
     }
+    if (!done.finished && halfMade(dir)) throw new Error(`lane ${id}'s copy is still being made by another process: ${done.why}`)
   }
   const link = join(dir, 'node_modules')
   if (!existsSync(link)) {

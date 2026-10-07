@@ -49,7 +49,7 @@ const FILES = 200
 // scripts/*, src/f000.js ... - so everything before src/f100.js is written, the rest is not.
 const TRIP = 'src/f100.js'
 
-function fixture(name, letters, { remote = false } = {}) {
+function fixture(name, letters, { remote = false, gitlink = false } = {}) {
   const repo = join(root, name)
   mkdirSync(join(repo, 'scripts'), { recursive: true })
   mkdirSync(join(repo, 'src'), { recursive: true })
@@ -68,6 +68,8 @@ function fixture(name, letters, { remote = false } = {}) {
   const first = git(repo, 'rev-parse', 'HEAD')
   writeFileSync(join(repo, 'src', 'later.js'), 'export const later = 1\n')
   git(repo, 'add', '-A')
+  // An uninitialised submodule: git checks it out as an empty folder, and reports it deleted without one.
+  if (gitlink) git(repo, 'update-index', '--add', '--cacheinfo', `160000,${first},vendor/sub`)
   git(repo, 'commit', '-qm', 'second')
   git(repo, 'tag', 'v0.0.1')
   const extra = {}
@@ -111,7 +113,8 @@ function fixture(name, letters, { remote = false } = {}) {
   }
   const laneOf = (id) => JSON.parse(lane('status').out).lanes.find((l) => l.lane === id)
   const head = git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n')
-  return { repo, lane, claim, laneOf, head, first, ...extra }
+  const gitlinks = gitlink ? ['vendor/sub'] : []
+  return { repo, lane, claim, laneOf, head, gitlinks, first, ...extra }
 }
 
 const adminOf = (dir) => git(dir, 'rev-parse', '--absolute-git-dir')
@@ -147,6 +150,7 @@ function halfMake(f, slot, { lock = 'initializing', keep = 120 } = {}) {
   const admin = adminOf(dir)
   writeFileSync(join(admin, 'locked'), `${lock}\n`)
   for (const p of f.head.slice(0, keep)) {
+    if (f.gitlinks.includes(p)) continue
     mkdirSync(dirname(join(dir, p)), { recursive: true })
     writeFileSync(join(dir, p), execFileSync('git', ['cat-file', 'blob', `HEAD:${p}`], { cwd: f.repo }))
   }
@@ -157,8 +161,8 @@ function halfMake(f, slot, { lock = 'initializing', keep = 120 } = {}) {
 function whole(f, dir) {
   // The engine's own node_modules link (excluded through info/exclude) is the one thing allowed.
   const status = git(dir, 'status', '--porcelain', '--untracked-files=all', '--ignored').split('\n').filter((l) => l && l !== '!! node_modules').join('\n')
-  const files = onDisk(dir).filter((p) => p !== 'node_modules')
-  const missing = f.head.filter((p) => !files.includes(p))
+  // existsSync, not the file list: a submodule is an (empty) folder.
+  const missing = f.head.filter((p) => !existsSync(join(dir, p)))
   return {
     ok: hasIndex(dir) && lockOf(dir) === null && missing.length === 0 && status === '' && git(dir, 'ls-files').split('\n').length === f.head.length,
     detail: `index ${hasIndex(dir)}, lock ${JSON.stringify(lockOf(dir))}, missing ${missing.length}, status ${JSON.stringify(status.slice(0, 300))}`
@@ -321,6 +325,70 @@ ok('the edited file is still edited', readFileSync(join(c, 'src', 'f010.js'), 'u
   ok('a half-made copy with doubt in it still gets its one diagnostic owner, untouched', sent.some((s) => /lane:b:/.test(s.key)) && existsSync(join(doubt, 'stray.txt')) && !hasIndex(doubt), JSON.stringify(sent))
 }
 
+// ------------------------------------------------------------------ while it is being finished
+
+{
+  // No git command may write the index meanwhile: index.lock is held from the file check to
+  // the end. Without it a chat's `git add` index was silently replaced by HEAD's.
+  const p = fixture('busy', ['a', 'b', 'c', 'd'])
+  const dir = halfMake(p, 'a', { keep: 60 })
+  const marker = join(root, 'busy-poke.txt')
+  git(p.repo, 'config', 'filter.trip.smudge', `env -u GIT_INDEX_FILE git read-tree HEAD; echo $? > '${marker.split('\\').join('/')}'; cat`)
+  const done = p.lane('finish-copy', '--lane', 'a')
+  git(p.repo, 'config', '--unset', 'filter.trip.smudge')
+  const poked = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : 'never ran'
+  ok('a git command writing the index while the copy is being finished is refused', poked !== '0' && poked !== 'never ran', `read-tree exit ${poked}`)
+  ok('and the copy still finishes whole', done.ok && whole(p, dir).ok, `${done.err}${done.out} ${whole(p, dir).detail}`)
+  // A kill between the index going in and the lock coming off: whole, but still locked.
+  const locked = {}
+  for (const [slot, lock] of [['b', 'paneforge: copy still being made'], ['c', 'initializing'], ['d', 'kept by hand']]) {
+    locked[slot] = halfMake(p, slot, { keep: 60 })
+    p.lane('finish-copy', '--lane', slot)
+    writeFileSync(join(adminOf(locked[slot]), 'locked'), `${lock}\n`)
+  }
+  for (const slot of ['b', 'c', 'd']) {
+    p.claim(`sess-${slot}`, '--prefer', slot, '--cwd', locked[slot])
+    p.lane('release', '--session', `sess-${slot}`)
+  }
+  ok(
+    "a whole copy still carrying the lock it was made under (ours or git's) has it dropped",
+    lockOf(locked.b) === null && lockOf(locked.c) === null && whole(p, locked.b).ok && whole(p, locked.c).ok,
+    `b ${lockOf(locked.b)}, c ${lockOf(locked.c)}`
+  )
+  ok("a lock a person put on a copy is left alone", lockOf(locked.d) === 'kept by hand', lockOf(locked.d))
+}
+
+{
+  // A refusal over file contents is remembered: reading every file again (4.4s for 4,879 on a
+  // Mac) on every claim and clock tick, for a copy that has not changed, is wasted.
+  const p = fixture('memo', ['a'])
+  const dir = halfMake(p, 'a', { keep: 60 })
+  writeFileSync(join(dir, 'src', 'f010.js'), 'export const n = "edited"\n')
+  const first = p.lane('finish-copy', '--lane', 'a')
+  const second = p.lane('finish-copy', '--lane', 'a')
+  ok(
+    'a copy refused over its contents is not read again while nothing in it changes',
+    !first.ok && /f010\.js differs/.test(first.err) && !second.ok && /f010\.js differs.*changed since/.test(second.err),
+    `${first.err}\n${second.err}`
+  )
+  writeFileSync(join(dir, 'src', 'f010.js'), execFileSync('git', ['cat-file', 'blob', 'HEAD:src/f010.js'], { cwd: p.repo }))
+  const third = p.lane('finish-copy', '--lane', 'a')
+  ok("once that file is HEAD's again it is read again, and finished", third.ok && whole(p, dir).ok, third.err + third.out)
+  ok('and nothing of the remembered refusal is left behind', !readdirSync(adminOf(dir)).some((n) => n.startsWith('paneforge-')), readdirSync(adminOf(dir)).join(', '))
+}
+
+{
+  // An uninitialised submodule is an empty folder in a whole copy; without one git reports it deleted.
+  const p = fixture('submodule', ['a', 'b'], { gitlink: true })
+  p.claim('sess-main', '--prefer', 'main')
+  ok('control: HEAD has a submodule after the files the cut keeps', p.head.indexOf('vendor/sub') >= 120, p.head.indexOf('vendor/sub'))
+  const dir = halfMake(p, 'a')
+  const done = p.lane('finish-copy', '--lane', 'a')
+  ok('a half-made copy missing a submodule folder is finished whole', done.ok && whole(p, dir).ok, `${done.err}${done.out} ${whole(p, dir).detail}`)
+  const got = p.claim('sess-b', '--prefer', 'b')
+  ok("the engine's own add builds a copy with a submodule whole, not taken back", got.lane === 'b' && whole(p, `${p.repo}-b`).ok, JSON.stringify(got))
+}
+
 // ------------------------------------------------------------------ the real thing: git killed mid-checkout
 
 if (process.platform !== 'win32') {
@@ -358,10 +426,18 @@ if (process.platform !== 'win32') {
     const died = p.claim('sess-1')
     git(p.repo, 'config', '--unset', 'filter.trip.smudge')
     ok('control: the engine really died mid-checkout and left a half-made copy', died.signal === 'SIGKILL' && existsSync(dir) && !hasIndex(dir) && lockOf(dir) !== null, `${JSON.stringify(died)} lock ${lockOf(dir)}`)
+    const admin = adminOf(dir)
+    const stage = readdirSync(admin).find((n) => n.startsWith('paneforge-stage-'))
+    ok(
+      'it died with files written to the side, its index.lock still held - and nothing cut off in the copy',
+      Boolean(stage) && onDisk(join(admin, stage)).length > 0 && existsSync(join(admin, 'index.lock')) && onDisk(dir).every((x) => git(dir, 'hash-object', x) === git(p.repo, 'rev-parse', `HEAD:${x}`)),
+      `stage ${stage}, lock ${existsSync(join(admin, 'index.lock'))}, in copy ${onDisk(dir).length}`
+    )
     const st = p.laneOf('a')
     ok('status says it is not usable', st.damaged === true, JSON.stringify(st))
     const got = p.claim('sess-2')
-    ok('the next claim finishes it and hands it out whole', got.lane === 'a' && whole(p, dir).ok, JSON.stringify(got))
+    ok('the next claim finishes it at once (its lock belongs to a process that is gone) and hands it out whole', got.lane === 'a' && whole(p, dir).ok, JSON.stringify(got))
+    ok('and clears what the dead run left in the gitdir', !readdirSync(admin).some((n) => /paneforge-|\.lock$/.test(n)), readdirSync(admin).join(', '))
   }
 }
 
