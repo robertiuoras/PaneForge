@@ -85,6 +85,14 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   it dropped: `dropFinishedLock`). A refusal over contents is remembered against file sizes and
   times (`paneforge-refused`; 4.4s to re-read 4,879 files). Any doubt: left as is, `damaged`
   (`test:lanehalfmade`; taskdriver.ai d/f 2026-10-07).
+- A catch-up fast-forward killed part way (files written, index not: HEAD behind trunk, some of
+  trunk's files on disk, a stale index.lock) is finished, never dispatched as preserved work:
+  `tornCatchUp`, run by the completion dispatcher and at the top of `catchUp`. ONLY when no
+  merge/rebase/cherry-pick/revert is open, HEAD is strictly an ancestor of trunk, every dirty path
+  is a modified/added/untracked regular file whose `hash-object` = trunk's blob (no deletion,
+  rename, type change, conflict), and no index.lock younger than `STALE_LOCK_MS` (else wait, no
+  dispatch). Then: lock moved aside, exactly those paths staged, `merge --ff-only` trunk, must end
+  clean at trunk; any refusal = today's dispatch (`test:lanetorn`; clients lane b 2026-10-08).
 - `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
   binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
   nonempty successful `{command, exitCode: 0}` checks and accepted independent

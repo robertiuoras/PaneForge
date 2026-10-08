@@ -1164,6 +1164,16 @@ function dispatchCompletion() {
       if (!head.ok || head.out !== tip.out || !status.ok || !index.ok || !tree.ok) continue
       dirt = status.out
       if (!index.out && tree.out) problem = 'HEAD has tracked files but the index is empty. Staged deletions are NOT established intent.'
+      // A catch-up killed part way leaves trunk's own files here, not anybody's work: finish
+      // it (tornCatchUp), or wait while a git may still be writing. Never a recovery chat.
+      if (dirt && !problem && merged.ok) {
+        const torn = tornCatchUp(dir)
+        if (torn?.wait) continue
+        if (torn?.finished) {
+          console.log(`Lane ${id} finished catching up with ${MB}: an interrupted update had already written ${torn.paths.length} of its files.`)
+          continue
+        }
+      }
     }
     if (!dirt && !/^\+ /m.test(diff.out) && merged.ok) continue
     const key = `lane:${id}:${tip.out}`
@@ -1745,6 +1755,95 @@ function laneTypecheckFailure(dir) {
 }
 
 /**
+ * Finish a catch-up fast-forward that was killed part way through, when nothing in the
+ * folder can be anybody's work.
+ *
+ * A fast-forward writes the incoming files first and the index last, so a kill in between
+ * (the app stops `retry` at 10s) leaves the lane on its old commit with some of trunk's files
+ * on disk and git's index.lock behind. That reads as uncommitted work, and on 2026-10-08
+ * (clients repo, lane b: 16 of 31 files written) it opened a "Finish preserved work" chat for
+ * files that were byte for byte trunk's.
+ *
+ * The proof, every part required: no merge, rebase, cherry-pick or revert is open; HEAD is
+ * strictly behind trunk; every dirty path is a changed, added or untracked regular file (no
+ * deletion, rename, type change or conflict) whose content IS trunk's blob for that path; and
+ * no git holds the index (an index.lock younger than STALE_LOCK_MS, the dropStaleLock rule,
+ * means wait). Then the abandoned lock goes, exactly those paths are staged, and the lane
+ * fast-forwards to trunk (`--ff-only`: nothing on disk can be overwritten). Nothing is lost:
+ * every byte that was there is the byte trunk puts there.
+ *
+ * null = not this shape (the caller carries on as before); { wait, why } = the shape, but a
+ * git may be running; { finished: true, paths }; { finished: false, why } = the proof held but
+ * git refused, so the lane is real work again for whoever looks next.
+ */
+function tornCatchUp(dir) {
+  // Cheapest first: a lane with its own commits, or a clean one, is answered in a few calls.
+  const head = gitSafe(dir, 'rev-parse', '--verify', 'HEAD')
+  const trunk = gitSafe(dir, 'rev-parse', '--verify', `refs/heads/${MB}`)
+  if (!head.ok || !trunk.ok || head.out === trunk.out) return null
+  if (!gitSafe(dir, 'merge-base', '--is-ancestor', head.out, trunk.out).ok) return null
+  const status = rawStatus(dir)
+  if (!status) return null
+  for (const h of ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']) {
+    if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', h).ok) return null
+  }
+  const paths = []
+  for (const entry of status.split('\0')) {
+    if (!entry) continue
+    const x = entry[0]
+    const y = entry[1]
+    const path = entry.slice(3)
+    const untracked = x === '?' && y === '?'
+    if (!path || path.includes('\n') || (!untracked && (!' MA'.includes(x) || !' M'.includes(y)))) return null
+    paths.push(path)
+  }
+  if (!paths.length) return null
+  const listing = gitWith(dir, ['ls-tree', '-r', '-z', '--full-tree', trunk.out])
+  if (!listing.ok) return null
+  const blobs = new Map()
+  for (const rec of listing.out.split('\0')) {
+    const tab = rec.indexOf('\t')
+    if (tab < 0) continue
+    const [mode, type, sha] = rec.slice(0, tab).split(' ')
+    if (type === 'blob' && (mode === '100644' || mode === '100755')) blobs.set(rec.slice(tab + 1), sha)
+  }
+  for (const p of paths) {
+    if (!blobs.has(p)) return null
+    try {
+      if (!lstatSync(join(dir, p)).isFile()) return null
+    } catch {
+      return null
+    }
+  }
+  // Content as git would store it: the path's own clean filters and line endings applied.
+  const hashed = gitWith(dir, ['hash-object', '--stdin-paths'], { input: paths.join('\n') + '\n' })
+  if (!hashed.ok) return null
+  const shas = hashed.out.split('\n')
+  if (shas.length !== paths.length || paths.some((p, i) => shas[i] !== blobs.get(p))) return null
+  const lockPath = gitSafe(dir, 'rev-parse', '--git-path', 'index.lock')
+  if (!lockPath.ok) return null
+  const lock = resolve(dir, lockPath.out)
+  try {
+    if (existsSync(lock)) {
+      if (now() - statSync(lock).mtimeMs < STALE_LOCK_MS && !finisherGone(lock)) return { wait: true, why: 'a git process may still be writing this folder' }
+      // Moved aside first so two of these racing cannot both think they freed it.
+      const aside = `${lock}.paneforge-${process.pid}`
+      renameSync(lock, aside)
+      rmSync(aside, { force: true })
+    }
+  } catch {
+    return { wait: true, why: 'its index.lock could not be cleared' }
+  }
+  const staged = gitWith(dir, ['--literal-pathspecs', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: paths.join('\0') + '\0' })
+  if (!staged.ok) return { finished: false, why: `git add: ${firstLine(staged.out)}` }
+  const ff = gitSafe(dir, 'merge', '--ff-only', trunk.out)
+  if (!ff.ok) return { finished: false, why: `git merge --ff-only: ${firstLine(ff.out)}` }
+  const after = gitSafe(dir, 'rev-parse', 'HEAD')
+  if (!after.ok || after.out !== trunk.out || gitSafe(dir, ...WORK_STATUS).out) return { finished: false, why: 'the fast-forward left changes behind' }
+  return { finished: true, paths }
+}
+
+/**
  * Bring one lane up to master.
  *
  * Conflicts are cheap here and expensive later: in the lane, the chat that wrote the code is
@@ -1757,6 +1856,10 @@ function laneTypecheckFailure(dir) {
 function catchUp(id, { keepConflict = false } = {}) {
   const dir = laneDir(id)
   if (id === 'main' || !existsSync(dir)) return { moved: false, conflicts: [], dirty: false }
+  // An earlier catch-up of this lane killed part way through is finished, not called dirty.
+  const torn = tornCatchUp(dir)
+  if (torn?.wait) return { moved: false, conflicts: [], dirty: false, blocked: torn.why }
+  if (torn?.finished) return { moved: true, conflicts: [], dirty: false, torn: torn.paths }
   // Never merge on top of someone's uncommitted edit. A file the repo itself declares
   // machine-written is not one: it is committed first, so a lane whose hook rewrites its
   // ledger at every turn boundary is not dirty forever (see commitMachineWritten).
@@ -1828,14 +1931,12 @@ function catchUp(id, { keepConflict = false } = {}) {
 const MACHINE_MERGE_DRIVERS = new Set(['union', 'take-incoming'])
 const LEDGER_SUBJECT = 'chore: session ledger + prompt log'
 
-function machineWrittenPaths(dir) {
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) return null
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) return null
-  // Raw, not through git(): its trim() eats the leading space of ` M path`, and the
-  // first path in the list would come back one character short.
-  let status
+// `status --porcelain -z`, or null when git could not answer. Raw, not through git(): its
+// trim() eats the leading space of ` M path`, and the first path would come back one
+// character short.
+function rawStatus(dir) {
   try {
-    status = execFileSync('git', [...WORK_STATUS, '-z'], { windowsHide: true,
+    return execFileSync('git', [...WORK_STATUS, '-z'], { windowsHide: true,
       cwd: dir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1845,6 +1946,12 @@ function machineWrittenPaths(dir) {
   } catch {
     return null
   }
+}
+
+function machineWrittenPaths(dir) {
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) return null
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) return null
+  const status = rawStatus(dir)
   if (!status) return null
   const paths = []
   const fields = status.split('\0')

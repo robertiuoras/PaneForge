@@ -244,6 +244,8 @@ const TESTS = [
   ['lanedamaged', 'lane-damaged-test.mjs'],
   // A copy a killed checkout left half made is finished on proof or left alone (2026-10-07).
   ['lanehalfmade', 'lane-halfmade-test.mjs'],
+  // A catch-up killed part way (trunk's own files, a stale lock) is finished, never a recovery chat (2026-10-08).
+  ['lanetorn', 'lane-torn-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
   ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
   ['lanetypecheckjob', 'lane-typecheck-job-test.mjs'],
