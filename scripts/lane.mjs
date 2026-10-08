@@ -96,6 +96,7 @@ import {
   refSafe,
   supersededRefs
 } from './lane-peers.mjs'
+import { renameSafe, sweepStaleTmp } from './lane-rename.mjs'
 import { bumpFor, hasChanges, nextVersion, notes, smallOnly, unpublished, versionTags } from './release-notes.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -590,7 +591,8 @@ function writeRecovery(state) {
   if (state.recoveryError) throw new Error(state.recoveryError)
   const tmp = `${RECOVERY}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(state.recovery, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, RECOVERY)
+  renameSafe(tmp, RECOVERY)
+  sweepStaleTmp(RECOVERY)
 }
 
 function write(state) {
@@ -609,7 +611,8 @@ function write(state) {
   const tmp = `${STATE}.${process.pid}.tmp`
   const { recovery, recoveryError, ...ledger } = state
   writeFileSync(tmp, JSON.stringify(ledger, null, 2) + '\n', 'utf8')
-  renameSync(tmp, STATE)
+  renameSafe(tmp, STATE)
+  sweepStaleTmp(STATE)
 }
 
 // ---------------------------------------------------------------------------
@@ -2225,7 +2228,7 @@ function seedTrust(dir) {
     }
     const tmp = `${path}.lane.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
-    renameSync(tmp, path)
+    renameSafe(tmp, path)
   } catch {
     /* unreadable or mid-write by a live CLI - the pane may ask, which is the old behaviour */
   }
