@@ -584,12 +584,31 @@ process.exit(1)
   ok('v: the suite verdict is on master\'s committed tree, not the folder as it stood',
     ledger(sv.dir).pcSuite?.tree === vBaseTree && ledger(sv.dir).pcSuite?.ok === true,
     `${JSON.stringify(ledger(sv.dir).pcSuite)} vs ${vBaseTree}`)
-  ok('v: the typecheck verdict is on HEAD^{tree} too', ledger(sv.dir).typecheck?.tree === vHeadTree,
-    `${JSON.stringify(ledger(sv.dir).typecheck)} vs ${vHeadTree}`)
+  ok('v: the typecheck verdict is on HEAD^{tree} too', Boolean(ledger(sv.dir).typecheckTrees?.[vHeadTree]),
+    `${JSON.stringify(ledger(sv.dir).typecheckTrees)} vs ${vHeadTree}`)
   ok('v: the other chat keeps its uncommitted edit and new file',
     readFileSync(join(sv.dir, 'base.txt'), 'utf8') === 'uncommitted edit\n' && existsSync(join(sv.dir, 'stray.txt')))
   ok('v: no copy is left behind in the temp folder',
     !readdirSync(childTmp).some((n) => n.startsWith('lane-pc-')), readdirSync(childTmp).join(', '))
+
+  // w: a release asks about master's tree, then the merged tree. On a clock tick (retry) each
+  // used to find the one ledger slot holding the OTHER tree and queue a fresh PC job, forever
+  // (2026-10-09, lane b). Each tree keeps its own job/verdict: the second tick submits nothing.
+  mode('pass,queued')
+  suiteMode('pass')
+  const sw = project('twotrees')
+  const w = work(sw.dir, 'chat-w', 'w.txt')
+  lane(sw.dir, 'ready', '--session', 'chat-w')
+  const wJobs = () => readFileSync(jobsFile, 'utf8').trim().split('\n').map(JSON.parse)
+    .filter((j) => j.kind === 'typecheck' && j.repo === real(sw.dir))
+  const wAfterReady = wJobs().length
+  lane(sw.dir, 'retry', '--session', 'lane-cron')
+  lane(sw.dir, 'retry', '--session', 'lane-cron')
+  ok('w: ready queued master\'s and the merged tree\'s typecheck once each', wAfterReady === 2, `${wAfterReady}`)
+  ok('w: later ticks on either tree reuse the stored job and submit nothing new', wJobs().length === wAfterReady,
+    `${wJobs().length} jobs`)
+  ok('w: both trees are remembered in the ledger', Object.keys(ledger(sw.dir).typecheckTrees ?? {}).length === 2,
+    JSON.stringify(ledger(sw.dir).typecheckTrees))
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
