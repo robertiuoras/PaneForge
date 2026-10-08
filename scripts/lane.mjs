@@ -4189,11 +4189,20 @@ const pcWaiting = (what, id) =>
   `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
   `The next try waits on that same job rather than queueing another.`
 
+/** Store one tree's PC typecheck job/verdict; entries older than 48 h are dropped on the way. */
+function rememberTypecheck(state, tree, entry) {
+  remember(state, ['typecheckTrees', tree], entry)
+  const cutoff = now() - 48 * 3600_000
+  for (const [t, e] of Object.entries(read().typecheckTrees ?? {})) {
+    if (t !== tree && !(e?.at > cutoff)) remember(state, ['typecheckTrees', t], null)
+  }
+}
+
 /**
  * `undefined` means "not handled here, run it locally"; null means it passed; a sentence
  * means it did not.
  *
- * One PC job per tree, remembered in the ledger (`state.typecheck`), and a try that runs
+ * One PC job per tree, remembered in the ledger (`state.typecheckTrees[tree]`), and a try that runs
  * out of time leaves it for the next try instead of queueing another. Measured 2026-10-01:
  * with 25 jobs in the PC queue every try submitted a fresh job at the back, was killed
  * 20 minutes later still queued (its ssh waiter orphaned, its job still bound to run for
@@ -4205,8 +4214,10 @@ function remoteTypecheckFailure(state) {
   if (!onPc()) return undefined
   const tree = headTree(MAIN)
   // Fresh: another chat's try may have queued this tree's job since `state` was read.
-  const last = read().typecheck
-  const known = tree && last?.tree === tree ? last : null
+  // Per tree, not one slot: a release asks about master's tree and then the merged tree, and
+  // with one slot each tick evicted the other's job and re-queued it forever (2026-10-09:
+  // ledger typecheck.id fb318349 -> ac5b0e3a -> 482b5466 -> 3b6cd590 in 20 min, lane b never landed).
+  const known = (tree && read().typecheckTrees?.[tree]) || null
   if (known && 'verdict' in known) return known.verdict
   let id = known?.id
   if (!id) {
@@ -4215,7 +4226,7 @@ function remoteTypecheckFailure(state) {
       return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
     }
     id = sent.id
-    if (tree) remember(state, ['typecheck'], { tree, id, at: now() })
+    if (tree) rememberTypecheck(state, tree, { id, at: now() })
   }
   const r = waitPcJob(id)
   if (r.pending) return pcWaiting('typecheck', id)
@@ -4226,11 +4237,11 @@ function remoteTypecheckFailure(state) {
     .join('; ')
   if (r.status === 0 || detail) {
     const verdict = detail ? `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.` : null
-    if (tree) remember(state, ['typecheck'], { tree, id, at: now(), verdict })
+    if (tree) rememberTypecheck(state, tree, { id, at: now(), verdict })
     return verdict
   }
   // Cancelled, timed out on the PC, or a job rbuild no longer knows: the next try sends a new one.
-  if (known || tree) remember(state, ['typecheck'], null)
+  if (tree) remember(state, ['typecheckTrees', tree], null)
   return `${MB}'s typecheck could not run on the PC, so nothing was released - ${r.why}. That is the remote runner, not the code.`
 }
 
