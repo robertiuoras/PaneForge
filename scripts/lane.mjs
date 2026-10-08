@@ -128,6 +128,18 @@ function git(cwd, ...args) {
     killSignal: 'SIGKILL'
   }).trim()
 }
+/**
+ * `git cherry <upstream> <head>` that skips the walk when `head` has nothing upstream lacks.
+ * cherry builds a patch-id for every commit on the UPSTREAM side as well, so a lane parked
+ * on an old trunk commit made `git cherry main lane-b` take over a minute on taskdriver.ai
+ * (hundreds of commits behind, 2026-10-09), and a claim looks at several lanes. A head
+ * with no commits of its own lists nothing, so the answer is the same and costs one rev-list.
+ */
+function gitCherry(cwd, upstream, head) {
+  const own = gitSafe(cwd, 'rev-list', '-n1', `${upstream}..${head}`)
+  if (own.ok && !own.out) return { ok: true, out: '' }
+  return gitSafe(cwd, 'cherry', upstream, head)
+}
 function gitSafe(cwd, ...args) {
   try {
     return { ok: true, out: git(cwd, ...args) }
@@ -1148,7 +1160,7 @@ function dispatchCompletion() {
     if ([...dirs, ...processes].some((d) => within(d, dir))) continue
     const tip = gitSafe(MAIN, 'rev-parse', '--verify', laneBranch(id))
     if (!tip.ok) continue
-    const diff = gitSafe(MAIN, 'cherry', MB, tip.out)
+    const diff = gitCherry(MAIN, MB, tip.out)
     const merged = gitSafe(MAIN, 'merge-base', '--is-ancestor', tip.out, MB)
     if (!diff.ok || (!merged.ok && merged.code !== 1)) continue
     let problem = null
@@ -1676,7 +1688,7 @@ function mergeFromSides(dir, f, text) {
  * a reset. Reads HEAD, so mid-merge it asks about the lane's own side.
  */
 function ownsNothing(dir) {
-  const cherry = gitSafe(dir, 'cherry', MB, 'HEAD')
+  const cherry = gitCherry(dir, MB, 'HEAD')
   if (!cherry.ok || cherry.out.split('\n').some((l) => l.startsWith('+'))) return false
   const merges = gitSafe(dir, 'rev-list', '--merges', '-n1', `${MB}..HEAD`)
   return merges.ok && !merges.out
@@ -3639,7 +3651,7 @@ function landedOnOrigin(commit) {
 }
 
 function aheadOf(branch) {
-  const r = gitSafe(MAIN, 'cherry', MB, branch)
+  const r = gitCherry(MAIN, MB, branch)
   if (!r.ok) return 0
   return r.out.split('\n').filter((l) => l.startsWith('+')).length
 }
@@ -7208,7 +7220,7 @@ function doctor() {
       say(`  ${dir} looks like a lane but git does not know about it. Nothing merges it and nothing will clean it up - check what is in it, then delete it.`)
     for (const dir of legacy) {
       const branch = gitSafe(dir, 'rev-parse', '--abbrev-ref', 'HEAD').out || '?'
-      const ahead = gitSafe(MAIN, 'cherry', MB, branch).out.split('\n').filter((l) => l.startsWith('+')).length
+      const ahead = gitCherry(MAIN, MB, branch).out.split('\n').filter((l) => l.startsWith('+')).length
       say(
         `  ${dir} is a lane from the old naming (${branch}). ` +
           (ahead
