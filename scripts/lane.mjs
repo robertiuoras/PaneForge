@@ -1019,8 +1019,11 @@ function inTrunkRecovery(r) {
 function closeShippedRecovery(state, session, lane) {
   const shipped = (r) => !r.ref && r.lane === lane && r.owner !== session && !['complete', 'reviewed'].includes(r.status) && inTrunkRecovery(r)
   if (state.recoveryError || !Object.values(state.recovery?.items ?? {}).some(shipped)) return
-  const status = gitSafe(laneDir(lane), ...WORK_STATUS)
-  if (!status.ok || (status.out && !machineWrittenPaths(laneDir(lane)))) return
+  // A folder that no longer exists holds no uncommitted work; one that exists must read clean.
+  if (existsSync(laneDir(lane))) {
+    const status = gitSafe(laneDir(lane), ...WORK_STATUS)
+    if (!status.ok || (status.out && !machineWrittenPaths(laneDir(lane)))) return
+  }
   const unlock = recoveryLock()
   if (!unlock) return
   try {

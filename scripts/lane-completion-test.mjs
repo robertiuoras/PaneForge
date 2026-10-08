@@ -562,6 +562,24 @@ for (const shipped of [true, false]) {
   else check('claim leaves a blocked item trunk does not hold untouched', it.status === 'blocked' && it.owner === 'dead-owner', r.stdout + r.stderr + JSON.stringify(it))
 }
 
+// Defect F (2026-10-08): a shipped item whose lane folder was removed was never closed (the
+// status call on a missing folder fails), so it kept the lane preserved forever. A missing
+// folder holds no uncommitted work; a folder that exists with hand edits still blocks the close.
+for (const [status, folder] of [['blocked', 'gone'], ['pending', 'gone'], ['blocked', 'hand-edits']]) {
+  const x = fixture(`folder-${folder}-${status}`)
+  writeFileSync(join(x.dir, 'intent.txt'), 'gone'); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
+  x.run('release', '--session', 'original', '--gone'); x.run('retry')
+  const k = x.state().recovery.active
+  x.patch((st) => { Object.assign(st.recovery.items[k], { owner: 'dead-owner', status }); delete st.recovery.active })
+  git(x.repo, 'merge', '-q', '--no-edit', x.state().recovery.items[k].commit); git(x.repo, 'push', '-q', 'origin', 'master')
+  if (folder === 'gone') rmSync(x.dir, { recursive: true, force: true })
+  else writeFileSync(join(x.dir, 'source.txt'), 'hand edit\n')
+  const r = spawnSync(process.execPath, [x.cli, 'claim', '--prefer', 'a', '--cwd', x.dir, '--session', 'newcomer'], { cwd: x.repo, env: x.env, encoding: 'utf8', timeout: 90_000 })
+  const it = x.state().recovery.items[k]
+  if (folder === 'gone') check(`claim closes a ${status} item trunk holds when its lane folder is gone`, it.status === 'reviewed' && it.reason === 'included by trunk ancestry', r.stdout + r.stderr + JSON.stringify(it))
+  else check('claim leaves a shipped item open while its existing folder has hand edits', it.status === status && it.owner === 'dead-owner', r.stdout + r.stderr + JSON.stringify(it))
+}
+
 // Defect E (2026-10-07, taskdriver-mobile): a chat whose SessionStart claim gave it `main`
 // (standing in the lane's folder) could never reach the lane it must adopt or begin on.
 const mainFixture = (name, { dispatched = false, ownerHoldsLane = false, dirty = false, diverge = false, conflict = false, squatted = false, operation = false } = {}) => {
