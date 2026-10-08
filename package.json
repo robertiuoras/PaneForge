@@ -278,6 +278,7 @@
     "test:lanestrand": "node scripts/lane-strand-test.mjs",
     "test:lanedamaged": "node scripts/lane-damaged-test.mjs",
     "test:lanehalfmade": "node scripts/lane-halfmade-test.mjs",
+    "test:lanetorn": "node scripts/lane-torn-test.mjs",
     "test:lanetaskdriver": "node scripts/lane-taskdriver-pc-test.mjs",
     "test:lanetypecheckjob": "node scripts/lane-typecheck-job-test.mjs",
     "test:laneforeign": "node scripts/lane-foreign-test.mjs",
