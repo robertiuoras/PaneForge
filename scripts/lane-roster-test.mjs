@@ -36,9 +36,9 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { installLane } from './lane-fixture.mjs'
+import { installLane, laneScripts } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // realpath: /var/folders vs /private/var/folders on macOS - see lane-sweep-test.
@@ -244,11 +244,16 @@ function checkCopy(label, hookFile) {
 
 checkCopy('vendored', join(repo, 'scripts', 'lane-hook.mjs'))
 
-// The installed copy Robert's own sessions run. Same behaviour required, different file.
+// The claude-memory copy (Codex chats run it through codex/hooks/paneforge-lane-hook.mjs).
+// Same behaviour required, different file.
 const INSTALLED = join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'paneforge-lane-hook.mjs')
 if (existsSync(INSTALLED)) {
   // It resolves the engine by searching known checkouts rather than by sitting next to it,
-  // so give it one: copied into the throwaway repo, PANEFORGE_REPO points there.
+  // so give it one: copied into the throwaway repo, PANEFORGE_REPO points there. Its own
+  // relative imports come along (lane-wait.mjs since 2026-10-08), or every prompt dies on
+  // ERR_MODULE_NOT_FOUND and the half below fails for a reason that is not the roster.
+  const from = dirname(INSTALLED)
+  for (const name of laneScripts(from, basename(INSTALLED)).slice(1)) copyFileSync(join(from, name), join(repo, 'scripts', name))
   const copy = join(repo, 'scripts', 'installed-lane-hook.mjs')
   copyFileSync(INSTALLED, copy)
   checkCopy('installed', copy)
