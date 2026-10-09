@@ -765,11 +765,29 @@ function publishClaim(state, slot, session) {
   return state.peer
 }
 
-/** Give back what this device published for a session. Failure is silent: it ages out. */
+/**
+ * Is the release `state.release` names this session's, and is the process cutting it alive.
+ *
+ * A release can outlive the chat that started it: `autoship` run from a background shell
+ * goes on through /clear. Measured 2026-10-09 on the PC: the chat cleared mid-push, its
+ * SessionEnd dropped the release claim (so the lock read as abandoned), cleared the marker
+ * because the session matched, and started a second release. Two pushes of master raced
+ * and GitHub refused the running one. In a repo that cuts versions that is two versions.
+ */
+function releaseRunning(state, session) {
+  return state.release?.session === session && state.release.pid > 0 && processAlive(state.release.pid)
+}
+
+/**
+ * Give back what this device published for a session. Failure is silent: it ages out.
+ * A claim beside a release that is still running stays: it is what makes the cross-device
+ * lock read as held, and that release gives it back itself (`dropReleaseLock`).
+ */
 function dropPublished(state, session) {
-  if (state.peer && (!session || state.peer.session === session)) state.peer = null
+  const keep = releaseRunning(state, session) ? RELEASE_SLOT : null
+  if (state.peer && (!session || state.peer.session === session) && state.peer.slot !== keep) state.peer = null
   if (!hasOrigin()) return
-  const mine = ownedRefs(peerRefs() ?? [], { device: DEVICE, session })
+  const mine = ownedRefs(peerRefs() ?? [], { device: DEVICE, session }).filter((r) => parseClaims([r])[0]?.slot !== keep)
   if (mine.length) {
     pushRefs(mine.map((r) => `:${r}`))
     refsCache = undefined
@@ -5455,6 +5473,12 @@ function releaseClaim(session, { gone = false, cleared = false } = {}) {
       freed = id
     }
   }
+  // This chat's own release still running (see releaseRunning): it finishes the job, and a
+  // second one started beside it is what raced it.
+  if (releaseRunning(state, session)) {
+    write(state)
+    return { freed, marked, release: { shipped: false, reason: 'this chat’s release is still running' } }
+  }
   if (state.release?.session === session) state.release = null
   write(state)
   return { freed, marked, release: autoship('auto', session) }
@@ -6086,7 +6110,7 @@ function ship(kind, session, { gated = false } = {}) {
   const lock = takeReleaseLock(state, session)
   if (!lock.ok) return { shipped: false, reason: lock.reason }
 
-  state.release = { session: session ?? 'unknown', at: now() }
+  state.release = { session: session ?? 'unknown', at: now(), pid: process.pid }
   write(state)
 
   try {
