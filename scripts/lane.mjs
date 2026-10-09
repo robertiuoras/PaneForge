@@ -2325,6 +2325,71 @@ function inTempFolder(dir) {
 }
 
 /**
+ * Write this chat's hold down where the SessionEnd hook looks for it.
+ *
+ * The hook (lane-hook.mjs) gives back only the repos listed under `sessions[<chat>]` in
+ * ~/.claude/lane-repos.json, and until now only the hook's own prompt/guard claims wrote
+ * there. A hold taken by `lane.mjs claim` from a chat's shell (the engine's own CLI) was
+ * never listed, so when that chat ended nothing parked it as `ended`, and the pane's next
+ * chat after /clear could not carry it (carry needs `c.ended`): the lane sat stranded under
+ * the dead chat's id with its work (Toolstash lane c, 2026-10-09).
+ *
+ * Only `sessions` is touched - `repos` is the guard's cache of "this repo has lanes" and
+ * its `release`/`own` come from the hook's own look at the claim. Same tmp-then-rename as
+ * the hook's writeRegistry so a half-written file cannot blind the guard. Never throws, and
+ * a registry that exists but does not parse is left alone rather than overwritten. A repo in
+ * the temp folder (every suite's fixtures) is skipped unless LANE_REGISTRY points the write
+ * at a scratch file, so no test can leave a throwaway repo in the real registry.
+ */
+function registerSession(session) {
+  try {
+    if (!session) return
+    const override = process.env.LANE_REGISTRY
+    if (!override && inTempFolder(MAIN)) return
+    const path = override || join(homedir(), '.claude', 'lane-repos.json')
+    let reg = { repos: {}, sessions: {} }
+    if (existsSync(path)) {
+      try {
+        reg = JSON.parse(readFileSync(path, 'utf8'))
+      } catch {
+        return
+      }
+      if (!reg || typeof reg !== 'object' || Array.isArray(reg)) return
+    } else {
+      mkdirSync(dirname(path), { recursive: true })
+    }
+    if (!reg.repos || typeof reg.repos !== 'object') reg.repos = {}
+    if (!reg.sessions || typeof reg.sessions !== 'object') reg.sessions = {}
+    let repo = MAIN
+    try {
+      repo = realpathSync(MAIN)
+    } catch {
+      /* keep the path as given */
+    }
+    const fold = process.platform === 'win32' || process.platform === 'darwin'
+    const key = (p) => (fold ? String(p).toLowerCase() : String(p))
+    const mine = Array.isArray(reg.sessions[session]) ? reg.sessions[session] : []
+    if (mine.some((p) => key(p) === key(repo))) return
+    reg.sessions[session] = [...mine, repo]
+    const tmp = `${path}.${process.pid}.tmp`
+    try {
+      writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n', 'utf8')
+      renameSync(tmp, path)
+    } catch (e) {
+      // A lost rename must not leave this pid's tmp behind (the hook's writer left ~90).
+      try {
+        unlinkSync(tmp)
+      } catch {
+        /* already gone, or never written */
+      }
+      throw e
+    }
+  } catch {
+    /* the hook still gives back what it registered itself, which is the old behaviour */
+  }
+}
+
+/**
  * Raise ONE card for each conflict nobody is going to settle.
  *
  * This used to open a resolver chat of its own ("Settle lane X"). Measured from the
@@ -3127,6 +3192,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
         else delete c.tentative
       }
       write(state)
+      registerSession(session)
       return {
         lane: id,
         dir: laneDir(id),
@@ -3421,6 +3487,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // at the moment it becomes true rather than on a timer.
   if (free === 'main') publishClaim(state, 'main', session)
   write(state)
+  registerSession(session)
   return {
     lane: free,
     dir,
