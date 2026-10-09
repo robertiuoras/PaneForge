@@ -2851,8 +2851,9 @@ function ensureWorktree(id) {
       /* npm install in the lane still works, it is just slower */
     }
   }
-  excludeModules(dir)
+  // Before excludeModules/hideLane: lane-hidden-test pins those two as adjacent lines.
   shareHooksDir(dir)
+  excludeModules(dir)
   hideLane(id)
   return dir
 }
