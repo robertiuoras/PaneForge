@@ -20,6 +20,9 @@
 //   6. master and origin/master each have a commit the other lacks (the other machine pushed
 //      while this one held an unpushed merge): a gated release lands origin/master the way a
 //      lane lands and ships all three changes; a real conflict is named, nothing moves
+//   7. the same gate when `ready` runs from the copy installed in the app (outside the repo):
+//      green ships, red stays local with master put back; a repo that is not PaneForge gets
+//      no push check from it
 //
 //   node scripts/lane-push-gate-test.mjs
 
@@ -237,6 +240,58 @@ const otherMachine = (origin, name, file, text) => {
   ok('...origin/master did not move', originTip(origin) === originBefore, r.out)
   ok('...master is exactly where it was, no merge commit left', git(repo, 'rev-parse', 'master') === mainBefore, r.out)
   ok('...and the main folder is clean', git(repo, 'status', '--porcelain') === '', git(repo, 'status', '--porcelain'))
+}
+
+// ---------------------------------------------------------------- 7. the engine installed in the app
+// 2026-10-09: every chat's hook runs the copy installed in the app, outside the repo, where the
+// engine is not "its own checkout". `ready` from there skipped the merged-tree suite and pushed;
+// origin's pre-push hook (ours, naming the repo's own copy) refused, and PaneForge's master was
+// left holding an unpushed, untested `merge lane b` (b515fda3) until someone ran autoship by hand.
+const app = join(root, 'app')
+mkdirSync(join(app, 'scripts'), { recursive: true })
+installLane(here, app)
+const installed = (repo, ...args) => {
+  const r = spawnSync(process.execPath, [join(app, 'scripts', 'lane.mjs'), ...args, '--repo', repo], {
+    cwd: repo,
+    encoding: 'utf8',
+    timeout: 300_000
+  })
+  return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() }
+}
+{
+  const { repo, origin } = makeRepo()
+  const a = claimA(repo)
+  const before = originTip(origin)
+  commitIn(a.dir, 'feature.txt', 'harmless\n', 'a harmless lane commit')
+  const r = installed(repo, 'ready', '--session', 'sess-a')
+  const tip = originTip(origin)
+  ok('the installed engine ships a green lane: origin/master moved', tip !== before, r.out)
+  ok('...with no refusal from the hook', !/refused this push/.test(r.out), r.out)
+  ok('...and master equals origin/master', git(repo, 'rev-parse', 'master') === tip, r.out)
+}
+{
+  const { repo, origin } = makeRepo()
+  const a = claimA(repo)
+  const before = originTip(origin)
+  const mainBefore = git(repo, 'rev-parse', 'master')
+  commitIn(a.dir, 'BROKEN', 'x\n', 'a lane commit that breaks the suite')
+  const r = installed(repo, 'ready', '--session', 'sess-a')
+  ok('the installed engine tests the merged tree: a red one is not pushed', originTip(origin) === before, r.out)
+  ok('...the reason names the failing suite, not the hook', /broken/.test(r.out) && !/refused this push/.test(r.out), r.out)
+  ok('...and local master is back where it was', git(repo, 'rev-parse', 'master') === mainBefore && !existsSync(join(repo, 'BROKEN')), r.out)
+}
+{
+  // Any other repo the installed engine drives has no PaneForge hook, and it is not given one.
+  const repo = join(root, 'foreign')
+  mkdirSync(repo, { recursive: true })
+  writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'foreign', scripts: { test: 'node -e 0' } }))
+  git(repo, 'init', '-q', '-b', 'master')
+  git(repo, 'config', 'user.email', 'test@example.com')
+  git(repo, 'config', 'user.name', 'test')
+  git(repo, 'add', '-A')
+  git(repo, 'commit', '-qm', 'first')
+  installed(repo, 'status')
+  ok('the installed engine puts no push check into a repo that is not PaneForge', !existsSync(join(repo, '.git', 'hooks', 'pre-push')))
 }
 
 process.exit(failed ? 1 : 0)
