@@ -233,6 +233,24 @@ const promptClaim = spawnSync(process.execPath, [join(behind.repo, 'scripts', 'l
 check('automatic prompt claim preserves the pinned clean snapshot', promptClaim.status === 0 && behind.state().lanes.a?.session === 'hook-owner' && git(behind.dir, 'rev-parse', 'HEAD') === behindHead && git(behind.dir, 'write-tree') === behindIndex, promptClaim.stdout + promptClaim.stderr)
 check('the prompt owner can bind the unchanged pinned snapshot', behind.run('recover', '--key', behindKey, '--session', 'hook-owner', '--disposition', 'begin').code === 0)
 
+// A release that rebases master onto origin rewrites a merged lane's commit under a new sha:
+// the lane tip is no longer an ancestor, but `git cherry` shows every commit '-'. That lane
+// holds nothing of its own and must not get a recovery chat (PaneForge lane a 2026-10-09:
+// 5f440ebc dispatched though master held it as b036d578). A merge commit can carry its own
+// content, so a lane with one is still preserved.
+for (const merge of [false, true]) {
+  const x = fixture(merge ? 'rebased-with-merge' : 'rebased-equivalent')
+  writeFileSync(join(x.dir, 'intent.txt'), 'landed intent\n'); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'landed intent')
+  const landed = git(x.dir, 'rev-parse', 'HEAD')
+  writeFileSync(join(x.repo, 'trunk.txt'), 'later trunk\n'); git(x.repo, 'add', 'trunk.txt'); git(x.repo, 'commit', '-qm', 'trunk advanced')
+  git(x.repo, 'cherry-pick', landed); git(x.repo, 'push', '-q', 'origin', 'master')
+  if (merge) git(x.dir, 'merge', '-q', '--no-edit', 'master')
+  x.patch((s) => { delete s.lanes.a }); x.run('retry')
+  const items = Object.values(x.state().recovery.items ?? {})
+  if (merge) check('a lane whose equivalent work sits beside a merge commit is still preserved', x.requests().length === 1 && items.length === 1, JSON.stringify(x.state().recovery))
+  else check('a lane whose every commit master holds under another sha gets no recovery chat', x.requests().length === 0 && items.length === 0, JSON.stringify(x.state().recovery))
+}
+
 // An owner that ends mid-recovery (status `owned`) after its pinned work reached trunk must
 // not lock the lane for every later chat. research-lab lane b, 2026-10-03: the owner of
 // lane:b:dc8c599 ended 2026-10-02 at `owned`, dc8c599 was already in origin/main, and every

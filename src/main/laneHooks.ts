@@ -39,7 +39,7 @@ const TAG = 'lane-hook.mjs'
  */
 const OURS = '--installed-by=paneforge'
 
-/** The three hooks the lane system needs, in the shape Claude Code reads them. */
+/** The hooks the lane system needs, in the shape Claude Code reads them. */
 const SPECS = [
   {
     event: 'UserPromptSubmit',
@@ -58,7 +58,10 @@ const SPECS = [
   { event: 'SessionEnd', matcher: undefined, arg: '--event=end', timeout: 30, statusMessage: undefined },
   // The turn ended: park this chat's clean holds so a chat that needs one takes it in
   // minutes instead of waiting out the hour-long silence sweep.
-  { event: 'Stop', matcher: undefined, arg: '--event=stop', timeout: 30, statusMessage: undefined }
+  { event: 'Stop', matcher: undefined, arg: '--event=stop', timeout: 30, statusMessage: undefined },
+  // A new, resumed, cleared or compacted chat no longer has the lane line in its context:
+  // forget what it was told, so its next prompt prints the table again (lane-once-test).
+  { event: 'SessionStart', matcher: undefined, arg: '--event=start', timeout: 10, statusMessage: undefined }
 ]
 
 /**
