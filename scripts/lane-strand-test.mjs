@@ -29,6 +29,12 @@ const here = dirname(fileURLToPath(import.meta.url))
 // from the one under test (case).
 const root = join(realpathSync(tmpdir()), 'paneforge-lane-strand-test')
 rmSync(root, { recursive: true, force: true })
+// The hook remembers what it told each session in the system temp folder for 30 minutes
+// (`toldFile`), keyed by session id and repo path. Both repeat across runs here, so a rerun
+// within the half hour was told nothing and the "the hook tells it" checks failed. Every
+// hook and engine run in this test gets a temp folder that dies with the run.
+const hookTmp = join(root, 'tmp')
+mkdirSync(hookTmp, { recursive: true })
 mkdirSync(root, { recursive: true })
 
 let failed = 0
@@ -62,7 +68,7 @@ function fixture(name, pool = ['main', 'a', 'b', 'c'], extraEnv = {}) {
   git(repo, 'commit', '-qm', 'first')
   git(repo, 'tag', 'v0.0.1')
 
-  const env = (pane) => ({ ...process.env, PF_PANE: pane, PF_RELEASE: 'version', PANEFORGE_REPO: repo, LANE_REGISTRY: join(root, `${name}.registry.json`), ...extraEnv })
+  const env = (pane) => ({ ...process.env, PF_PANE: pane, PF_RELEASE: 'version', PANEFORGE_REPO: repo, LANE_REGISTRY: join(root, `${name}.registry.json`), TMPDIR: hookTmp, TMP: hookTmp, TEMP: hookTmp, ...extraEnv })
   /** `pane` is the PF_PANE the app gives every chat it starts; '' is a chat outside it. */
   const lane = (pane, ...args) => {
     try {
@@ -347,12 +353,17 @@ const variant = (p) => (caseBlind ? lower(p) : p)
   const before = statSync(f.statePath).mtimeMs
   f.hook('end', 'pane-p', 'before-clear', foreign, { reason: 'clear' })
   const afterPark = statSync(f.statePath).mtimeMs
+  // The release is a whole engine run (git status per lane, and on Windows a PowerShell
+  // process scan in closeLaneApps) started through wscript: on a loaded PC it took over 20s
+  // (2026-10-09 rbuild run), so the bound is generous and the time it took is printed.
+  const parkedAt = Date.now()
   let released = false
-  for (const until = Date.now() + 20_000; Date.now() < until; ) {
-    if (statSync(f.statePath).mtimeMs !== afterPark) { released = true; break }
+  for (const until = parkedAt + 90_000; Date.now() < until; ) {
+    if (statSync(f.statePath).mtimeMs !== afterPark) { released = Date.now() - parkedAt; break }
     execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 100)'])
   }
-  ok('G: (setup) SessionEnd stamped the hold and its detached release ran', afterPark !== before && released, `park wrote: ${afterPark !== before}, release wrote within 20s: ${released}`)
+  ok('G: (setup) SessionEnd stamped the hold and its detached release ran', afterPark !== before && released !== false, `park wrote: ${afterPark !== before}, release wrote: ${released !== false ? `after ${released} ms` : 'not within 90s'}`)
+  if (released !== false) console.log(`      (the detached release wrote after ${released} ms)`)
   ok('G: the dirty lane is kept for the pane through /clear', f.state().lanes.a?.session === 'before-clear' && f.state().lanes.a?.pane === 'pane-p', JSON.stringify(f.state().lanes))
 
   // The app's 1-minute tick between the clear and the next prompt.
@@ -362,7 +373,7 @@ const variant = (p) => (caseBlind ? lower(p) : p)
 
   const said = f.prompt('pane-p', 'after-clear', foreign)
   ok('G: the pane\'s next chat, prompting from the same linked worktree, gets lane a back', f.laneOf('after-clear') === 'a', `${said.trim()}\n${JSON.stringify(f.state().lanes)}`)
-  ok('G: and the hook tells it lane a, not a fallback', /-a \(branch lane-a\)/.test(said), said.trim())
+  ok('G: and the hook tells it lane a, not a fallback', /-a \(branch lane-a\)/.test(said), said.trim() || `(the hook printed nothing) ${JSON.stringify(f.state().lanes.a)}`)
   ok('G: its uncommitted file is still there', existsSync(join(`${f.repo}-a`, 'wip.js')))
   const write = f.pretool('pane-p', 'after-clear', join(`${f.repo}-a`, 'wip.js'))
   ok('G: and it may write to it', !/"deny"/.test(write), write.trim())
