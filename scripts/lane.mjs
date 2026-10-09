@@ -3621,7 +3621,22 @@ function guard(session, path) {
   const inside = (dir) => restUnder(target, dir) !== null
 
   const owned = POOL.map((id) => ({ id, dir: laneDir(id) })).filter((l) => inside(l.dir))
-  if (!owned.length) return null
+  if (!owned.length) {
+    // A pool without `main` says the main folder is not a working copy (2026-10-10: the
+    // paneforge-next folder is the live app's own, and files left there stopped every app
+    // update three times). No lane owns a path in it, so without this an edit went through
+    // unguarded. Ignored paths (node_modules, dist, .local-runtime) stay allowed.
+    if (POOL.includes('main') || !inside(MAIN)) return null
+    try { execFileSync('git', ['-C', MAIN, 'check-ignore', '-q', '--', target], { windowsHide: true, stdio: 'ignore', timeout: hookTimeout(10000) }); return null }
+    catch (e) { if (e?.status !== 1) return `${basename(MAIN)}: the main folder is not a working copy here and git could not say whether ${target} is tracked, so the write is refused: ${e?.message ?? e}` }
+    try {
+      const got = claim(session, dirname(target))
+      return `${basename(MAIN)}: the main folder is not a working copy here (the app runs from it, so a change left there holds its updates). This session's copy is ${got.dir}; make the change there.`
+    } catch (e) {
+      // Same rule as below: a claim that throws refuses, it never waves the write through.
+      return `${basename(MAIN)}: the main folder is not a working copy here and no other copy could be given to this chat, so the write is refused: ${e?.message ?? e}`
+    }
+  }
   // Longest path wins: <repo>-a also starts with <repo> on the string level only, but
   // resolve()+sep already prevents that. Sort anyway for nested oddities.
   owned.sort((x, y) => y.dir.length - x.dir.length)

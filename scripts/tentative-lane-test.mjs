@@ -18,7 +18,7 @@
 //   node scripts/tentative-lane-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -167,6 +167,54 @@ ok('and an untouched one is downgraded on the next mention', state().lanes[legac
 writeFileSync(join(statusOf(legacyLane).dir, 'real.js'), 'export const z = 1\n')
 lane('claim', '--session', 'legacy', '--cwd', join(root, 'elsewhere'), '--tentative')
 ok('but a lane with work in it is never downgraded', state().lanes[legacyLane]?.tentative === undefined)
+
+// ------------------------------------------------------------------ a pool without main
+// 2026-10-10: paneforge-next's main folder is the live app's own folder, so its pool leaves
+// `main` out. With no lane owning a main-folder path the guard used to return null and an
+// edit there went through, leaving files that stop every app update.
+
+// realpath: the engine compares paths as written, and macOS tmp is a symlink (/var -> /private/var).
+const real_ = realpathSync(root)
+const nm = join(real_, 'nomain')
+mkdirSync(join(nm, 'scripts'), { recursive: true })
+writeFileSync(join(nm, 'package.json'), JSON.stringify({ name: 'nomain', version: '0.0.1' }, null, 2) + '\n')
+writeFileSync(join(nm, 'tracked.js'), 'console.log(1)\n')
+writeFileSync(join(nm, '.gitignore'), 'dist/\n')
+writeFileSync(join(nm, '.lanes.json'), JSON.stringify({ pool: ['a', 'b'] }) + '\n')
+installLane(here, nm)
+git(nm, 'init', '-q', '-b', 'master')
+git(nm, 'config', 'user.email', 'test@example.com')
+git(nm, 'config', 'user.name', 'test')
+git(nm, 'add', '-A')
+git(nm, 'commit', '-qm', 'first')
+const guardIn = (dir, path, session) => {
+  try {
+    return { code: 0, out: execFileSync(process.execPath, [join(dir, 'scripts', 'lane.mjs'), 'guard', '--session', session, '--path', path],
+      { cwd: dir, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, PF_PANE: '' } }).trim() }
+  } catch (e) { return { code: e.status, out: (e.stdout ?? '').toString().trim() } }
+}
+const refusal = guardIn(nm, join(nm, 'tracked.js'), 'nm-chat')
+ok('no main in the pool: a tracked file in the main folder is refused', refusal.code === 2, JSON.stringify(refusal))
+ok('and the refusal names the chat\'s own copy', /not a working copy/.test(refusal.out) && /nomain-[ab]/.test(refusal.out), refusal.out)
+ok('a file that does not exist yet there is refused too', guardIn(nm, join(nm, 'brand-new.js'), 'nm-chat').code === 2)
+mkdirSync(join(nm, 'dist'), { recursive: true })
+ok('an ignored path in the main folder stays allowed', guardIn(nm, join(nm, 'dist', 'x.js'), 'nm-chat').code === 0)
+ok('a path outside the repo is untouched', guardIn(nm, join(real_, 'elsewhere', 'x.js'), 'nm-chat').code === 0)
+
+// With main in the pool, nothing changes: the guard claims main as before.
+const withMain = join(real_, 'withmain')
+mkdirSync(join(withMain, 'scripts'), { recursive: true })
+writeFileSync(join(withMain, 'package.json'), JSON.stringify({ name: 'withmain', version: '0.0.1' }) + '\n')
+writeFileSync(join(withMain, 'tracked.js'), 'x\n')
+writeFileSync(join(withMain, '.lanes.json'), JSON.stringify({ pool: ['main', 'a'] }) + '\n')
+installLane(here, withMain)
+git(withMain, 'init', '-q', '-b', 'master')
+git(withMain, 'config', 'user.email', 'test@example.com')
+git(withMain, 'config', 'user.name', 'test')
+git(withMain, 'add', '-A')
+git(withMain, 'commit', '-qm', 'first')
+const wm = guardIn(withMain, join(withMain, 'tracked.js'), 'wm')
+ok('main in the pool: the main folder is still a working copy', wm.code === 0, JSON.stringify(wm))
 
 console.log(failed ? `\n${failed} failed` : '\nall tentative-lane checks passed')
 process.exit(failed ? 1 : 0)
