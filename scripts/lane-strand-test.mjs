@@ -61,6 +61,10 @@ function fixture(name, pool = ['main', 'a', 'b', 'c'], extraEnv = {}) {
   writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ lanes: true, pool }, null, 2) + '\n')
   installLane(here, repo)
   copyFileSync(join(here, 'lane-hook.mjs'), join(repo, 'scripts', 'lane-hook.mjs'))
+  // On Windows the hook starts its detached release through this file beside it; without it
+  // wscript is handed a missing script and the release never runs (PC, 2026-10-09: section
+  // G's release never wrote; the app ships it beside the hook, package.json extraResources).
+  copyFileSync(join(here, 'run-hidden.vbs'), join(repo, 'scripts', 'run-hidden.vbs'))
   git(repo, 'init', '-q', '-b', 'master')
   git(repo, 'config', 'user.email', 'test@example.com')
   git(repo, 'config', 'user.name', 'test')
@@ -353,16 +357,14 @@ const variant = (p) => (caseBlind ? lower(p) : p)
   const before = statSync(f.statePath).mtimeMs
   f.hook('end', 'pane-p', 'before-clear', foreign, { reason: 'clear' })
   const afterPark = statSync(f.statePath).mtimeMs
-  // The release is a whole engine run (git status per lane, and on Windows a PowerShell
-  // process scan in closeLaneApps) started through wscript: on a loaded PC it took over 20s
-  // (2026-10-09 rbuild run), so the bound is generous and the time it took is printed.
+  // Bounded, and the time it took is printed: Mac 475-508 ms (2026-10-09).
   const parkedAt = Date.now()
   let released = false
-  for (const until = parkedAt + 90_000; Date.now() < until; ) {
+  for (const until = parkedAt + 30_000; Date.now() < until; ) {
     if (statSync(f.statePath).mtimeMs !== afterPark) { released = Date.now() - parkedAt; break }
     execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 100)'])
   }
-  ok('G: (setup) SessionEnd stamped the hold and its detached release ran', afterPark !== before && released !== false, `park wrote: ${afterPark !== before}, release wrote: ${released !== false ? `after ${released} ms` : 'not within 90s'}`)
+  ok('G: (setup) SessionEnd stamped the hold and its detached release ran', afterPark !== before && released !== false, `park wrote: ${afterPark !== before}, release wrote: ${released !== false ? `after ${released} ms` : 'not within 30s'}`)
   if (released !== false) console.log(`      (the detached release wrote after ${released} ms)`)
   ok('G: the dirty lane is kept for the pane through /clear', f.state().lanes.a?.session === 'before-clear' && f.state().lanes.a?.pane === 'pane-p', JSON.stringify(f.state().lanes))
 
