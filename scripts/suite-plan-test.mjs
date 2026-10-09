@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  fingerprint, planRun, readPasses, recordPass, retryAlone, suiteInputs, summary
+  dispatcher, fingerprint, planRun, readPasses, readTimes, recordPass, recordTimes, retryAlone, suiteInputs, summary
 } from './suite-plan.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -106,6 +106,36 @@ ok(JSON.stringify(calls) === '["flaky","real"]', 'every red suite runs once more
 ok(JSON.stringify(verdict.flaky) === '["flaky"]', 'a suite that passes on its own is a flake', verdict)
 ok(verdict.real.length === 1 && verdict.real[0].name === 'real' && /still broken/.test(verdict.real[0].out),
   'a suite that fails again on its own is real, with its second output kept', verdict)
+
+// --- which suite a free worker takes next -------------------------------------------------
+const drain = (take, worker) => { const got = []; for (let i = take(worker); i >= 0; i = take(worker)) got.push(i); return got }
+const listed = ['a', 'b', 'c', 'slow', 'd', 'slowest', 'e']
+const secs = { a: 1, b: 2, c: 1, slow: 200, d: 3, slowest: 600, e: 31 }
+let take = dispatcher(listed, {}, 8)
+ok(JSON.stringify(drain(take, 0)) === '[0,1,2,3,4,5,6]', 'with no times known the pool takes the listed order, as it always did')
+take = dispatcher(listed, secs, 8)
+ok(JSON.stringify([take(0), take(1), take(2)]) === '[5,3,6]', 'the long workers start the slowest suites first, longest first')
+ok(take(6) === 0 && take(7) === 1, 'the last two workers take the cheap suites in listed order')
+take = dispatcher(listed, secs, 8)
+ok(JSON.stringify(drain(take, 7)) === '[0,1,2,4,5,3,6]', 'a cheap worker with no cheap suites left helps with the long ones, longest first')
+take = dispatcher(listed, secs, 2)
+ok(take(0) === 5 && take(1) === 0, 'two workers: one starts the slowest, one keeps the cheap order')
+take = dispatcher(listed, secs, 1)
+ok(JSON.stringify(drain(take, 0)) === '[5,3,6,0,1,2,4]', 'one worker still starts the slowest first, then the rest in listed order')
+take = dispatcher(listed, { ...secs, newsuite: 900 }, 8)
+ok(take(0) === 5, 'a time for a suite that is not in this run changes nothing')
+take = dispatcher(['x', 'y', 'z'], { x: 50, y: 50, z: 50 }, 8)
+ok(JSON.stringify(drain(take, 0)) === '[0,1,2]', 'equally slow suites keep their listed order')
+
+const timesPath = join(work, 'times', 'suite-times.json')
+ok(JSON.stringify(readTimes(timesPath)) === '{}', 'no times file reads as nothing known')
+recordTimes(timesPath, { a: 1.5, slow: 200 })
+recordTimes(timesPath, { slow: 180 })
+ok(JSON.stringify(readTimes(timesPath)) === '{"a":1.5,"slow":180}', 'a new time replaces the old one and keeps the rest', readTimes(timesPath))
+writeFileSync(timesPath, '{"a": 1.5, "slow": ')
+ok(JSON.stringify(readTimes(timesPath)) === '{}', 'a torn times file reads as nothing known, never a throw')
+writeFileSync(timesPath, '{"a": "fast", "b": -1, "c": 4}')
+ok(JSON.stringify(readTimes(timesPath)) === '{"c":4}', 'only real durations are trusted', readTimes(timesPath))
 
 // --- the last lines, which other tools read -------------------------------------------------
 let lines = summary({ total: 300, secs: '120.5', real: [], flaky: ['promptsubmit'], skipped: ['gate', 'lanecleared'] })
