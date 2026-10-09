@@ -97,85 +97,125 @@ if (!differs.length) {
 // bundle is re-signed (nothing nested changes) with the release identity. Whether that can
 // work is settled BEFORE anything is written: on 2026-10-09 (11:59pm Fri) no identity was
 // found, the install went ahead, re-signed the app ad-hoc and its macOS permissions went
-// with it; and codesign run from a chat's shell answers errSecInternalComponent for this
-// key (the same command over ssh signs), after it has already broken the old seal.
+// with it; and codesign run from a chat's shell cannot use this key (signProbe), after it
+// has already broken the old seal.
 const app = /^(.*\.app)\/Contents\/Resources\/scripts\/?$/.exec(target)?.[1]
 let sign = null
 if (process.platform === 'darwin' && app) {
-  const { designatedRequirement, findSigningIdentity, resignRefusal } = await import('./mac-sign.mjs')
-  const found = findSigningIdentity()
+  const mac = await import('./mac-sign.mjs')
+  const found = mac.findSigningIdentity()
+  // Only "not signed at all" means there is nothing to keep. Anything else unreadable (a
+  // seal an earlier run broke, a codesign whose output reads differently) could still be a
+  // certificate app, and guessing "unsigned" there is how it would end up ad-hoc.
   let designated = ''
+  let unreadable = null
   try {
-    designated = designatedRequirement(app)
-  } catch {
-    /* not signed at all: nothing to keep, an ad-hoc signature is an improvement */
+    designated = mac.designatedRequirement(app)
+    if (!designated) unreadable = 'no designated requirement in codesign -d -r- output'
+  } catch (e) {
+    if (!/not signed at all/.test(String(e.stderr ?? ''))) unreadable = String(e.stderr ?? e.message).trim()
   }
-  const refusal = resignRefusal(designated, found)
+  const cannot = !unreadable && found && mac.signProbe(found)
+  const refusal = unreadable
+    ? `cannot read the signature of ${app} (${unreadable})`
+    : mac.resignRefusal(designated, found) ?? (cannot && `codesign cannot sign as "${found.name}" from this shell (${cannot}). Run it from a Terminal or over ssh`)
   if (refusal) {
-    console.error(`Nothing was installed: ${refusal}`)
+    console.error(`Nothing was installed: ${refusal}.`)
     process.exit(2)
   }
-  const args = found ? [...(found.keychain ? ['--keychain', found.keychain] : []), '--sign', found.name] : ['--sign', '-']
+  // What a re-sign rewrites, kept outside the bundle so any failure can be undone whole.
   const scratch = mkdtempSync(join(tmpdir(), 'pf-install-engine-'))
-  if (found) {
-    copyFileSync('/usr/bin/true', join(scratch, 'probe'))
-    const probe = spawnSync('codesign', ['--force', ...args, '--timestamp=none', join(scratch, 'probe')], { encoding: 'utf8' })
-    if (probe.status !== 0) {
-      rmSync(scratch, { recursive: true, force: true })
-      console.error(`Nothing was installed: codesign cannot sign as "${found.name}" from this shell (${probe.stderr.trim()}). Run it from a Terminal or over ssh.`)
-      process.exit(2)
-    }
-  }
-  // What a re-sign rewrites, kept outside the bundle so a failed one can be undone whole.
   const exe = readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8').match(/<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/)?.[1]
-  const sealed = [exe && join('Contents', 'MacOS', exe), join('Contents', '_CodeSignature', 'CodeResources')].filter((f) => f && existsSync(join(app, f)))
-  sealed.forEach((f, i) => copyFileSync(join(app, f), join(scratch, `sealed-${i}`)))
-  sign = { args, label: found?.name ?? '-', designated, designatedRequirement, scratch, sealed }
+  const sealed = [exe && join('Contents', 'MacOS', exe), join('Contents', '_CodeSignature', 'CodeResources')]
+    .filter(Boolean)
+    .map((f, i) => ({ f, copy: join(scratch, `sealed-${i}`), had: existsSync(join(app, f)) }))
+  for (const { f, copy, had } of sealed) if (had) copyFileSync(join(app, f), copy)
+  sign = { mac, found, designated, scratch, sealed }
 }
 
 const backup = join(target, `.engine-backup-${new Date().toISOString().replace(/[:.]/g, '-')}`)
 mkdirSync(backup)
 for (const { name } of differs) if (existsSync(join(target, name))) copyFileSync(join(target, name), join(backup, name))
-for (const { name, bytes } of differs) {
-  const tmp = join(target, `.${name}.installing`)
-  writeFileSync(tmp, bytes)
-  renameSync(tmp, join(target, name))
+
+// Written through a rename so a file in use (the running app, a hook starting) is replaced
+// whole, never truncated in place.
+const put = (from, to) => {
+  const tmp = `${to}.installing`
+  copyFileSync(from, tmp)
+  renameSync(tmp, to)
 }
-const wrong = files.filter(({ name, bytes }) => !readFileSync(join(target, name)).equals(bytes))
-if (wrong.length) {
-  console.error(`Read back wrong: ${wrong.map((f) => f.name).join(', ')}. The replaced files are in ${backup}.`)
+
+// Old scripts and, on a Mac, the old signature files back, so the old seal is whole again.
+function rollBack(why) {
+  const left = []
+  for (const { name } of differs) {
+    try {
+      if (existsSync(join(backup, name))) put(join(backup, name), join(target, name))
+      else rmSync(join(target, name), { force: true })
+    } catch {
+      left.push(name)
+    }
+  }
+  if (!left.length) rmSync(backup, { recursive: true, force: true })
+  let whole = true
+  if (sign) {
+    for (const { f, copy, had } of sign.sealed) {
+      try {
+        if (had) put(copy, join(app, f))
+        else rmSync(join(app, f), { force: true })
+      } catch {
+        left.push(f)
+      }
+    }
+    // An app that had no signature gets none back: the re-sign made its _CodeSignature.
+    if (!sign.designated) rmSync(join(app, 'Contents', '_CodeSignature'), { recursive: true, force: true })
+    else whole = spawnSync('codesign', ['--verify', '--deep', '--strict', app]).status === 0
+    if (whole && !left.length) rmSync(sign.scratch, { recursive: true, force: true })
+  }
+  console.error(
+    `${why} The install was rolled back` +
+      (left.length ? `, except ${left.join(', ')} (old copies in ${backup}${sign ? ` and ${sign.scratch}` : ''})` : '') +
+      (!sign ? '.' : !sign.designated ? '; it is unsigned again, as it was.' : whole ? '; its old signature verifies again.' : `; it STILL DOES NOT VERIFY (old signature files in ${sign.scratch}).`)
+  )
   process.exit(1)
 }
-console.log(`Installed ${differs.length} of ${files.length} files from ${master}: ${differs.map((f) => f.name).join(', ')}.`)
-console.log(`Backup of what was there: ${backup}`)
+
+try {
+  for (const { name, bytes } of differs) {
+    const tmp = join(target, `.${name}.installing`)
+    writeFileSync(tmp, bytes)
+    renameSync(tmp, join(target, name))
+  }
+} catch (e) {
+  rollBack(`Writing the new scripts failed (${e.message}).`)
+}
+const wrong = files.filter(({ name, bytes }) => !readFileSync(join(target, name)).equals(bytes))
+if (wrong.length) rollBack(`Read back wrong: ${wrong.map((f) => f.name).join(', ')}.`)
 
 if (sign) {
+  const label = sign.found?.name ?? '-'
   try {
-    execFileSync('codesign', ['--force', ...sign.args, '--preserve-metadata=entitlements', '--timestamp=none', app], { stdio: 'inherit' })
+    execFileSync('codesign', ['--force', ...sign.mac.identityArgs(sign.found), '--preserve-metadata=entitlements', '--timestamp=none', app], { stdio: 'inherit' })
     execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' })
   } catch {
-    // Old scripts and the old signature back, byte for byte, so the old seal is whole again.
-    for (const { name } of differs) {
-      if (existsSync(join(backup, name))) copyFileSync(join(backup, name), join(target, name))
-      else rmSync(join(target, name), { force: true })
-    }
-    rmSync(backup, { recursive: true, force: true })
-    sign.sealed.forEach((f, i) => copyFileSync(join(sign.scratch, `sealed-${i}`), join(app, f)))
-    const whole = spawnSync('codesign', ['--verify', '--deep', '--strict', app]).status === 0
-    if (whole) rmSync(sign.scratch, { recursive: true, force: true })
-    console.error(
-      `Re-signing ${app} as "${sign.label}" failed, so the install was rolled back ` +
-        `(${whole ? 'its old signature verifies again' : `and it STILL DOES NOT VERIFY; its old signature files are in ${sign.scratch}`}).`
-    )
-    process.exit(1)
+    rollBack(`Re-signing ${app} as "${label}" failed.`)
+  }
+  // The requirement is what macOS keys every permission on: the same certificate gives the
+  // same requirement, so a change here would be a permission reset.
+  let after = ''
+  try {
+    after = sign.mac.designatedRequirement(app)
+  } catch (e) {
+    rollBack(`Re-signed ${app} as "${label}", but its signature cannot be read back (${String(e.stderr ?? e.message).trim()}).`)
+  }
+  if (sign.designated && !/cdhash/.test(sign.designated) && after !== sign.designated) {
+    rollBack(`Re-signed ${app} as "${label}", but its designated requirement changed (${sign.designated} -> ${after}), which would make macOS ask for its permissions again.`)
   }
   rmSync(sign.scratch, { recursive: true, force: true })
-  // The requirement is what macOS keys every permission on: the same certificate gives the
-  // same requirement, so a change here is a permission reset and has to be said.
-  const after = sign.designatedRequirement(app)
-  if (sign.designated && !/cdhash/.test(sign.designated) && after !== sign.designated) {
-    console.error(`Re-signed ${app} as "${sign.label}", but its designated requirement changed: ${sign.designated} -> ${after}. macOS will ask for its permissions again.`)
-    process.exit(1)
-  }
-  console.log(`Re-signed ${app} as "${sign.label}"; codesign --verify --deep --strict passes; designated requirement: ${after}`)
+  console.log(`Installed ${differs.length} of ${files.length} files from ${master}: ${differs.map((f) => f.name).join(', ')}.`)
+  console.log(`Backup of what was there: ${backup}`)
+  console.log(`Re-signed ${app} as "${label}"; codesign --verify --deep --strict passes; designated requirement: ${after}`)
+} else {
+  console.log(`Installed ${differs.length} of ${files.length} files from ${master}: ${differs.map((f) => f.name).join(', ')}.`)
+  console.log(`Backup of what was there: ${backup}`)
 }

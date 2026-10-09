@@ -60,8 +60,8 @@
 // re-asks for permissions still beats no app at all.
 // `scripts/mac-cert.mjs` creates the identity and prints what CI needs.
 
-import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -138,6 +138,30 @@ export function resignRefusal(designated, found) {
   )
 }
 
+/** codesign's arguments that pick `found` (null = ad-hoc). */
+export function identityArgs(found) {
+  return found ? [...(found.keychain ? ['--keychain', found.keychain] : []), '--sign', found.name] : ['--sign', '-']
+}
+
+/**
+ * Why codesign cannot sign as `found` from this process, or null when it can: a test-sign
+ * of a scratch copy of a system binary. A chat's shell gets errSecInternalComponent for
+ * this key while the same command over ssh signs (2026-10-10 12:10am Sat), and a real
+ * re-sign that fails that way has already broken the bundle's old seal. Bounded, so a
+ * keychain prompt nobody answers cannot hang a build.
+ */
+export function signProbe(found) {
+  const dir = mkdtempSync(join(tmpdir(), 'pf-sign-probe-'))
+  try {
+    copyFileSync('/usr/bin/true', join(dir, 'probe'))
+    const r = spawnSync('codesign', ['--force', ...identityArgs(found), '--timestamp=none', join(dir, 'probe')], { encoding: 'utf8', timeout: 30_000 })
+    if (r.status === 0) return null
+    return (r.error?.message ?? r.stderr ?? '').trim().split('\n').pop() || `codesign exited ${r.status}`
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 /** Every nested bundle inside the app, deepest first. */
 function nested(app) {
   const out = []
@@ -170,9 +194,7 @@ export function signBundle(app, identity = '-', keychain = null) {
       'codesign',
       [
         '--force',
-        ...(keychain && identity !== '-' ? ['--keychain', keychain] : []),
-        '--sign',
-        identity,
+        ...identityArgs(identity === '-' ? null : { name: identity, keychain }),
         // Without this a re-sign keeps the stale entitlements blob from Electron's own
         // signature, and the outer app then disagrees with its helpers.
         '--preserve-metadata=entitlements',
@@ -219,7 +241,12 @@ export default async function afterPack(context) {
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   if (!existsSync(app)) throw new Error(`afterPack: no bundle at ${app}`)
 
-  const found = findSigningIdentity()
+  let found = findSigningIdentity()
+  const cannot = found && signProbe(found)
+  if (cannot) {
+    console.log(`  ! found "${found.name}" but codesign cannot use it here (${cannot}); signing ad-hoc.`)
+    found = null
+  }
   const identity = found?.name ?? null
   const n = signBundle(app, identity ?? '-', found?.keychain)
 
