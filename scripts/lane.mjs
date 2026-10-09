@@ -2631,6 +2631,19 @@ function finishCopy(id, state) {
   }
 }
 
+/**
+ * What is in a folder that is not a checkout, besides the node_modules link this file put
+ * there: the entries `ensureWorktree` refuses to build over. Callers ask only about a folder
+ * already known not to be a worktree (`laneWork().broken`), so this costs one readdir.
+ */
+function strayIn(dir) {
+  try {
+    return readdirSync(dir).filter((name) => !(name === 'node_modules' && isLink(join(dir, name))))
+  } catch (e) {
+    return e?.code === 'ENOENT' ? [] : ['(unreadable)']
+  }
+}
+
 function ensureWorktree(id) {
   const dir = laneDir(id)
   if (id === 'main') return dir
@@ -3103,6 +3116,14 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // (`idleEmpty`, the `main` takeover) already refuses it too; the other way in, carrying an
   // ended chat's hold to the pane's next chat, is closed above.
   const damaged = new Set()
+  // A folder at a lane's path that is not a checkout of this repo and holds something
+  // (`strayIn`) is somebody's, and `ensureWorktree` refuses it rather than delete it. The
+  // chooser below prefers folders that already exist, so it picked exactly that one ahead of
+  // lanes it could build, and the refusal failed the WHOLE claim (2026-10-09, taskdriver.ai on
+  // the PC: `taskdriver.ai-h` held only `.local-schedule-shots/schedule.png`, and every new
+  // chat read "could not assign a checkout" with lanes c-g unmade). Not handed out
+  // automatically; asked for by name it still refuses with the sentence naming the folder.
+  const blocked = new Set()
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
     let work = laneWork(id)
@@ -3111,6 +3132,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (work.halfMade && finishCopy(id, state).finished) work = laneWork(id)
     if (work.damaged) {
       damaged.add(id)
+      return false
+    }
+    if (work.broken && strayIn(laneDir(id)).length) {
+      blocked.add(id)
       return false
     }
     // `main` is the trunk itself: its `ahead` counts unreleased commits that are already
@@ -3135,7 +3160,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     }
   }))
   const spare = order.filter(
-    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id) && !kept.has(id)
+    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id) && !blocked.has(id) && !kept.has(id)
   )
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
@@ -3269,7 +3294,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
       const spare = pick(
-        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id) && !kept.has(id))
+        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id) && !blocked.has(id) && !kept.has(id))
       )
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
@@ -3293,7 +3318,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`,
       kept.size && `kept for recovery: ${[...kept].join(', ')} (its folder needs checking before anyone works in it)`,
       damaged.size &&
-        `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`
+        `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`,
+      ...[...blocked].map(
+        (id) => `lane ${id}'s folder is not a git worktree and is not empty (${strayIn(laneDir(id)).slice(0, 5).join(', ')}): check what is in ${laneDir(id)}, move it out, and it rebuilds itself`
+      )
     ].filter(Boolean).join('; ')
     throw new Error(`all lanes busy: ${why}`)
   }
