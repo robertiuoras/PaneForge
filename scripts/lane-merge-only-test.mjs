@@ -96,5 +96,10 @@ function fixture(name) {
 }
 
 console.log(`${failures ? 'FAIL' : 'all passed'}: merge-only lanes and named recovery refusals, ${failures} failures`)
-if (!failures) rmSync(root, { recursive: true, force: true })
+// Windows: a detached sweep `ready` started, or a just-exited git child, can still hold a file
+// under `root` (EPERM, PC gate 2026-10-09 after all 5 checks passed). Temp cleanup is never the
+// verdict: retry, then report it and exit on `failures` alone.
+if (!failures) {
+  try { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) } catch (e) { console.log(`(cleanup: could not remove ${root}: ${e.message})`) }
+}
 process.exitCode = failures ? 1 : 0
