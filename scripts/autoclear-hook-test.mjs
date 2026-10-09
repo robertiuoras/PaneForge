@@ -295,7 +295,7 @@ say('rerun: already installed, no second copy', /already installed/.test(b.said)
 const both = install(fresh, undefined, 'installLaneHooks(true), installAutoClearHooks(true), installLaneHooks(true), installAutoClearHooks(true)')
 say(
   'lane and autoclear entries share a Stop group without deleting each other',
-  commands(both.settings, 'autoclear-hook.mjs').length === 2 && commands(both.settings, 'lane-hook.mjs').length === 4 && /already installed[\s\S]*already installed/.test(both.said.split('\n').slice(2).join('\n')),
+  commands(both.settings, 'autoclear-hook.mjs').length === 2 && commands(both.settings, 'lane-hook.mjs').length === 5 && /already installed[\s\S]*already installed/.test(both.said.split('\n').slice(2).join('\n')),
   both.said
 )
 
