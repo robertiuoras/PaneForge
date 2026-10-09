@@ -266,6 +266,24 @@ const session = input.session_id ?? input.sessionId ?? ''
 const cwd = input.cwd ?? process.cwd()
 if (!session) process.exit(0)
 
+/** What this chat was last told about each repo's lanes: `{ start, repos: { [repo]: { key, at } } }`. */
+const toldFile = join(tmpdir(), `pf-lane-told-${createHash('sha1').update(session).digest('hex').slice(0, 16)}.json`)
+
+// ------------------------------------------------------------------ start
+
+// SessionStart (startup, resume, clear, compact): whatever lane line this chat was told is no
+// longer in its context, so forget it and the next prompt says it again. The `start` mark
+// also tells the prompt hook this machine runs the SessionStart hook at all, which retires the
+// 30-minute re-print for this chat (see the end of the prompt section).
+if (event === 'start') {
+  try {
+    writeFileSync(toldFile, JSON.stringify({ start: Date.now(), repos: {} }))
+  } catch {
+    /* a failed write only means the old 30-minute re-print stays in charge */
+  }
+  process.exit(0)
+}
+
 /**
  * The letter of the EXISTING lane copy a chat is standing in, for a repo that never gets
  * lanes (NEVER); null for the main checkout, a subfolder of it, or any folder that is no copy.
@@ -461,6 +479,9 @@ if (event === 'prompt') {
   // table everywhere, with `<- THIS CHAT` on one row, makes the panes agree by
   // construction.
   let roster = []
+  // The same rows without another chat's progress word: who holds which checkout, and where
+  // it started. A change here is what makes the table worth printing again.
+  let claims = []
   let others = []
   let stuck = null
   try {
@@ -495,6 +516,7 @@ if (event === 'prompt') {
                   : `another chat: no work yet${from}`
       return `  ${l.lane.padEnd(pad)}  ${l.dir}  ${what}`
     })
+    claims = held.map((l) => `${l.lane} ${l.dir} ${l.mine ? 'this chat' : l.tentative ? 'mentioned' : 'held'} ${l.from ?? ''}`)
     // A lane another chat only reserved by saying the word is not another chat working
     // here; it stays on the roster (the panes must agree) but it does not make a quiet
     // repo speak up.
@@ -559,25 +581,32 @@ if (event === 'prompt') {
             `That merges this lane into ${info.mainBranch} and pushes, batched with every other finished lane. The ready command does not cut a version. If the user explicitly requested a release, complete the project's manual release workflow after merging; merge-only lane configuration does not cancel that request. Do not enable automatic version bumps just to fulfill a manual release.`
     )
   }
+  const said = lines.join('\n')
   lines.push(
     roster.length
       ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
       : `No chat holds a ${name} lane right now.`
   )
   const text = [...lines, stuck].filter(Boolean).join('\n')
-  // The same ~1,900 chars were injected on every prompt of a lane chat, task notifications
-  // included (agent setup audit 2026-09-26). Print when the text changes, or again after
-  // 30 minutes so a compacted chat gets it back; otherwise stay silent.
-  const seenFile = join(tmpdir(), `pf-lane-hook-${createHash('sha1').update(session + repo).digest('hex').slice(0, 16)}`)
-  const hash = createHash('sha1').update(text).digest('hex')
+  // Said once per change of the TABLE: this chat's own lane and instructions, who holds which
+  // checkout, a stuck lane. Not again for another chat's progress inside the lane it already
+  // holds ("mid-edit" -> "1 commit" -> "finished"): over the last 900 Mac prompts (2026-10-09)
+  // that alone was 56 of 164 prints, ~900 B each. SessionStart (`--event=start`) empties the
+  // record, so a compacted, cleared or resumed chat is told again on its next prompt. A chat
+  // with no `start` mark (settings that predate the SessionStart hook) keeps the old 30-minute
+  // re-print: there it is the only way a compacted chat gets the line back.
+  const key = createHash('sha1').update([said, ...claims, stuck ?? ''].join('\n')).digest('hex')
+  let told = {}
   try {
-    const [h, at] = readFileSync(seenFile, 'utf8').split(' ')
-    if (h === hash && Date.now() - Number(at) < 30 * 60000) process.exit(0)
+    told = JSON.parse(readFileSync(toldFile, 'utf8'))
   } catch {
-    /* first prompt of this chat */
+    /* first prompt of this chat, or its SessionStart hook never ran */
   }
+  const repos = told.repos && typeof told.repos === 'object' ? told.repos : {}
+  const last = repos[repo]
+  if (last?.key === key && (told.start || Date.now() - Number(last.at) < 30 * 60000)) process.exit(0)
   try {
-    writeFileSync(seenFile, `${hash} ${Date.now()}`)
+    writeFileSync(toldFile, JSON.stringify({ ...told, repos: { ...repos, [repo]: { key, at: Date.now() } } }))
   } catch {
     /* a failed write only means the table prints again */
   }

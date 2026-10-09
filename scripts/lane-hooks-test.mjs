@@ -82,12 +82,12 @@ const laneCommands = (s) =>
 const fresh = join(work, 'fresh')
 const a = run(fresh, {})
 say('a fresh machine gets the hooks installed', /installed ->/.test(a.said), a.said + a.err)
-say('all four events are wired', laneCommands(a.settings).length === 4, JSON.stringify(laneCommands(a.settings)))
+say('all five events are wired', laneCommands(a.settings).length === 5, JSON.stringify(laneCommands(a.settings)))
 say(
   'each event gets its own arg',
   // Not endsWith: every command we write carries the --installed-by=paneforge marker
   // after the event, which is how an upgrade recognises its own entries.
-  ['--event=prompt', '--event=pretool', '--event=end'].every((arg) => laneCommands(a.settings).some((c) => c.includes(arg))),
+  ['--event=prompt', '--event=pretool', '--event=end', '--event=stop', '--event=start'].every((arg) => laneCommands(a.settings).some((c) => c.includes(arg))),
   JSON.stringify(laneCommands(a.settings))
 )
 say(
@@ -100,7 +100,7 @@ say(
 
 const b = run(fresh, undefined) // same home, whatever the first run left
 say('running again changes nothing', /already installed/.test(b.said), b.said + b.err)
-say('and does not stack a second copy', laneCommands(b.settings).length === 4, JSON.stringify(laneCommands(b.settings)))
+say('and does not stack a second copy', laneCommands(b.settings).length === 5, JSON.stringify(laneCommands(b.settings)))
 
 // ---------------------------------------------------------------- app moved
 
@@ -112,7 +112,7 @@ for (const groups of Object.values(stale.hooks))
 const c = run(moved, stale)
 say('an upgrade repoints the old entries', /installed ->/.test(c.said), c.said + c.err)
 say('without leaving the old path behind', !laneCommands(c.settings).some((x) => x.includes('C:/Old/Location')), JSON.stringify(laneCommands(c.settings)))
-say('and still exactly four', laneCommands(c.settings).length === 4, JSON.stringify(laneCommands(c.settings)))
+say('and still exactly five', laneCommands(c.settings).length === 5, JSON.stringify(laneCommands(c.settings)))
 
 // ---------------------------------------------------------------- pointed at a lane copy
 
@@ -125,7 +125,7 @@ for (const groups of Object.values(onLane.hooks))
   for (const g of groups) for (const h of g.hooks ?? []) if (h.command.includes('lane-hook.mjs')) h.command = h.command.replace(REPO.replace(/\\/g, '/'), '/Users/x/Projects/PaneForge-d')
 const lp = run(laneHome, onLane)
 say('an entry pointing into a lane copy is repointed', !laneCommands(lp.settings).some((x) => x.includes('PaneForge-d')), JSON.stringify(laneCommands(lp.settings)))
-say('to the running app, four entries', laneCommands(lp.settings).length === 4, JSON.stringify(laneCommands(lp.settings)))
+say('to the running app, five entries', laneCommands(lp.settings).length === 5, JSON.stringify(laneCommands(lp.settings)))
 
 // ...and a dev or try copy never writes the file at all, whatever it finds there.
 const devHome = join(work, 'dev-copy')
