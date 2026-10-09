@@ -123,26 +123,47 @@ if (process.platform === 'darwin' && app) {
     console.error(`Nothing was installed: ${refusal}.`)
     process.exit(2)
   }
-  // What a re-sign rewrites, kept outside the bundle so any failure can be undone whole.
+  // What a re-sign rewrites, kept outside the bundle so any failure can be undone whole:
+  // the main executable (its signature is embedded) and CodeResources.
+  const exe = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8'))?.[1]
+  if (!exe || !existsSync(join(app, 'Contents', 'MacOS', exe))) {
+    console.error(`Nothing was installed: cannot find the main executable of ${app} in its Info.plist, so a failed re-sign could not be undone.`)
+    process.exit(2)
+  }
   const scratch = mkdtempSync(join(tmpdir(), 'pf-install-engine-'))
-  const exe = readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8').match(/<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/)?.[1]
-  const sealed = [exe && join('Contents', 'MacOS', exe), join('Contents', '_CodeSignature', 'CodeResources')]
-    .filter(Boolean)
-    .map((f, i) => ({ f, copy: join(scratch, `sealed-${i}`), had: existsSync(join(app, f)) }))
-  for (const { f, copy, had } of sealed) if (had) copyFileSync(join(app, f), copy)
+  const sealed = [join('Contents', 'MacOS', exe), join('Contents', '_CodeSignature', 'CodeResources')].map((f, i) => ({ f, copy: join(scratch, `sealed-${i}`), had: existsSync(join(app, f)) }))
+  try {
+    for (const { f, copy, had } of sealed) if (had) copyFileSync(join(app, f), copy)
+  } catch (e) {
+    rmSync(scratch, { recursive: true, force: true })
+    console.error(`Nothing was installed: could not keep a copy of ${app}'s signature files (${e.message}).`)
+    process.exit(2)
+  }
   sign = { mac, found, designated, scratch, sealed }
 }
 
 const backup = join(target, `.engine-backup-${new Date().toISOString().replace(/[:.]/g, '-')}`)
-mkdirSync(backup)
-for (const { name } of differs) if (existsSync(join(target, name))) copyFileSync(join(target, name), join(backup, name))
+try {
+  mkdirSync(backup)
+  for (const { name } of differs) if (existsSync(join(target, name))) copyFileSync(join(target, name), join(backup, name))
+} catch (e) {
+  rmSync(backup, { recursive: true, force: true })
+  if (sign) rmSync(sign.scratch, { recursive: true, force: true })
+  console.error(`Nothing was installed: could not back up what is there (${e.message}).`)
+  process.exit(2)
+}
 
 // Written through a rename so a file in use (the running app, a hook starting) is replaced
-// whole, never truncated in place.
+// whole, never truncated in place. A temp file a failure leaves is removed with it.
+const tempOf = (to) => `${to}.installing`
 const put = (from, to) => {
-  const tmp = `${to}.installing`
-  copyFileSync(from, tmp)
-  renameSync(tmp, to)
+  try {
+    copyFileSync(from, tempOf(to))
+    renameSync(tempOf(to), to)
+  } catch (e) {
+    rmSync(tempOf(to), { force: true })
+    throw e
+  }
 }
 
 // Old scripts and, on a Mac, the old signature files back, so the old seal is whole again.
@@ -182,9 +203,14 @@ function rollBack(why) {
 
 try {
   for (const { name, bytes } of differs) {
-    const tmp = join(target, `.${name}.installing`)
-    writeFileSync(tmp, bytes)
-    renameSync(tmp, join(target, name))
+    const to = join(target, name)
+    try {
+      writeFileSync(tempOf(to), bytes)
+      renameSync(tempOf(to), to)
+    } catch (e) {
+      rmSync(tempOf(to), { force: true })
+      throw e
+    }
   }
 } catch (e) {
   rollBack(`Writing the new scripts failed (${e.message}).`)

@@ -1616,7 +1616,13 @@ function reap(state) {
       reaped = true
     }
   }
-  if (state.release && now() - state.release.at > LOCK_MS) state.release = null
+  // A release whose process is gone is over: killed or crashed, it can never clear its own
+  // marker, and every chat's release waited the full LOCK_MS behind it (2026-10-10 12:13am
+  // Sat, a `ready` stopped mid-suite). A live one heartbeats `at` (beatRelease).
+  if (state.release && (now() - state.release.at > LOCK_MS || (state.release.pid > 0 && !processAlive(state.release.pid)))) {
+    state.release = null
+    reaped = true
+  }
   // A conflict or a ready mark for work master already has is noise that never clears
   // itself: it made `status` report a lane as conflicted long after the conflict was
   // resolved, and left chats resolving something that had already gone out. Usually

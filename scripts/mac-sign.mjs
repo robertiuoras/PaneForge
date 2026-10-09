@@ -81,9 +81,11 @@ const security = (args) =>
   execFileSync('security', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
 
 /**
- * The signing identity as `{ name, keychain }`, or null when there is none and we must go
- * ad-hoc. `keychain` is the file it was found in (null = the user's keychain search list),
- * and codesign must be handed it with `--keychain` (`signBundle`).
+ * The signing identity as `{ name, keychain, locked }`, or null when there is none and we
+ * must go ad-hoc. `keychain` is the file it was found in (null = the user's keychain search
+ * list), and codesign must be handed it with `--keychain` (`signBundle`). `locked` = that
+ * file would not unlock with the empty password, so codesign would ask for the password in
+ * a dialog (`signProbe` refuses it).
  *
  * The keychain FILE is searched first, not only the search list: on 2026-10-09 the Mac's
  * list no longer named paneforge-signing (another project's `security list-keychains -s`
@@ -101,11 +103,16 @@ export function findSigningIdentity({ run = security, keychain = signingKeychain
   // `errSecInternalComponent` - which says nothing about keychains. Unlocking here costs
   // milliseconds and happens a moment before the signature, so the timeout cannot expire
   // in between.
+  // From a chat's shell the Mac's paneforge-signing keychain does NOT unlock this way while
+  // the same command over ssh does (2026-10-10 12:05am Sat), and a codesign on a locked
+  // keychain starts SecurityAgent: a password dialog on Robert's screen (2026-10-01), or
+  // errSecInternalComponent while the screen is locked.
+  let locked = false
   if (keychain) {
     try {
       run(['unlock-keychain', '-p', '', keychain])
     } catch {
-      /* already unlocked, or not ours - signing will say so if it matters */
+      locked = true
     }
   }
   for (const file of keychain ? [keychain, null] : [null]) {
@@ -114,7 +121,9 @@ export function findSigningIdentity({ run = security, keychain = signingKeychain
       // signs with it perfectly well. Matching on the quoted name avoids picking up another
       // project's certificate that happens to sit in the same keychain.
       const out = run(['find-identity', '-p', 'codesigning', ...(file ? [file] : [])])
-      if (out.includes(`"${name}"`)) return { name, keychain: file }
+      // A hit on the search list is not unlock-tested: that is the login keychain, open
+      // while Robert is signed in, and the way this signed before 2026-10-09.
+      if (out.includes(`"${name}"`)) return { name, keychain: file, locked: file ? locked : false }
     } catch {
       /* not in this one */
     }
@@ -151,6 +160,8 @@ export function identityArgs(found) {
  * keychain prompt nobody answers cannot hang a build.
  */
 export function signProbe(found) {
+  // Never handed to codesign at all: that is what would open the dialog.
+  if (found?.locked) return `${found.keychain} does not unlock without its password here, and codesign would ask for it in a dialog`
   const dir = mkdtempSync(join(tmpdir(), 'pf-sign-probe-'))
   try {
     copyFileSync('/usr/bin/true', join(dir, 'probe'))
@@ -242,8 +253,15 @@ export default async function afterPack(context) {
   if (!existsSync(app)) throw new Error(`afterPack: no bundle at ${app}`)
 
   let found = findSigningIdentity()
+  // A fork without the secrets builds ad-hoc on purpose (mac-cert.mjs); a job that HAS
+  // them and still finds no identity would ship a release that resets every permission.
+  if (!found && process.env.CI && process.env.PF_CERT_P12)
+    throw new Error('afterPack: PF_CERT_P12 is set but no signing identity was found after mac-cert.mjs import.')
   const cannot = found && signProbe(found)
   if (cannot) {
+    // A release has to carry the certificate: every installed Mac copy's permissions hang
+    // on it. Only a local build falls back to ad-hoc.
+    if (process.env.CI) throw new Error(`afterPack: found "${found.name}" but codesign cannot use it (${cannot}).`)
     console.log(`  ! found "${found.name}" but codesign cannot use it here (${cannot}); signing ad-hoc.`)
     found = null
   }

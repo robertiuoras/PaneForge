@@ -118,7 +118,7 @@ ok('with a remote it installs origin/master, fetched, not the lagging local mast
 // paneforge-signing.keychain-db, `find-identity` over the list found no identity, and the
 // install re-signed PaneForge Classic ad-hoc - requirement cdhash, every permission lost.
 // The two outputs below are that Mac's real ones (hashes masked).
-const { findSigningIdentity, resignRefusal } = await import('./mac-sign.mjs')
+const { findSigningIdentity, resignRefusal, signProbe } = await import('./mac-sign.mjs')
 const KEYCHAIN = '/Users/x/Library/Keychains/paneforge-signing.keychain-db'
 const LIST_OUT = `Policy: Code Signing
   Matching identities
@@ -140,19 +140,122 @@ const FILE_OUT = `Policy: Code Signing
   Valid identities only
      0 valid identities found
 `
-const security = (byFile) => (args) => {
-  if (args[0] === 'unlock-keychain') return ''
+const security = (byFile, unlocks = true) => (args) => {
+  if (args[0] === 'unlock-keychain') {
+    if (unlocks) return ''
+    throw new Error('security: SecKeychainUnlock: The user name or passphrase you entered is not correct.')
+  }
   if (args[0] !== 'find-identity') throw new Error(`unexpected security ${args.join(' ')}`)
   return args[3] ? byFile[args[3]] ?? '' : LIST_OUT
 }
 const off = findSigningIdentity({ run: security({ [KEYCHAIN]: FILE_OUT }), keychain: KEYCHAIN })
 ok('an identity in the signing keychain is found when the search list does not name that keychain', off?.name === 'PaneForge Self-Signed' && off?.keychain === KEYCHAIN, JSON.stringify(off))
+// 2026-10-10 12:03-12:11am Sat: from a chat's shell that keychain does not unlock with the
+// empty password (over ssh it does), and every codesign then started SecurityAgent for its
+// password - a dialog on Robert's screen (the 2026-10-01 popups) whenever it is not locked.
+// A keychain that did not unlock is never handed to codesign, not even for the probe.
+ok('a keychain that unlocks is not marked locked', off?.locked === false, JSON.stringify(off))
+const shut = findSigningIdentity({ run: security({ [KEYCHAIN]: FILE_OUT }, false), keychain: KEYCHAIN })
+ok('a keychain that will not unlock is marked locked', shut?.name === 'PaneForge Self-Signed' && shut?.locked === true, JSON.stringify(shut))
+const why = shut && signProbe(shut)
+ok('and the probe refuses it without running codesign (no password dialog)', /dialog/.test(why ?? ''), why)
 const onList = findSigningIdentity({ run: security({}), keychain: null })
 ok('no keychain file and none on the list = no identity (ad-hoc)', onList === null, JSON.stringify(onList))
 const CERT = 'identifier "com.robert.paneforge" and certificate root = H"49f54a6617076f14e216b0a5512477dd7d861b38"'
 ok('a certificate-signed app with no identity found is refused, naming the permissions', /forget every permission/.test(resignRefusal(CERT, null) ?? ''), resignRefusal(CERT, null))
 ok('with the identity found it may be re-signed', resignRefusal(CERT, off) === null)
 ok('an ad-hoc app may be re-signed ad-hoc: it has no permissions to lose', resignRefusal('cdhash H"6d664b576b52804d768a200d525ab377265bfe0a"', null) === null)
+
+// The installed-Mac-app path end to end, with codesign and security stubbed on PATH (the
+// real ones would sign with Robert's key or open a keychain dialog). The stub re-sign
+// breaks the old seal before it fails, as the real errSecInternalComponent did on
+// 2026-10-10, so a rollback that only puts the scripts back still fails `--verify`.
+if (process.platform === 'darwin') {
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const CERT_DR = 'identifier "com.robert.paneforge" and certificate root = H"49f54a6617076f14e216b0a5512477dd7d861b38"'
+  writeFileSync(join(bin, 'security'), `#!/bin/bash
+case "$1" in
+  unlock-keychain) [[ "$MODE" == locked ]] && { echo "security: The user name or passphrase you entered is not correct." >&2; exit 51; }; exit 0 ;;
+  find-identity) [[ "$MODE" == noidentity ]] || echo '  1) ABC "PaneForge Self-Signed" (CSSMERR_TP_NOT_TRUSTED)'; exit 0 ;;
+esac
+exit 1
+`)
+  writeFileSync(join(bin, 'codesign'), `#!/bin/bash
+for a in "$@"; do last="$a"; done
+seal="$last/Contents/_CodeSignature/CodeResources"; exe="$last/Contents/MacOS/Fake"
+if [[ "$1" == -d ]]; then
+  [[ -f "$seal" ]] || { echo "$last: code object is not signed at all" >&2; exit 1; }
+  if [[ "$MODE" == drchange && "$(cat "$seal")" == seal-new ]]; then echo 'designated => identifier "com.robert.paneforge" and certificate root = H"0000"'
+  else echo 'designated => ${CERT_DR.replace(/"/g, '\\"')}'; fi
+  exit 0
+fi
+if [[ "$1" == --verify ]]; then
+  [[ "$(cat "$seal" 2>/dev/null)" == seal-old && "$(cat "$exe")" == exe-old ]] && exit 0
+  [[ "$(cat "$seal" 2>/dev/null)" == seal-new && "$(cat "$exe")" == exe-new ]] && exit 0
+  echo "$last: a sealed resource is missing or invalid" >&2; exit 1
+fi
+[[ "$last" == */probe ]] && exit 0
+echo exe-broken > "$exe"; echo seal-broken > "$seal"
+[[ "$MODE" == signfail ]] && { echo "$last: errSecInternalComponent" >&2; exit 1; }
+echo exe-new > "$exe"; echo seal-new > "$seal"; exit 0
+`)
+  execFileSync('chmod', ['+x', join(bin, 'security'), join(bin, 'codesign')])
+  const keychainFile = join(root, 'signing.keychain-db')
+  writeFileSync(keychainFile, '')
+  const fake = join(root, 'Fake.app')
+  const fakeScripts = join(fake, 'Contents', 'Resources', 'scripts')
+  const makeApp = ({ plist = true } = {}) => {
+    rmSync(fake, { recursive: true, force: true })
+    mkdirSync(fakeScripts, { recursive: true })
+    mkdirSync(join(fake, 'Contents', 'MacOS'))
+    mkdirSync(join(fake, 'Contents', '_CodeSignature'))
+    writeFileSync(join(fake, 'Contents', 'Info.plist'), plist ? '<dict>\n\t<key>CFBundleExecutable</key>\n\t<string>Fake</string>\n</dict>\n' : '<dict></dict>\n')
+    writeFileSync(join(fake, 'Contents', 'MacOS', 'Fake'), 'exe-old\n')
+    writeFileSync(join(fake, 'Contents', '_CodeSignature', 'CodeResources'), 'seal-old\n')
+    for (const f of SHIPPED) writeFileSync(join(fakeScripts, f), `// ${f} installed before\n`)
+  }
+  const runMac = (mode) => {
+    try {
+      const out = execFileSync(process.execPath, [join(repo, 'scripts', 'install-engine.mjs'), '--scripts', fakeScripts], {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, MODE: mode, PF_KEYCHAIN: keychainFile }
+      })
+      return { code: 0, out }
+    } catch (e) {
+      return { code: e.status, out: `${e.stdout ?? ''}${e.stderr ?? ''}` }
+    }
+  }
+  const asBefore = () =>
+    SHIPPED.every((f) => readFileSync(join(fakeScripts, f), 'utf8').includes('installed before')) &&
+    readFileSync(join(fake, 'Contents', 'MacOS', 'Fake'), 'utf8').trim() === 'exe-old' &&
+    readFileSync(join(fake, 'Contents', '_CodeSignature', 'CodeResources'), 'utf8').trim() === 'seal-old' &&
+    !readdirSync(fakeScripts).some((n) => n.startsWith('.engine-backup-') || n.endsWith('.installing'))
+  copyFileSync(join(here, 'mac-sign.mjs'), join(repo, 'scripts', 'mac-sign.mjs'))
+
+  makeApp()
+  const failed1 = runMac('signfail')
+  ok('Mac: a re-sign that breaks the seal and fails exits 1 and says it was rolled back', failed1.code === 1 && /rolled back; its old signature verifies again/.test(failed1.out), failed1.out)
+  ok('and the scripts, the executable and CodeResources are the old ones, no backup or temp left', asBefore())
+  makeApp()
+  const moved = runMac('drchange')
+  ok('Mac: a re-sign that changes the designated requirement is rolled back', moved.code === 1 && /designated requirement changed/.test(moved.out) && asBefore(), moved.out)
+  makeApp()
+  const shut = runMac('locked')
+  ok('Mac: a signing keychain that will not unlock refuses before writing', shut.code === 2 && /does not unlock/.test(shut.out) && asBefore(), shut.out)
+  makeApp()
+  const none = runMac('noidentity')
+  ok('Mac: a certificate app with no identity found refuses before writing', none.code === 2 && /forget every permission/.test(none.out) && asBefore(), none.out)
+  makeApp({ plist: false })
+  const noExe = runMac('ok')
+  ok('Mac: no main executable in Info.plist refuses before writing', noExe.code === 2 && /main executable/.test(noExe.out), noExe.out)
+  makeApp()
+  const good = runMac('ok')
+  ok('Mac: a re-sign that works installs every file and reports the unchanged requirement', good.code === 0 && /Re-signed/.test(good.out) && SHIPPED.every((f) => !readFileSync(join(fakeScripts, f), 'utf8').includes('installed before')), good.out)
+} else {
+  console.log('      (the installed-Mac-app half needs a Mac - skipped)')
+}
 
 rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
 console.log(failed ? `\n${failed} failed` : '\nall passed')
