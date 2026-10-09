@@ -9,6 +9,7 @@
 //   - what was replaced is kept in a backup; a second run changes nothing
 //   - `--check` exits 1 naming the files that differ, 0 once they match
 //   - a shipped file missing on master installs nothing at all
+//   - with a remote, origin/master (fetched) is the source, not a lagging local master
 //
 //   node scripts/install-engine-test.mjs
 
@@ -93,6 +94,24 @@ git(repo, 'commit', '-qam', 'ships a file that does not exist')
 const half = run()
 ok('a shipped file missing on master refuses the install', half.code !== 0 && /gone\.mjs/.test(half.out), half.out)
 ok('and nothing was written', readFileSync(join(app, 'lane.mjs'), 'utf8').includes('on master') && !readFileSync(join(app, 'lane.mjs'), 'utf8').includes('newer') && !existsSync(join(app, 'gone.mjs')))
+
+// With a remote, what was pushed wins over a local master that has not caught up (the PC).
+const remote = join(root, 'remote.git')
+git(root, 'init', '-q', '--bare', '-b', 'master', remote)
+git(repo, 'checkout', '-q', '-f', 'HEAD~1')
+git(repo, 'branch', '-f', 'master', 'HEAD')
+git(repo, 'checkout', '-q', 'master')
+git(repo, 'remote', 'add', 'origin', remote)
+git(repo, 'push', '-q', 'origin', 'master')
+const pushed = join(root, 'pusher')
+git(root, 'clone', '-q', remote, pushed)
+git(pushed, 'config', 'user.email', 'test@example.com')
+git(pushed, 'config', 'user.name', 'test')
+writeFileSync(join(pushed, 'scripts', 'lane-hook.mjs'), '// lane-hook.mjs pushed from the other desk\n')
+git(pushed, 'commit', '-qam', 'pushed')
+git(pushed, 'push', '-q', 'origin', 'master')
+const fromOrigin = run()
+ok('with a remote it installs origin/master, fetched, not the lagging local master', fromOrigin.code === 0 && readFileSync(join(app, 'lane-hook.mjs'), 'utf8').includes('other desk') && /origin\/master/.test(fromOrigin.out), fromOrigin.out)
 
 rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
 console.log(failed ? `\n${failed} failed` : '\nall passed')

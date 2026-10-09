@@ -10,7 +10,7 @@
 // and two recovery chats were spent on work already on main (lane-strand-test section G).
 //
 // So this copies the WHOLE shipped set - package.json `build.extraResources` for scripts,
-// the same list a release packs - read from `master` (never the working tree: a lane's
+// the same list a release packs - read from `origin/master` (never the working tree: a lane's
 // half-done edit must not reach every chat on the machine), keeps a backup of what it
 // replaces, writes each file through a rename so a hook starting mid-copy reads a whole
 // file, reads every byte back, and on macOS re-signs the bundle (changed resources break
@@ -40,7 +40,18 @@ function installedScripts() {
   return null
 }
 
-const show = (path) => execFileSync('git', ['show', `master:${path}`], { cwd: repo, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+// What was pushed, not what this checkout's own `master` last saw: on the PC the repo's local
+// master lags origin until somebody there merges. No remote (tests, a fresh clone) = master.
+const gitOk = (...args) => {
+  try {
+    return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 }).trim()
+  } catch {
+    return null
+  }
+}
+if (gitOk('remote', 'get-url', 'origin')) gitOk('fetch', '-q', 'origin', 'master')
+const source = gitOk('rev-parse', '--verify', '-q', 'refs/remotes/origin/master') ? 'origin/master' : 'master'
+const show = (path) => execFileSync('git', ['show', `${source}:${path}`], { cwd: repo, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
 
 const target = arg('--scripts') ?? installedScripts()
 if (!target || !existsSync(target)) {
@@ -51,7 +62,7 @@ if (!target || !existsSync(target)) {
 const pkg = JSON.parse(show('package.json').toString('utf8'))
 const names = (pkg.build?.extraResources ?? []).find((r) => r.from === 'scripts')?.filter ?? []
 if (!names.length) {
-  console.error('master package.json ships no scripts (build.extraResources).')
+  console.error(`${source} package.json ships no scripts (build.extraResources).`)
   process.exit(2)
 }
 // Everything read before anything is written: a file missing on master stops the lot, so an
@@ -60,11 +71,11 @@ const files = names.map((name) => {
   try {
     return { name, bytes: show(`scripts/${name}`) }
   } catch {
-    console.error(`master has no scripts/${name}; nothing was installed.`)
+    console.error(`${source} has no scripts/${name}; nothing was installed.`)
     process.exit(2)
   }
 })
-const master = execFileSync('git', ['rev-parse', '--short', 'master'], { cwd: repo, encoding: 'utf8' }).trim()
+const master = `${source} ${gitOk('rev-parse', '--short', source)}`
 
 const differs = files.filter(({ name, bytes }) => {
   const p = join(target, name)
@@ -72,13 +83,13 @@ const differs = files.filter(({ name, bytes }) => {
 })
 
 if (argv.includes('--check')) {
-  if (!differs.length) console.log(`installed scripts match master ${master} (${files.length} files) in ${target}`)
-  else console.log(`installed scripts differ from master ${master}: ${differs.map((f) => f.name).join(', ')} (${target})`)
+  if (!differs.length) console.log(`installed scripts match ${master} (${files.length} files) in ${target}`)
+  else console.log(`installed scripts differ from ${master}: ${differs.map((f) => f.name).join(', ')} (${target})`)
   process.exit(differs.length ? 1 : 0)
 }
 
 if (!differs.length) {
-  console.log(`Already current: ${files.length} files match master ${master} in ${target}.`)
+  console.log(`Already current: ${files.length} files match ${master} in ${target}.`)
   process.exit(0)
 }
 
@@ -95,7 +106,7 @@ if (wrong.length) {
   console.error(`Read back wrong: ${wrong.map((f) => f.name).join(', ')}. The replaced files are in ${backup}.`)
   process.exit(1)
 }
-console.log(`Installed ${differs.length} of ${files.length} files from master ${master}: ${differs.map((f) => f.name).join(', ')}.`)
+console.log(`Installed ${differs.length} of ${files.length} files from ${master}: ${differs.map((f) => f.name).join(', ')}.`)
 console.log(`Backup of what was there: ${backup}`)
 
 // The scripts sit inside the signed bundle, so the seal no longer matches. Re-sign the
