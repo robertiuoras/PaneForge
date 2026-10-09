@@ -151,12 +151,16 @@ function writeRegistry(r) {
 // ------------------------------------------------------------------ engine
 
 function lane(repo, ...args) {
+  // `release` can end in a real release (merge, tag, two pushes), so it gets room.
+  const limit = args[0] === 'release' ? 180_000 : 25_000
   const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], { windowsHide: true,
     encoding: 'utf8',
-    // `release` can end in a real release (merge, tag, two pushes), so it gets room.
-    timeout: args[0] === 'release' ? 180_000 : 25_000
+    timeout: limit
   })
-  return { code: r.status ?? 1, out: (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim() }
+  // A killed engine has no exit code and no stderr; say that, not "could not assign".
+  const timedOut = r.error?.code === 'ETIMEDOUT' || (r.status === null && r.signal)
+  const err = (r.stderr ?? '').trim() || (timedOut ? `lane engine timed out after ${Math.round(limit / 1000)}s` : '')
+  return { code: r.status ?? 1, out: (r.stdout ?? '').trim(), err }
 }
 
 /** The main checkout for a folder, or null when it is not in a git repository at all. */

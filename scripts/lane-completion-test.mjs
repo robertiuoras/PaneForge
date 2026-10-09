@@ -460,6 +460,22 @@ const claimAs = (x, pane) => {
   const b = x.run('recover', '--key', k, '--session', 'rescuer', '--disposition', 'begin')
   check('begin succeeds after the swap', b.code === 0, b.out + b.err)
 }
+// 2026-10-09 (paneforge-next lane e): an older blocked item with another owner sat before the
+// dispatched one and shadowed it, so the pane was left on its fallback lane.
+const shadow = (s, k) => {
+  const items = s.recovery.items
+  s.recovery.items = { 'lane:a:old-blocked': { ...items[k], status: 'blocked', owner: 'dead-old', pane: null }, ...items }
+}
+{
+  const { x } = dispatchedFixture('swap-shadowed', shadow)
+  const c = claimAs(x, 'pane-X')
+  check('an older blocked item does not shadow the dispatched one', c.lane === 'a' && x.state().lanes.a?.session === 'rescuer' && !x.state().lanes.b, c.r.stdout + c.r.stderr)
+}
+{
+  const { x } = dispatchedFixture('swap-shadowed-other-pane', shadow)
+  const c = claimAs(x, 'pane-Y')
+  check('shadowed item still refuses another pane', c.lane !== 'a' && x.state().lanes.b?.session === 'rescuer', c.r.stdout + c.r.stderr)
+}
 {
   const { x, k } = dispatchedFixture('swap-other-pane')
   const c = claimAs(x, 'pane-Y')
@@ -582,7 +598,7 @@ for (const [status, folder] of [['blocked', 'gone'], ['pending', 'gone'], ['bloc
 
 // Defect E (2026-10-07, taskdriver-mobile): a chat whose SessionStart claim gave it `main`
 // (standing in the lane's folder) could never reach the lane it must adopt or begin on.
-const mainFixture = (name, { dispatched = false, ownerHoldsLane = false, dirty = false, diverge = false, conflict = false, squatted = false, operation = false } = {}) => {
+const mainFixture = (name, { shadowed = false, dispatched = false, ownerHoldsLane = false, dirty = false, diverge = false, conflict = false, squatted = false, operation = false } = {}) => {
   const x = fixture(name)
   writeFileSync(join(x.dir, 'intent.txt'), name); git(x.dir, 'add', 'intent.txt'); git(x.dir, 'commit', '-qm', 'unfinished intent')
   x.run('release', '--session', 'original', '--gone'); x.run('retry')
@@ -599,6 +615,7 @@ const mainFixture = (name, { dispatched = false, ownerHoldsLane = false, dirty =
     const it = st.recovery.items[k]
     if (dispatched) Object.assign(it, { status: 'dispatched', pane: 'pane-X' })
     else Object.assign(it, { owner: 'dead-owner', status: 'owned' })
+    if (shadowed) shadow(st, k)
     st.lanes.main = { session: 'successor', cwd: x.repo, seen: Date.now(), at: Date.now() }
     if (ownerHoldsLane) st.lanes.b = { session: 'dead-owner', cwd: join(x.repo, 'nowhere'), seen: Date.now(), at: Date.now() }
     if (conflict) st.conflicts.a = { detail: 'source.txt' }
@@ -617,6 +634,11 @@ for (const dispatched of [false, true]) {
   check(`main holder takes the lane (${dispatched ? 'dispatched to its pane' : 'adoptable'}) and leaves main untouched`, c.lane === 'a' && st.lanes.a?.session === 'successor' && !st.lanes.main && !st.ready.main && git(x.repo, 'rev-parse', 'HEAD') === mainHead, c.r.stdout + c.r.stderr + JSON.stringify(st.lanes) + JSON.stringify(st.ready))
   const next = x.run('recover', '--key', k, '--session', 'successor', '--disposition', dispatched ? 'begin' : 'adopt')
   check(`${dispatched ? 'begin' : 'adopt'} succeeds after leaving main`, next.code === 0, next.out + next.err)
+}
+{
+  const { x, claim } = mainFixture('main-swap-shadowed', { dispatched: true, shadowed: true })
+  const c = claim()
+  check('main holder takes the lane although an older blocked item shadows the dispatched one', c.lane === 'a' && x.state().lanes.a?.session === 'successor' && !x.state().lanes.main, c.r.stdout + c.r.stderr)
 }
 for (const [what, opts] of [['main has a hand edit', { dirty: true }], ['main has an unfinished cherry-pick', { operation: true }], ['the old owner still holds a lane', { ownerHoldsLane: true }], ['the lane does not contain the pinned commit', { diverge: true }], ['the dispatched lane HEAD changed', { dispatched: true, diverge: true }], ['the target lane is conflicted', { conflict: true }], ['another chat is standing in the target lane', { squatted: true }]]) {
   const { x, claim } = mainFixture(`main-stays-${what.replace(/\W+/g, '-')}`, opts)
