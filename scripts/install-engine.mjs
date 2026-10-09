@@ -20,9 +20,9 @@
 //   node scripts/install-engine.mjs --check    # exit 1 and name each file that differs
 //   node scripts/install-engine.mjs --scripts <dir>   # another install (tests, the PC path)
 
-import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -93,6 +93,46 @@ if (!differs.length) {
   process.exit(0)
 }
 
+// The scripts sit inside the signed bundle, so the seal will no longer match and the outer
+// bundle is re-signed (nothing nested changes) with the release identity. Whether that can
+// work is settled BEFORE anything is written: on 2026-10-09 (11:59pm Fri) no identity was
+// found, the install went ahead, re-signed the app ad-hoc and its macOS permissions went
+// with it; and codesign run from a chat's shell answers errSecInternalComponent for this
+// key (the same command over ssh signs), after it has already broken the old seal.
+const app = /^(.*\.app)\/Contents\/Resources\/scripts\/?$/.exec(target)?.[1]
+let sign = null
+if (process.platform === 'darwin' && app) {
+  const { designatedRequirement, findSigningIdentity, resignRefusal } = await import('./mac-sign.mjs')
+  const found = findSigningIdentity()
+  let designated = ''
+  try {
+    designated = designatedRequirement(app)
+  } catch {
+    /* not signed at all: nothing to keep, an ad-hoc signature is an improvement */
+  }
+  const refusal = resignRefusal(designated, found)
+  if (refusal) {
+    console.error(`Nothing was installed: ${refusal}`)
+    process.exit(2)
+  }
+  const args = found ? [...(found.keychain ? ['--keychain', found.keychain] : []), '--sign', found.name] : ['--sign', '-']
+  const scratch = mkdtempSync(join(tmpdir(), 'pf-install-engine-'))
+  if (found) {
+    copyFileSync('/usr/bin/true', join(scratch, 'probe'))
+    const probe = spawnSync('codesign', ['--force', ...args, '--timestamp=none', join(scratch, 'probe')], { encoding: 'utf8' })
+    if (probe.status !== 0) {
+      rmSync(scratch, { recursive: true, force: true })
+      console.error(`Nothing was installed: codesign cannot sign as "${found.name}" from this shell (${probe.stderr.trim()}). Run it from a Terminal or over ssh.`)
+      process.exit(2)
+    }
+  }
+  // What a re-sign rewrites, kept outside the bundle so a failed one can be undone whole.
+  const exe = readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8').match(/<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/)?.[1]
+  const sealed = [exe && join('Contents', 'MacOS', exe), join('Contents', '_CodeSignature', 'CodeResources')].filter((f) => f && existsSync(join(app, f)))
+  sealed.forEach((f, i) => copyFileSync(join(app, f), join(scratch, `sealed-${i}`)))
+  sign = { args, label: found?.name ?? '-', designated, designatedRequirement, scratch, sealed }
+}
+
 const backup = join(target, `.engine-backup-${new Date().toISOString().replace(/[:.]/g, '-')}`)
 mkdirSync(backup)
 for (const { name } of differs) if (existsSync(join(target, name))) copyFileSync(join(target, name), join(backup, name))
@@ -109,13 +149,33 @@ if (wrong.length) {
 console.log(`Installed ${differs.length} of ${files.length} files from ${master}: ${differs.map((f) => f.name).join(', ')}.`)
 console.log(`Backup of what was there: ${backup}`)
 
-// The scripts sit inside the signed bundle, so the seal no longer matches. Re-sign the
-// outer bundle only (nothing nested changed) with the release identity, then verify.
-const app = /^(.*\.app)\/Contents\/Resources\/scripts\/?$/.exec(target)?.[1]
-if (process.platform === 'darwin' && app) {
-  const { signingIdentity } = await import('./mac-sign.mjs')
-  const identity = signingIdentity() ?? '-'
-  execFileSync('codesign', ['--force', '--sign', identity, '--preserve-metadata=entitlements', '--timestamp=none', app], { stdio: 'inherit' })
-  execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' })
-  console.log(`Re-signed ${app} as "${identity}"; codesign --verify --deep --strict passes.`)
+if (sign) {
+  try {
+    execFileSync('codesign', ['--force', ...sign.args, '--preserve-metadata=entitlements', '--timestamp=none', app], { stdio: 'inherit' })
+    execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' })
+  } catch {
+    // Old scripts and the old signature back, byte for byte, so the old seal is whole again.
+    for (const { name } of differs) {
+      if (existsSync(join(backup, name))) copyFileSync(join(backup, name), join(target, name))
+      else rmSync(join(target, name), { force: true })
+    }
+    rmSync(backup, { recursive: true, force: true })
+    sign.sealed.forEach((f, i) => copyFileSync(join(sign.scratch, `sealed-${i}`), join(app, f)))
+    const whole = spawnSync('codesign', ['--verify', '--deep', '--strict', app]).status === 0
+    if (whole) rmSync(sign.scratch, { recursive: true, force: true })
+    console.error(
+      `Re-signing ${app} as "${sign.label}" failed, so the install was rolled back ` +
+        `(${whole ? 'its old signature verifies again' : `and it STILL DOES NOT VERIFY; its old signature files are in ${sign.scratch}`}).`
+    )
+    process.exit(1)
+  }
+  rmSync(sign.scratch, { recursive: true, force: true })
+  // The requirement is what macOS keys every permission on: the same certificate gives the
+  // same requirement, so a change here is a permission reset and has to be said.
+  const after = sign.designatedRequirement(app)
+  if (sign.designated && !/cdhash/.test(sign.designated) && after !== sign.designated) {
+    console.error(`Re-signed ${app} as "${sign.label}", but its designated requirement changed: ${sign.designated} -> ${after}. macOS will ask for its permissions again.`)
+    process.exit(1)
+  }
+  console.log(`Re-signed ${app} as "${sign.label}"; codesign --verify --deep --strict passes; designated requirement: ${after}`)
 }
