@@ -3325,6 +3325,13 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .ic-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .ic-dot.spin { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 .install-console pre { margin: 0; padding: 9px 11px; max-height: 220px; overflow: auto; font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: #c9c9d6; white-space: pre-wrap; user-select: text; }
+.ic-link { margin: 0 11px 10px; }
+.ic-code { display: flex; gap: 6px; padding: 0 11px 10px; }
+.ic-code input {
+  flex: 1; min-width: 0; padding: 5px 9px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text);
+  font: 12px/1.4 ui-monospace, Consolas, monospace; user-select: text;
+}
 
 .model-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
 .model-row { display: flex; align-items: center; gap: 8px; }
@@ -5268,32 +5275,63 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .screen-quality { flex: 1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .screen-control { margin-left: auto; }
 
-/* ---- First-run card (FirstRunCard.tsx) ---------------------------------------------
-   Welcome's own recipe, one level in: the `.setup-card` surface and hairline
-   (design-vault/linear.app.md, "Card (feature)"), no shadow, no gradient, tokens only so
-   both themes come from paletteFor. It lives in the sidebar, so every row wraps its words
-   instead of widening the rail. */
+/* ---- First-run welcome (FirstRunCard.tsx) ------------------------------------------
+   design-vault/linear.app.md, "Card (feature)": a hairline border on a surface one step
+   up from what it sits on, no shadow, no gradient, tokens only so both themes come from
+   paletteFor. Two homes: the middle of the empty window (`.fr-stage`), and the top of the
+   list on a narrow screen, where every row wraps its words instead of widening the rail. */
+.fr-stage { height: 100%; overflow-y: auto; display: grid; place-items: center; padding: 32px 16px; }
 .fr-card {
-  display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 2px;
-  padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r);
-  background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 14px; width: 100%; margin-top: 2px;
+  padding: 14px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2); color: var(--text); text-align: left;
 }
-.fr-h { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
-.fr-sub { margin: -3px 0 2px; font-size: 12px; line-height: 1.45; color: var(--muted); }
-.fr-row { display: flex; align-items: flex-start; gap: 9px; }
-.fr-row > .pill { flex: none; margin-top: 1px; }
-.fr-mark {
+.fr-stage .fr-card { max-width: 560px; margin: 0; padding: 24px 26px; gap: 18px; border-radius: var(--r-lg); background: var(--surface); }
+.fr-top { display: flex; align-items: center; gap: 10px; }
+.fr-logo { display: inline-flex; color: var(--accent); }
+.fr-h {
+  margin: 0; font-family: var(--font-heading); font-weight: 650;
+  font-size: 18px; line-height: 1.1; letter-spacing: -0.02em; color: var(--text);
+}
+.fr-stage .fr-h { font-size: 23px; }
+.fr-sub { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.fr-stage .fr-sub { font-size: 13.5px; }
+.fr-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.fr-step { display: flex; align-items: flex-start; gap: 11px; }
+.fr-num {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
-  border: 1px solid var(--line-strong); color: var(--ok);
+  width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-strong);
+  font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.fr-row.done .fr-mark { border-color: var(--ok); }
-.fr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.fr-name { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.35; }
+.fr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.fr-label { font-size: 13px; font-weight: 600; line-height: 22px; color: var(--text); }
+.fr-chips { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.fr-chip {
+  flex: 1 1 190px; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r);
+  background: none; color: var(--text); text-align: left; cursor: pointer;
+  transition: background var(--fast), border-color var(--fast);
+}
+.fr-chip:hover:not(:disabled) { background: var(--surface-2); border-color: var(--line-strong); }
+.fr-chip.on { border-color: var(--accent); background: var(--accent-dim); }
+.fr-chip:disabled { cursor: default; }
+.fr-chip:disabled:not(.on) { opacity: 0.6; }
+.fr-chip-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fr-chip-name { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.fr-chip-status { font-size: 11.5px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
+.fr-chip-status.ok { color: var(--ok); }
 .fr-what { font-weight: 400; color: var(--muted); }
-.fr-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
-.fr-go { align-self: flex-start; margin-top: 4px; }
-/* ---- end first-run card ------------------------------------------------------------- */
+.fr-line { display: flex; align-items: center; gap: 10px; width: 100%; }
+.fr-line > .pill { flex: none; }
+.fr-path {
+  flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text;
+}
+.fr-note { font-size: 12px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.fr-stage .fr-go { padding: 9px 16px; font-size: 13.5px; }
+.fr-go { align-self: flex-start; }
+/* ---- end first-run welcome --------------------------------------------------------- */
 
 /* Keep choices stay beside the sessions they protect. Native inputs retain keyboard
    and assistive-technology behavior; only their drawn box is customized. */

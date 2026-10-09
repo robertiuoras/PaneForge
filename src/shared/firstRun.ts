@@ -67,3 +67,59 @@ export const FIRST_FOLDER = 'my-first-project'
 export function firstChatFolder(root: string, rootExists: boolean): { cwd: string } | { create: string } {
   return rootExists ? { cwd: root } : { create: FIRST_FOLDER }
 }
+
+/** What the card's one big button does for the chosen assistant: the next thing it is missing. */
+export type FirstStep = 'install' | 'signin' | 'start'
+
+export function nextStep(state: AgentState): FirstStep {
+  if (!state.installed) return 'install'
+  return state.signedIn ? 'start' : 'signin'
+}
+
+/**
+ * The sign-in line the card's "Sign in" button runs in its log box. Each opens the web
+ * browser on the assistant's own sign-in page and returns once it is done: `claude auth
+ * login --claudeai` (a Claude subscription, the CLI's default) and `codex login` (a
+ * ChatGPT account). The binary is the absolute path `which` found, quoted for the shell
+ * `install.ts` runs it in - bash on Mac/Linux, PowerShell (`&` to call a path) on Windows.
+ */
+export function signInCommand(agent: FirstAgent, bin: string, platform: string): string {
+  const args = agent === 'claude' ? 'auth login --claudeai' : 'login'
+  // PowerShell closes a '...' string on the curly single quotes too, so each is doubled
+  // like the straight one - a profile folder named with one cannot end the quoting.
+  if (platform === 'win32') return `& '${bin.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}' ${args}`
+  return `'${bin.replace(/'/g, `'\\''`)}' ${args}`
+}
+
+/** The setup row a sign-in streams under, so the install console's events stay apart. */
+export function signInRow(agent: FirstAgent): 'signin' | 'codex-signin' {
+  return agent === 'claude' ? 'signin' : 'codex-signin'
+}
+
+/** The assistant a sign-in row belongs to - null for an install row. */
+export function signInAgent(rowId: string): FirstAgent | null {
+  return rowId === 'signin' ? 'claude' : rowId === 'codex-signin' ? 'codex' : null
+}
+
+/**
+ * The sign-in page's address, read off what the sign-in printed, for the "Open the sign-in
+ * page" button: both CLIs print it as the way in when the browser did not open by itself.
+ * Only an https link to the assistant's own sign-in host - never a localhost callback or
+ * some other address a stray line of output might hold.
+ */
+export function signInLink(output: string): string {
+  for (const m of output.matchAll(/https:\/\/[^\s"'<>]+/g)) {
+    try {
+      const host = new URL(m[0]).hostname
+      if (/(^|\.)(claude\.ai|anthropic\.com|openai\.com|chatgpt\.com)$/.test(host)) return m[0]
+    } catch {
+      /* not a whole address */
+    }
+  }
+  return ''
+}
+
+/** Claude's sign-in is waiting for the code the sign-in page shows to be typed back in. */
+export function wantsCode(output: string): boolean {
+  return /paste code here/i.test(output)
+}

@@ -80,7 +80,7 @@ import { tellLine, type TellOutcome } from '../shared/tell'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
-import { includedAccounts } from './includedAccounts'
+import { accountManagerInstalled, includedAccounts } from './includedAccounts'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitCached, gitInfo } from './git'
@@ -198,8 +198,9 @@ import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
 import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
 import { hookDenyNames } from './hookDeny'
-import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
-import { checkSetup } from './setupCheck'
+import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls, type RunHandle } from './install'
+import { checkSetup, gatherSetupFacts, signedInAccounts } from './setupCheck'
+import { signInCommand, signInRow } from '../shared/firstRun'
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
@@ -3283,12 +3284,13 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
  */
 ipcMain.handle('discord:status', () => presence.status())
 
-// What this machine has, so Settings can leave out the rows about what it has not. Both
-// are readings of something OUTSIDE the app - an env file, another program - so they are
+// What this machine has, so Settings can leave out the rows about what it has not. Each
+// is a reading of something OUTSIDE the app - an env file, another program - so they are
 // taken each time the dialog opens rather than held for the life of the process.
 ipcMain.handle('settings:facts', (): SettingsFacts => ({
   telegram: !!telegramCreds(),
-  discord: discordInstalled()
+  discord: discordInstalled(),
+  accountManager: accountManagerInstalled()
 }))
 // What is waiting on GitHub, asked only when the dialog that shows it is opened. The
 // folders come from the renderer because the desk it draws includes mirrored panes,
@@ -4513,6 +4515,55 @@ ipcMain.handle('setup:installGit', async () => {
   } finally {
     installing.delete(id)
   }
+})
+
+/** Which account Claude and Codex are signed in with - the first-run card's "Signed in as". */
+ipcMain.handle('setup:accounts', () => signedInAccounts())
+
+/**
+ * The first-run card's "Sign in" for Claude or Codex: the CLI's own sign-in, which opens
+ * the web browser on its sign-in page, run in the same log box as an install. Done when
+ * the CLI exits, and "ok" only when its sign-in file now says so - an exit code alone
+ * cannot tell a finished sign-in from a closed browser tab.
+ *
+ * A second press starts over rather than being refused like a second install: the first
+ * one may be waiting forever on a browser tab that was closed. `stopInstalls` still
+ * reaches every run here on quit, because `runCommand` registers it.
+ */
+const signIns = new Map<string, RunHandle>()
+ipcMain.handle('setup:signIn', (_e, agent: unknown) => {
+  if (agent !== 'claude' && agent !== 'codex') return
+  const id = signInRow(agent)
+  const name = agent === 'claude' ? 'Claude' : 'Codex'
+  const bin = which(agent)
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
+  if (bin === agent) {
+    send('agents:install-event', { agentId: id, chunk: `${name} is not installed yet.\r\n`, done: true, ok: false })
+    return
+  }
+  signIns.get(id)?.cancel()
+  say(`Your web browser opens on the ${name} sign-in page. Sign in there, then come back here.\r\n\r\n`)
+  // `let`, assigned after: a shell that cannot start calls this back before
+  // `runCommand` has returned, and a `const` read there throws instead of reporting.
+  let handle: RunHandle | undefined
+  handle = runCommand(signInCommand(agent, bin, process.platform), say, () => {
+    if (signIns.get(id) === handle) signIns.delete(id)
+    const facts = gatherSetupFacts()
+    const ok = agent === 'claude' ? facts.signedIn : facts.codexSignedIn
+    send('agents:install-event', {
+      agentId: id,
+      chunk: ok ? `\r\nSigned in to ${name}.\r\n` : `\r\nNot signed in yet. Press the button again to try again.\r\n`,
+      done: true,
+      ok
+    })
+  })
+  signIns.set(id, handle)
+})
+
+/** The code a sign-in page shows, typed into the sign-in that is waiting for it. One line. */
+ipcMain.handle('setup:signInType', (_e, agent: unknown, text: unknown) => {
+  if ((agent !== 'claude' && agent !== 'codex') || typeof text !== 'string') return
+  signIns.get(signInRow(agent))?.write(text.replace(/[\r\n]/g, '').slice(0, 4096) + '\r')
 })
 
 ipcMain.handle('agents:install', async (_e, id: string) => {

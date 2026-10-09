@@ -12,15 +12,26 @@ import { setupRows, type SetupFacts, type SetupRow } from '../shared/setupCheck'
 // `JSON.parse` + a property read is not reliable - a regex over the raw text is.
 const OAUTH_RE = /"oauthAccount"\s*:\s*\{/
 
+function readText(path: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * `.claude.json`'s text, from where the CLI itself keeps it: `CLAUDE_CONFIG_DIR` when that
+ * is set - and then ONLY there, because a home-folder file the CLI is not reading is not
+ * the account it will use - the home folder otherwise.
+ */
+function claudeJson(): string {
+  return readText(join(process.env.CLAUDE_CONFIG_DIR?.trim() || homedir(), '.claude.json'))
+}
+
 function isSignedIn(): boolean {
   if (process.env.ANTHROPIC_API_KEY) return true
-  const home = process.env.HOME ?? process.env.USERPROFILE
-  if (!home) return false
-  try {
-    return OAUTH_RE.test(readFileSync(join(home, '.claude.json'), 'utf8'))
-  } catch {
-    return false
-  }
+  return OAUTH_RE.test(claudeJson())
 }
 
 // Codex writes `auth.json` under `$CODEX_HOME` (default `~/.codex`) on sign-in and
@@ -38,6 +49,35 @@ function isCodexSignedIn(): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Which account each assistant is signed in with, so the first-run card can say "Signed in
+ * as you@example.com" instead of a bare "Ready". Read off the CLIs' own files on this
+ * machine and only ever drawn on this screen - nothing here is sent anywhere.
+ *
+ * Claude: `oauthAccount.emailAddress` in `.claude.json` (`claudeJson`). The slice stops at
+ * the object's first `}`; `emailAddress` is its second key, ahead of the one nested object
+ * (`ccOnboardingFlags`). Codex: the `email` claim inside the ChatGPT sign-in's `id_token`,
+ * a JWT decoded locally. An API-key sign-in has no email: ''.
+ */
+export function signedInAccounts(): { claude: string; codex: string } {
+  const claudeText = claudeJson()
+  const at = claudeText.search(OAUTH_RE)
+  const oauth = at < 0 ? '' : claudeText.slice(at, claudeText.indexOf('}', at) + 1 || undefined)
+  const claude = /"emailAddress"\s*:\s*"([^"]+)"/.exec(oauth)?.[1] ?? ''
+
+  let codex = ''
+  try {
+    const dir = process.env.CODEX_HOME || join(homedir(), '.codex')
+    const auth = JSON.parse(readText(join(dir, 'auth.json')) || '{}') as { tokens?: { id_token?: unknown } }
+    const jwt = typeof auth.tokens?.id_token === 'string' ? auth.tokens.id_token : ''
+    const claims = JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64url').toString('utf8') || '{}') as { email?: unknown }
+    if (typeof claims.email === 'string') codex = claims.email
+  } catch {
+    /* unreadable or not a ChatGPT sign-in - the card says "Ready" without a name */
+  }
+  return { claude, codex }
 }
 
 export function gatherSetupFacts(): SetupFacts {

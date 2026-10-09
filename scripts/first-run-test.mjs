@@ -1,8 +1,9 @@
-// The Welcome screen's first-run card, over the rows the real checklist produces. Pins
-// who sees the card (a fresh profile, never somebody with past sessions), which assistant
-// "Start your first chat" opens, which one is badged recommended, where the first chat
-// opens, that the Codex sign-in probe reads Codex's real auth.json shapes, and - by
-// rendering the real component for each machine state - what a person actually reads.
+// The first-run welcome, over the rows the real checklist produces. Pins who sees it (a
+// fresh profile, never somebody with past sessions), which assistant is picked to begin
+// with, what its one button does next (install, sign in, start), the sign-in line each CLI
+// is run with, where the first chat opens, that the sign-in probes read the CLIs' real file
+// shapes (and the account each is signed in with), and - by rendering the real component
+// for each machine state - what a person actually reads.
 //
 //   node scripts/first-run-test.mjs
 
@@ -25,12 +26,22 @@ const bundle = (entry, name) => {
   buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, format: 'cjs', platform: 'node', outfile: out })
   return createRequire(import.meta.url)(out)
 }
-const { showFirstRun, agentStates, chatAgent, recommendedInstall, firstChatFolder, FIRST_FOLDER } = bundle(
-  'src/shared/firstRun.ts',
-  'firstRun.bundle.cjs'
-)
+const {
+  showFirstRun,
+  agentStates,
+  chatAgent,
+  recommendedInstall,
+  firstChatFolder,
+  FIRST_FOLDER,
+  nextStep,
+  signInCommand,
+  signInRow,
+  signInAgent,
+  signInLink,
+  wantsCode
+} = bundle('src/shared/firstRun.ts', 'firstRun.bundle.cjs')
 const { setupRows } = bundle('src/shared/setupCheck.ts', 'setupCheck.bundle.cjs')
-const { gatherSetupFacts } = bundle('src/main/setupCheck.ts', 'mainSetupCheck.bundle.cjs')
+const { gatherSetupFacts, signedInAccounts } = bundle('src/main/setupCheck.ts', 'mainSetupCheck.bundle.cjs')
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -110,6 +121,41 @@ is(firstChatFolder('/Users/sam/Projects', true), { cwd: '/Users/sam/Projects' },
 is(firstChatFolder('/Users/sam/Projects', false), { create: FIRST_FOLDER }, 'no projects folder yet -> a new one inside it')
 is(FIRST_FOLDER.includes(' '), false, 'the made folder has no space in its name (tools choke on them)')
 
+// --- the one button: the next thing the picked assistant is missing --------------------
+is(nextStep({ id: 'claude', installed: false, signedIn: false }), 'install', 'not installed -> install')
+is(nextStep({ id: 'claude', installed: false, signedIn: true }), 'install', 'a key but no program -> still install')
+is(nextStep({ id: 'codex', installed: true, signedIn: false }), 'signin', 'installed, signed out -> sign in')
+is(nextStep({ id: 'codex', installed: true, signedIn: true }), 'start', 'ready -> start')
+
+// --- the sign-in each CLI is run with ------------------------------------------------------
+// Flags read off the installed CLIs' --help on 2026-10-07: `claude auth login --claudeai`
+// (Claude subscription, the default) and `codex login` (ChatGPT, browser + localhost callback).
+is(signInCommand('claude', '/Users/sam/.local/bin/claude', 'darwin'), "'/Users/sam/.local/bin/claude' auth login --claudeai", 'mac claude')
+is(signInCommand('codex', '/opt/homebrew/bin/codex', 'darwin'), "'/opt/homebrew/bin/codex' login", 'mac codex')
+is(signInCommand('claude', "/Users/o'neil/bin/claude", 'linux'), "'/Users/o'\\''neil/bin/claude' auth login --claudeai", 'a quote in the path stays quoted (bash)')
+is(
+  signInCommand('codex', "C:\\Users\\o'neil\\AppData\\Roaming\\npm\\codex.cmd", 'win32'),
+  "& 'C:\\Users\\o''neil\\AppData\\Roaming\\npm\\codex.cmd' login",
+  'windows: PowerShell call operator, quote doubled'
+)
+is(
+  signInCommand('claude', 'C:\\Users\\Sam\u2019s PC\\.local\\bin\\claude.exe', 'win32'),
+  "& 'C:\\Users\\Sam\u2019\u2019s PC\\.local\\bin\\claude.exe' auth login --claudeai",
+  'windows: a curly quote (PowerShell reads it as a quote) is doubled too'
+)
+is([signInRow('claude'), signInRow('codex')], ['signin', 'codex-signin'], 'a sign-in streams under its own setup row')
+is([signInAgent('signin'), signInAgent('codex-signin'), signInAgent('claude'), signInAgent('git')], ['claude', 'codex', null, null], 'and the row maps back')
+is(
+  signInLink('Opening browser...\nIf the browser did not open, visit: https://claude.ai/oauth/authorize?code=true&client_id=abc\n'),
+  'https://claude.ai/oauth/authorize?code=true&client_id=abc',
+  'the sign-in page address is read off the output'
+)
+is(signInLink('Starting local login server on http://localhost:1455.\n'), '', 'a localhost callback is never offered')
+is(signInLink('see https://evil.example.com/claude.ai'), '', 'nor any host that is not the assistant\'s own')
+is(signInLink('https://auth.openai.com/oauth/authorize?x=1'), 'https://auth.openai.com/oauth/authorize?x=1', 'codex sign-in host')
+is(wantsCode('Paste code here if prompted > '), true, 'claude waiting for the copied code')
+is(wantsCode('Opening browser to sign in...'), false, 'not before it asks')
+
 // --- the Codex sign-in probe, over auth.json shapes Codex 0.155 writes -----------------
 // Keys copied from a real ~/.codex/auth.json on 2026-09-24 (values replaced).
 const probe = (content) => {
@@ -135,6 +181,49 @@ is(probe(JSON.stringify(chatgpt, null, 2)), true, 'chatgpt sign-in (pretty-print
 is(probe(JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-test', tokens: null })), true, 'api-key sign-in -> signed in')
 is(probe(JSON.stringify({ OPENAI_API_KEY: null, tokens: null })), false, 'file present, both empty -> not signed in')
 is(probe(undefined), false, 'no auth.json (after codex logout) -> not signed in')
+
+// --- the account each assistant is signed in with -----------------------------------------
+// `.claude.json` from CLAUDE_CONFIG_DIR, keys in the order the CLI writes them (2026-10-07,
+// values replaced) - including the nested object the slice must not stop short of.
+const accounts = (claudeText, codexAuth) => {
+  const dir = join(work, 'accounts-' + checks)
+  mkdirSync(join(dir, 'codex'), { recursive: true })
+  if (claudeText !== undefined) writeFileSync(join(dir, '.claude.json'), claudeText)
+  if (codexAuth !== undefined) writeFileSync(join(dir, 'codex', 'auth.json'), codexAuth)
+  const before = { c: process.env.CLAUDE_CONFIG_DIR, x: process.env.CODEX_HOME }
+  process.env.CLAUDE_CONFIG_DIR = dir
+  process.env.CODEX_HOME = join(dir, 'codex')
+  try {
+    return signedInAccounts()
+  } finally {
+    for (const [k, v] of [['CLAUDE_CONFIG_DIR', before.c], ['CODEX_HOME', before.x]]) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  }
+}
+const claudeFile = JSON.stringify(
+  {
+    numStartups: 3,
+    oauthAccount: {
+      accountUuid: 'u',
+      emailAddress: 'sam@example.com',
+      organizationUuid: 'o',
+      ccOnboardingFlags: { a: true },
+      organizationName: 'Sam'
+    },
+    projects: { '/x': { emailAddress: 'not-this@example.com' } }
+  },
+  null,
+  2
+)
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+const jwt = (claims) => `${b64({ alg: 'RS256' })}.${b64(claims)}.sig`
+const codexFile = JSON.stringify({ ...chatgpt, tokens: { ...chatgpt.tokens, id_token: jwt({ email: 'sam@chatgpt.test', 'https://api.openai.com/auth': { chatgpt_plan_type: 'plus' } }) } })
+is(accounts(claudeFile, codexFile), { claude: 'sam@example.com', codex: 'sam@chatgpt.test' }, 'both signed in: both emails')
+is(accounts(undefined, undefined), { claude: '', codex: '' }, 'neither file: no names (never the home folder\'s file)')
+is(accounts('{"numStartups":1}', JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-test', tokens: null })), { claude: '', codex: '' }, 'signed out claude, api-key codex: no names')
+is(accounts(claudeFile, '{not json'), { claude: 'sam@example.com', codex: '' }, 'a broken codex file costs only its own name')
 
 // --- an install is seen the moment it finishes ------------------------------------------
 // `which` keeps a "not found" for 60s, and the card looks for Claude as soon as it shows -
@@ -205,6 +294,8 @@ const view = (over, props = {}) =>
   renderToStaticMarkup(
     React.createElement(FirstRunView, {
       rows: setupRows(facts(over)),
+      accounts: { claude: '', codex: '' },
+      pick: null,
       root: '/Users/sam/Projects',
       rootExists: true,
       preferred: 'claude',
@@ -212,8 +303,9 @@ const view = (over, props = {}) =>
       attempt: 0,
       busy: false,
       error: '',
-      onInstall: noop,
-      onInstalled: noop,
+      onPick: noop,
+      onRun: noop,
+      onFinished: noop,
       onChange: noop,
       onStart: noop,
       ...props
@@ -221,43 +313,65 @@ const view = (over, props = {}) =>
   )
 const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const count = (html, needle) => html.split(needle).length - 1
-const startButton = (html) => html.match(/<button class="primary fr-go"[^>]*>/)[0]
+const goButton = (html) => html.match(/<button class="primary fr-go"[^>]*>([^<]*)</)
+const goLabel = (html) => goButton(html)[1]
+const picked = (html) => text(html.match(/<button class="fr-chip on"[\s\S]*?<\/button>/)[0]).trim()
 
 const clean = view({})
-is(count(clean, '>Install<'), 2, 'clean mac: an Install button for each assistant')
-is(text(clean).includes('Claude , the coding assistant from Anthropic'), true, 'claude is named for what it is')
-is(text(clean).includes('Codex , the coding assistant from OpenAI'), true, 'codex is named for what it is')
-is(text(clean).includes('Uses your Claude account - recommended'), true, 'claude carries the recommendation')
-is(text(clean).includes('Uses your ChatGPT account - recommended'), false, 'codex does not')
-is(startButton(clean).includes('disabled'), true, 'nothing installed: Start is disabled')
-is(text(clean).includes('Install one of the assistants above first.'), true, 'and says what to do instead')
-is(clean.includes('Git for Windows'), false, 'no Windows row on a Mac')
+is(text(clean).includes('Welcome to PaneForge'), true, 'says where you are')
+is(count(clean, 'class="fr-num"'), 3, 'three numbered steps')
+is(count(clean, '<button class="primary'), 1, 'one main button')
+is(goLabel(clean), 'Install Claude', 'clean mac: the one button installs Claude')
+is(picked(clean).startsWith('Claude by Anthropic'), true, 'and Claude is the one picked')
+is(text(clean).includes('Not installed yet'), true, 'each chip says it is not installed')
+is(text(clean).includes('Downloads Claude from Anthropic'), true, 'the button says what it will do')
+is(clean.includes('Git for Windows'), false, 'no Windows line on a Mac')
+is(/<select|<details/.test(clean), false, 'no dropdowns: chips and status lines')
+
+const codexPicked = view({}, { pick: 'codex' })
+is(goLabel(codexPicked), 'Install Codex', 'picking Codex makes the button about Codex')
+is(text(codexPicked).includes('Downloads Codex from OpenAI'), true, 'and its note too')
 
 const win = view({ platform: 'win32', gitInstalled: false })
-is(win.indexOf('Git for Windows') < win.indexOf('coding assistant from Anthropic'), true, 'windows: Git row comes first')
-is(count(win, '>Install<'), 3, 'windows clean: Git, Claude, Codex installs')
+is(text(win).includes('Claude needs Git for Windows'), true, 'windows: says Claude needs Git')
+is(count(win, '>Install Git<'), 1, 'with its own button')
+is(view({ platform: 'win32', gitInstalled: false }, { pick: 'codex' }).includes('Git for Windows'), false, 'not shown for Codex')
 
 const signIn = view({ claudeInstalled: true }, { rootExists: false })
-is(count(signIn, '>Install<'), 1, 'claude installed: only codex still offers Install')
-is(text(signIn).includes('Installed - signs in when its first chat opens'), true, 'installed-not-signed-in says how sign-in happens')
-is(startButton(signIn).includes('disabled'), false, 'claude installed: Start is live')
-is(
-  text(signIn).includes('Opens Claude in a new folder, my-first-project. Claude asks you to sign in first, in your web browser.'),
-  true,
-  'no projects folder yet: says a new folder is made, and that sign-in comes first'
-)
-is(text(signIn).includes('/Users/sam/Projects - made for you when you start'), true, 'missing folder is named with what will happen')
+is(goLabel(signIn), 'Sign in to Claude', 'installed, signed out: the button signs in')
+is(text(signIn).includes('Not signed in yet'), true, 'and the chip says so')
+is(text(signIn).includes('sign in with your Claude account'), true, 'names the account it wants')
+is(text(signIn).includes('Made for you when you start.'), true, 'missing folder says it will be made')
+const codexSignIn = view({ codexInstalled: true }, { pick: 'codex' })
+is(text(codexSignIn).includes('sign in with your ChatGPT account'), true, 'codex wants a ChatGPT account')
 
-const ready = view({ claudeInstalled: true, signedIn: true, codexInstalled: true, codexSignedIn: true })
-is(count(ready, 'fr-row done'), 3, 'everything ready: three ticks (Claude, Codex, folder)')
-is(count(ready, '>Install<'), 0, 'everything ready: nothing to install')
-is(text(ready).includes('Opens Claude in Projects.'), true, 'ready: opens the saved default in the projects folder')
-is(text(ready).includes('sign in'), false, 'ready: no sign-in talk')
+const signingIn = view({ claudeInstalled: true }, { log: 'signin', attempt: 1 })
+is(signingIn.includes('install-console'), true, 'a sign-in shows its console')
+is(text(signingIn).includes('Signing in... finish in your web browser'), true, 'labelled as a sign-in, not an install')
+is(goLabel(signingIn), 'Start the sign-in again', 'a stuck sign-in can be started over')
+is(goButton(signingIn)[0].includes('disabled'), false, 'so that button stays live')
+
+const ready = view(
+  { claudeInstalled: true, signedIn: true, codexInstalled: true, codexSignedIn: true },
+  { accounts: { claude: 'sam@example.com', codex: '' } }
+)
+is(goLabel(ready), 'Start chatting with Claude', 'everything ready: the button starts the chat')
+is(text(ready).includes('Signed in as sam@example.com'), true, 'claude shows the account it found')
+is(count(ready, 'fr-chip-status ok'), 2, 'both chips read as ready')
+is(text(ready).includes(' Ready '), true, 'an account with no name reads Ready')
+is(text(ready).includes('Opens Claude in Projects.'), true, 'opens in the projects folder')
+is(text(ready).includes('press Enter to say yes'), true, 'says how to answer Claude\'s first question')
+is(text(ready).includes('/Users/sam/Projects'), true, 'shows the projects folder')
+const readyCodex = view({ claudeInstalled: true, signedIn: true, codexInstalled: true, codexSignedIn: true }, { preferred: 'codex' })
+is(goLabel(readyCodex), 'Start chatting with Codex', 'both ready: the saved default is picked')
+is(text(readyCodex).includes('press Enter'), false, 'codex folders are already trusted: no question to warn about')
+is(goLabel(view({ codexInstalled: true, codexSignedIn: true }, { preferred: 'claude' })), 'Start chatting with Codex', 'only codex ready: codex is picked')
 
 const installing = view({}, { log: 'claude', attempt: 1, busy: true })
 is(installing.includes('install-console'), true, 'an install shows the live console')
-is(count(installing, 'disabled=""') >= 3, true, 'while installing, the other buttons wait')
-is(text(installing).includes('Opening...'), false, 'an install is not labelled as opening a chat')
+is(text(installing).includes('Installing...'), true, 'labelled as an install')
+is(goLabel(installing), 'Installing Claude...', 'the button says it is working')
+is(count(installing, 'disabled=""') >= 4, true, 'while installing, every button waits')
 
 // New session's "no projects yet" state is `.empty.first-run`; a bare `.first-run` rule
 // here once dressed it up as this card. The card owns its own class.
@@ -266,7 +380,7 @@ is(/(^|[^.\w-])\.first-run\s*\{/m.test(readFileSync(join(root, 'src/renderer/src
 
 // The words on screen never name the machinery (AGENTS.md "Every word on screen").
 const JARGON = /\b(lanes?|worktrees?|checkouts?|CLI|PATH|terminal|repo|trunk|slot)\b/
-for (const [name, html] of Object.entries({ clean, win, signIn, ready, installing })) {
+for (const [name, html] of Object.entries({ clean, codexPicked, win, signIn, codexSignIn, signingIn, ready, readyCodex, installing })) {
   const hit = text(html).match(JARGON)
   is(hit?.[0] ?? null, null, `no jargon on screen (${name})`)
 }

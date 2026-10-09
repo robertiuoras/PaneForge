@@ -16,6 +16,8 @@ import { spawnQuiet } from './spawnQuiet'
 export interface RunHandle {
   /** kill the running install */
   cancel: () => void
+  /** type into it - a sign-in that asks for the code its web page shows */
+  write: (text: string) => void
 }
 
 /**
@@ -64,7 +66,7 @@ export function runCommand(
   } catch (e) {
     onData(`\r\nCould not start a shell: ${String(e)}\r\n`)
     onDone(1)
-    return { cancel: () => undefined }
+    return { cancel: () => undefined, write: () => undefined }
   }
 
   running.add(proc)
@@ -77,14 +79,15 @@ export function runCommand(
   })
 
   return {
+    write: (text) => {
+      if (!finished) proc.write(text)
+    },
+    // The whole tree, as on quit: a sign-in started over must not leave the first one
+    // (two processes below the shell on Windows) holding its sign-in callback port.
     cancel: () => {
       finished = true
       running.delete(proc)
-      try {
-        proc.kill()
-      } catch {
-        /* already gone */
-      }
+      killTree([proc])
     }
   }
 }
@@ -108,7 +111,10 @@ export function runOnce(command: string, onData: (chunk: string) => void): Promi
 export function stopInstalls(): void {
   const live = [...running]
   running.clear()
-  if (!live.length) return
+  if (live.length) killTree(live)
+}
+
+function killTree(live: pty.IPty[]): void {
   if (process.platform === 'win32') {
     const args = live
       .map((p) => p.pid)

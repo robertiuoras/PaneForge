@@ -5,8 +5,15 @@ import { projectsRoot } from './config'
 import { which } from './which'
 import type { IncludedAccounts } from '../shared/types'
 
+const manager = (): string => join(projectsRoot(), 'claude-memory', 'claude-config', 'ai-accounts.mjs')
+
+/** Saved-login switching needs its account manager on this computer; without it Settings leaves the section out. */
+export function accountManagerInstalled(): boolean {
+  return existsSync(manager())
+}
+
 function run(args: string[]): Promise<string> {
-  const script = join(projectsRoot(), 'claude-memory', 'claude-config', 'ai-accounts.mjs')
+  const script = manager()
   if (!existsSync(script)) return Promise.reject(new Error('The included-account manager is not installed on this computer.'))
   return new Promise((resolve, reject) => {
     execFile(which('node'), [script, ...args], { windowsHide: true, timeout: 30_000, maxBuffer: 128 * 1024 }, (error, stdout) => {
