@@ -113,6 +113,47 @@ git(pushed, 'push', '-q', 'origin', 'master')
 const fromOrigin = run()
 ok('with a remote it installs origin/master, fetched, not the lagging local master', fromOrigin.code === 0 && readFileSync(join(app, 'lane-hook.mjs'), 'utf8').includes('other desk') && /origin\/master/.test(fromOrigin.out), fromOrigin.out)
 
+// Re-signing the installed Mac app (mac-sign.mjs, pure parts: they run on any machine).
+// 2026-10-09 11:59pm Fri: the Mac's keychain search list no longer named
+// paneforge-signing.keychain-db, `find-identity` over the list found no identity, and the
+// install re-signed PaneForge Classic ad-hoc - requirement cdhash, every permission lost.
+// The two outputs below are that Mac's real ones (hashes masked).
+const { findSigningIdentity, resignRefusal } = await import('./mac-sign.mjs')
+const KEYCHAIN = '/Users/x/Library/Keychains/paneforge-signing.keychain-db'
+const LIST_OUT = `Policy: Code Signing
+  Matching identities
+  1) <HASH> "Jarvis Self Signed"
+  2) <HASH> "Apple Development: robertiuoras@gmail.com (834ZJ9P3NT)"
+  3) <HASH> "hexpolish-signing" (CSSMERR_TP_NOT_TRUSTED)
+     3 identities found
+
+  Valid identities only
+  1) <HASH> "Jarvis Self Signed"
+  2) <HASH> "Apple Development: robertiuoras@gmail.com (834ZJ9P3NT)"
+     2 valid identities found
+`
+const FILE_OUT = `Policy: Code Signing
+  Matching identities
+  1) <HASH> "PaneForge Self-Signed" (CSSMERR_TP_NOT_TRUSTED)
+     1 identities found
+
+  Valid identities only
+     0 valid identities found
+`
+const security = (byFile) => (args) => {
+  if (args[0] === 'unlock-keychain') return ''
+  if (args[0] !== 'find-identity') throw new Error(`unexpected security ${args.join(' ')}`)
+  return args[3] ? byFile[args[3]] ?? '' : LIST_OUT
+}
+const off = findSigningIdentity({ run: security({ [KEYCHAIN]: FILE_OUT }), keychain: KEYCHAIN })
+ok('an identity in the signing keychain is found when the search list does not name that keychain', off?.name === 'PaneForge Self-Signed' && off?.keychain === KEYCHAIN, JSON.stringify(off))
+const onList = findSigningIdentity({ run: security({}), keychain: null })
+ok('no keychain file and none on the list = no identity (ad-hoc)', onList === null, JSON.stringify(onList))
+const CERT = 'identifier "com.robert.paneforge" and certificate root = H"49f54a6617076f14e216b0a5512477dd7d861b38"'
+ok('a certificate-signed app with no identity found is refused, naming the permissions', /forget every permission/.test(resignRefusal(CERT, null) ?? ''), resignRefusal(CERT, null))
+ok('with the identity found it may be re-signed', resignRefusal(CERT, off) === null)
+ok('an ad-hoc app may be re-signed ad-hoc: it has no permissions to lose', resignRefusal('cdhash H"6d664b576b52804d768a200d525ab377265bfe0a"', null) === null)
+
 rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

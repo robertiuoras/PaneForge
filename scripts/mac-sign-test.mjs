@@ -152,11 +152,12 @@ try {
     /cdhash/.test(mod.designatedRequirement(app))
   )
 
-  const identity = mod.signingIdentity()
+  const found = mod.findSigningIdentity()
+  const identity = found?.name
   if (!identity) {
     console.log('  (no signing identity on this machine - run `node scripts/mac-cert.mjs create`)')
   } else {
-    mod.signBundle(app, identity)
+    mod.signBundle(app, identity, found.keychain)
     const dr = mod.designatedRequirement(app)
     ok('a certificate-signed bundle has no cdhash in its requirement', !/cdhash/.test(dr), dr)
     ok('and is identified by the certificate root instead', /certificate root = H"/.test(dr), dr)
@@ -170,7 +171,7 @@ try {
     // that version of this test failed on the signature rather than on the assertion. A
     // new binary is what a new release actually is, anyway.
     copyFileSync('/bin/ls', join(macos, 'PaneForge'))
-    mod.signBundle(app, identity)
+    mod.signBundle(app, identity, found.keychain)
     ok(
       'and the requirement is unchanged after the app changes',
       mod.designatedRequirement(app) === dr,
