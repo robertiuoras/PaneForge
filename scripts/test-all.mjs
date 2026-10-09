@@ -240,6 +240,9 @@ const TESTS = [
   // A lane claimed by hand from another repo's chat is given back at /clear and carried by
   // the pane's next chat (2026-10-09).
   ['laneclaimend', 'lane-claim-end-test.mjs'],
+  // A lane whose only commits past trunk are merges adding nothing gets no recovery chat; a
+  // ready refused by a preserved item names it and the command that records it (2026-10-09).
+  ['lanemergeonly', 'lane-merge-only-test.mjs'],
   // A kept (cleared) hold is owned by its open pane, so the 15-minute sweep leaves it (2026-10-04).
   ['laneowner', 'lane-owner-test.mjs'],
   // A chat inside a lane copy of claude-memory holds it; a claim never undoes an open merge (2026-10-02).
