@@ -121,6 +121,8 @@ export function findSigningIdentity({ run = security, keychain = signingKeychain
       // signs with it perfectly well. Matching on the quoted name avoids picking up another
       // project's certificate that happens to sit in the same keychain.
       const out = run(['find-identity', '-p', 'codesigning', ...(file ? [file] : [])])
+      // A hit on the search list is not unlock-tested: that is the login keychain, open
+      // while Robert is signed in, and the way this signed before 2026-10-09.
       if (out.includes(`"${name}"`)) return { name, keychain: file, locked: file ? locked : false }
     } catch {
       /* not in this one */
@@ -251,6 +253,10 @@ export default async function afterPack(context) {
   if (!existsSync(app)) throw new Error(`afterPack: no bundle at ${app}`)
 
   let found = findSigningIdentity()
+  // A fork without the secrets builds ad-hoc on purpose (mac-cert.mjs); a job that HAS
+  // them and still finds no identity would ship a release that resets every permission.
+  if (!found && process.env.CI && process.env.PF_CERT_P12)
+    throw new Error('afterPack: PF_CERT_P12 is set but no signing identity was found after mac-cert.mjs import.')
   const cannot = found && signProbe(found)
   if (cannot) {
     // A release has to carry the certificate: every installed Mac copy's permissions hang

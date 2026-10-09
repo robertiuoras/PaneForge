@@ -166,6 +166,97 @@ ok('a certificate-signed app with no identity found is refused, naming the permi
 ok('with the identity found it may be re-signed', resignRefusal(CERT, off) === null)
 ok('an ad-hoc app may be re-signed ad-hoc: it has no permissions to lose', resignRefusal('cdhash H"6d664b576b52804d768a200d525ab377265bfe0a"', null) === null)
 
+// The installed-Mac-app path end to end, with codesign and security stubbed on PATH (the
+// real ones would sign with Robert's key or open a keychain dialog). The stub re-sign
+// breaks the old seal before it fails, as the real errSecInternalComponent did on
+// 2026-10-10, so a rollback that only puts the scripts back still fails `--verify`.
+if (process.platform === 'darwin') {
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const CERT_DR = 'identifier "com.robert.paneforge" and certificate root = H"49f54a6617076f14e216b0a5512477dd7d861b38"'
+  writeFileSync(join(bin, 'security'), `#!/bin/bash
+case "$1" in
+  unlock-keychain) [[ "$MODE" == locked ]] && { echo "security: The user name or passphrase you entered is not correct." >&2; exit 51; }; exit 0 ;;
+  find-identity) [[ "$MODE" == noidentity ]] || echo '  1) ABC "PaneForge Self-Signed" (CSSMERR_TP_NOT_TRUSTED)'; exit 0 ;;
+esac
+exit 1
+`)
+  writeFileSync(join(bin, 'codesign'), `#!/bin/bash
+for a in "$@"; do last="$a"; done
+seal="$last/Contents/_CodeSignature/CodeResources"; exe="$last/Contents/MacOS/Fake"
+if [[ "$1" == -d ]]; then
+  [[ -f "$seal" ]] || { echo "$last: code object is not signed at all" >&2; exit 1; }
+  if [[ "$MODE" == drchange && "$(cat "$seal")" == seal-new ]]; then echo 'designated => identifier "com.robert.paneforge" and certificate root = H"0000"'
+  else echo 'designated => ${CERT_DR.replace(/"/g, '\\"')}'; fi
+  exit 0
+fi
+if [[ "$1" == --verify ]]; then
+  [[ "$(cat "$seal" 2>/dev/null)" == seal-old && "$(cat "$exe")" == exe-old ]] && exit 0
+  [[ "$(cat "$seal" 2>/dev/null)" == seal-new && "$(cat "$exe")" == exe-new ]] && exit 0
+  echo "$last: a sealed resource is missing or invalid" >&2; exit 1
+fi
+[[ "$last" == */probe ]] && exit 0
+echo exe-broken > "$exe"; echo seal-broken > "$seal"
+[[ "$MODE" == signfail ]] && { echo "$last: errSecInternalComponent" >&2; exit 1; }
+echo exe-new > "$exe"; echo seal-new > "$seal"; exit 0
+`)
+  execFileSync('chmod', ['+x', join(bin, 'security'), join(bin, 'codesign')])
+  const keychainFile = join(root, 'signing.keychain-db')
+  writeFileSync(keychainFile, '')
+  const fake = join(root, 'Fake.app')
+  const fakeScripts = join(fake, 'Contents', 'Resources', 'scripts')
+  const makeApp = ({ plist = true } = {}) => {
+    rmSync(fake, { recursive: true, force: true })
+    mkdirSync(fakeScripts, { recursive: true })
+    mkdirSync(join(fake, 'Contents', 'MacOS'))
+    mkdirSync(join(fake, 'Contents', '_CodeSignature'))
+    writeFileSync(join(fake, 'Contents', 'Info.plist'), plist ? '<dict>\n\t<key>CFBundleExecutable</key>\n\t<string>Fake</string>\n</dict>\n' : '<dict></dict>\n')
+    writeFileSync(join(fake, 'Contents', 'MacOS', 'Fake'), 'exe-old\n')
+    writeFileSync(join(fake, 'Contents', '_CodeSignature', 'CodeResources'), 'seal-old\n')
+    for (const f of SHIPPED) writeFileSync(join(fakeScripts, f), `// ${f} installed before\n`)
+  }
+  const runMac = (mode) => {
+    try {
+      const out = execFileSync(process.execPath, [join(repo, 'scripts', 'install-engine.mjs'), '--scripts', fakeScripts], {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, MODE: mode, PF_KEYCHAIN: keychainFile }
+      })
+      return { code: 0, out }
+    } catch (e) {
+      return { code: e.status, out: `${e.stdout ?? ''}${e.stderr ?? ''}` }
+    }
+  }
+  const asBefore = () =>
+    SHIPPED.every((f) => readFileSync(join(fakeScripts, f), 'utf8').includes('installed before')) &&
+    readFileSync(join(fake, 'Contents', 'MacOS', 'Fake'), 'utf8').trim() === 'exe-old' &&
+    readFileSync(join(fake, 'Contents', '_CodeSignature', 'CodeResources'), 'utf8').trim() === 'seal-old' &&
+    !readdirSync(fakeScripts).some((n) => n.startsWith('.engine-backup-') || n.endsWith('.installing'))
+  copyFileSync(join(here, 'mac-sign.mjs'), join(repo, 'scripts', 'mac-sign.mjs'))
+
+  makeApp()
+  const failed1 = runMac('signfail')
+  ok('Mac: a re-sign that breaks the seal and fails exits 1 and says it was rolled back', failed1.code === 1 && /rolled back; its old signature verifies again/.test(failed1.out), failed1.out)
+  ok('and the scripts, the executable and CodeResources are the old ones, no backup or temp left', asBefore())
+  makeApp()
+  const moved = runMac('drchange')
+  ok('Mac: a re-sign that changes the designated requirement is rolled back', moved.code === 1 && /designated requirement changed/.test(moved.out) && asBefore(), moved.out)
+  makeApp()
+  const shut = runMac('locked')
+  ok('Mac: a signing keychain that will not unlock refuses before writing', shut.code === 2 && /does not unlock/.test(shut.out) && asBefore(), shut.out)
+  makeApp()
+  const none = runMac('noidentity')
+  ok('Mac: a certificate app with no identity found refuses before writing', none.code === 2 && /forget every permission/.test(none.out) && asBefore(), none.out)
+  makeApp({ plist: false })
+  const noExe = runMac('ok')
+  ok('Mac: no main executable in Info.plist refuses before writing', noExe.code === 2 && /main executable/.test(noExe.out), noExe.out)
+  makeApp()
+  const good = runMac('ok')
+  ok('Mac: a re-sign that works installs every file and reports the unchanged requirement', good.code === 0 && /Re-signed/.test(good.out) && SHIPPED.every((f) => !readFileSync(join(fakeScripts, f), 'utf8').includes('installed before')), good.out)
+} else {
+  console.log('      (the installed-Mac-app half needs a Mac - skipped)')
+}
+
 rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
