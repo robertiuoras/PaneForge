@@ -224,6 +224,9 @@ function retry(repo) {
       if (done) return
       done = true
       clearTimeout(limit)
+      // A pipe something it started still holds open would keep this process alive.
+      child.stdout.destroy()
+      child.stderr.destroy()
       resolve({ said: `${out}${err}`.trim(), started })
     }
     const child = spawn(process.execPath, [join(here, 'lane.mjs'), 'retry', '--repo', repo, '--session', 'lane-cron'], {
