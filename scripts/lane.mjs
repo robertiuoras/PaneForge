@@ -6070,7 +6070,15 @@ function scratchMerge(head, tip, message) {
  * Taskdriver PC has its own proof, and a repo with no suite is not held to one.
  */
 function pushGateApplies() {
-  if (!OWN || TASKDRIVER_PC) return false
+  if (TASKDRIVER_PC) return false
+  // Not only from this file's own checkout. Every chat's hook runs the copy installed in the
+  // app, outside the repo, and origin's pre-push hook (ours, naming the repo's own copy)
+  // refuses an untested trunk all the same: skipping the merged-tree suite there pushed
+  // straight into that refusal and left master holding an unpushed merge (2026-10-09).
+  if (!OWN) {
+    const hook = prePushPath()
+    if (!hook || prePushState(hook).kind !== 'ours') return false
+  }
   try {
     const script = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).scripts?.test
     return !!script && !/no test specified/i.test(script)
