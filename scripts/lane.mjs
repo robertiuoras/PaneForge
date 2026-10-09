@@ -155,6 +155,22 @@ function gitCherry(cwd, upstream, head) {
   if (own.ok && !own.out) return { ok: true, out: '' }
   return gitSafe(cwd, 'cherry', upstream, head)
 }
+/**
+ * True when every commit `tip` has past trunk is a merge and merging `tip` into trunk leaves
+ * trunk's tree as it is: a catch-up merge of trunk into a lane whose own work trunk already
+ * holds. PaneForge lane c 2026-10-09: 29c3264c ("Merge branch 'master' into lane-c", tree
+ * equal to trunk's) was pinned as abandoned work, its recovery pane never opened, and the
+ * blocked item then refused every later `ready` on the lane. A merge that resolved anything
+ * its own way changes the tree and stays preserved; a git that fails to answer (merge-tree
+ * --write-tree needs 2.38) is "not nothing".
+ */
+function mergesAddNothing(tip) {
+  const own = gitSafe(MAIN, 'rev-list', '--no-merges', '-n1', `${MB}..${tip}`)
+  if (!own.ok || own.out) return false
+  const merged = gitSafe(MAIN, 'merge-tree', '--write-tree', MB, tip)
+  const trunk = gitSafe(MAIN, 'rev-parse', `${MB}^{tree}`)
+  return merged.ok && trunk.ok && merged.out.split('\n')[0] === trunk.out
+}
 function gitSafe(cwd, ...args) {
   try {
     return { ok: true, out: git(cwd, ...args) }
@@ -1057,6 +1073,23 @@ function preservedRecovery(state, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => !r.ref && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
+// What `ready` tells a chat whose lane carries a preserved item it cannot pass yet: the item,
+// its state, and the one command that moves it. The bare refusal named none of these, and
+// lane c's next chat (2026-10-09) had to read lane.mjs to find `recover`.
+function recoveryNextStep(state, r, session) {
+  const key = r.key ?? Object.keys(state.recovery?.items ?? {}).find((k) => state.recovery.items[k] === r)
+  const cli = `node ${JSON.stringify(join(here, 'lane.mjs'))} recover --repo ${JSON.stringify(MAIN)} --key ${JSON.stringify(key)} --session ${session}`
+  const what = `item ${key} is ${r.status}${r.owner ? ` (owner ${r.owner})` : ''}${r.reason ? `: ${r.reason}` : ''}.`
+  if (r.owner === session)
+    return `${what} Record a receipt for this HEAD: ${cli} --disposition verified --receipt <json: commit, checks [{command, exitCode: 0}], review {reviewer: <another chat>, result: "accepted"}>.`
+  if (r.owner && ['owned', 'verified'].includes(r.status))
+    return `${what} If that chat is gone and this lane carries its work, take it over: ${cli} --disposition adopt, then verify.`
+  if (r.owner) return `${what} Only its owner can record it; it closes by itself once trunk holds ${r.commit}.`
+  if (r.status === 'blocked')
+    return `${what} If this lane already carries that work, record it: ${cli} --disposition reviewed --receipt <json with "reason">.`
+  return `${what} Bind it to this chat first: ${cli} --disposition begin.`
+}
+
 // Trunk holds the item's pinned commit and, when it has one, its receipt commit.
 function inTrunkRecovery(r) {
   const inTrunk = (c) => typeof c === 'string' && /^[a-f0-9]{40,64}$/.test(c) && gitSafe(MAIN, 'merge-base', '--is-ancestor', c, MB).ok
@@ -1242,7 +1275,7 @@ function dispatchCompletion() {
     // A git that fails to answer is "not nothing".
     if (!dirt && !/^\+ /m.test(diff.out)) {
       const merges = merged.ok ? null : gitSafe(MAIN, 'rev-list', '--merges', '-n1', `${MB}..${tip.out}`)
-      if (merged.ok || (merges.ok && !merges.out)) continue
+      if (merged.ok || (merges.ok && !merges.out) || mergesAddNothing(tip.out)) continue
     }
     const key = `lane:${id}:${tip.out}`
     // `dirty`: the pinned work includes uncommitted changes, so trunk holding `commit` is
@@ -5537,7 +5570,7 @@ function ready(session, wanted) {
     recovery = preservedRecovery(state, id)
   }
   if (recovery && (recovery.owner !== session || recovery.status !== 'verified' || recovery.receipt?.commit !== gitSafe(laneDir(id), 'rev-parse', 'HEAD').out)) {
-    throw new Error('recovered work requires a current verification receipt and independent review before ready')
+    throw new Error(`recovered work requires a current verification receipt and independent review before ready - ${recoveryNextStep(state, recovery, session)}`)
   }
   // Declaring work finished is the other way a reservation becomes real.
   if (state.lanes[id]) delete state.lanes[id].tentative
