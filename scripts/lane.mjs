@@ -5500,6 +5500,10 @@ function resolveConflict(session, wanted) {
     resolverAt: now()
   }
   write(state)
+  // An adopted merge is this chat's to finish, and the hook gives it back at SessionEnd
+  // (dropClaims) only from the repos listed for the chat - resolve is typed by hand, often
+  // from another repo's chat, exactly like the CLI claim above.
+  registerSession(session)
   return { lane: id, dir, resolved: false, files, adopted: !mine }
 }
 
