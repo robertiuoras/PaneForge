@@ -109,6 +109,12 @@ const here = dirname(fileURLToPath(import.meta.url))
 // PaneForge rename for two days (EBUSY, no cwd in the folder - a stray handle).
 // Timing out throws, which gitSafe already reports and the callers already handle.
 const GIT_TIMEOUT_MS = 20_000
+// Push and fetch move the repository's contents over the network, and their size is the
+// user's: a release of ~55 MB of mp4 renders (videos, Mac, 2026-10-09) was killed at 20s,
+// git-remote-https finished the upload anyway, and the release reported origin as refusing
+// a push origin had taken. These get a deadline sized for a big transfer on a slow uplink.
+const NET_TIMEOUT_MS = 10 * 60_000
+const deadlineFor = (args) => (args[0] === 'push' || args[0] === 'fetch' ? NET_TIMEOUT_MS : GIT_TIMEOUT_MS)
 // A lifecycle hook's parent deadline also bounds its children. Keep 300ms for
 // the engine and canonical hook to report failure before their own timeouts.
 function hookTimeout(normal) {
@@ -120,13 +126,21 @@ function hookTimeout(normal) {
 }
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { windowsHide: true,
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: hookTimeout(GIT_TIMEOUT_MS),
-    killSignal: 'SIGKILL'
-  }).trim()
+  const timeout = hookTimeout(deadlineFor(args))
+  try {
+    return execFileSync('git', args, { windowsHide: true,
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout,
+      killSignal: 'SIGKILL'
+    }).trim()
+  } catch (e) {
+    // Said instead of whatever the killed git had printed so far, which is either nothing
+    // or a half-finished line that reads like a reason.
+    if (e.code === 'ETIMEDOUT') e.timedOut = `git ${args[0]} timed out after ${Math.round(timeout / 1000)} s`
+    throw e
+  }
 }
 /**
  * `git cherry <upstream> <head>` that skips the walk when `head` has nothing upstream lacks.
@@ -153,10 +167,10 @@ function gitSafe(cwd, ...args) {
         return { ok: true, out: git(cwd, ...args) }
       } catch (again) {
         const retried = errText(again)
-        return { ok: false, out: retried, locked: lockedOut(retried), code: again.status ?? null }
+        return { ok: false, out: retried, locked: lockedOut(retried), died: died(again), code: again.status ?? null }
       }
     }
-    return { ok: false, out, locked: lockedOut(out), code: e.status ?? null }
+    return { ok: false, out, locked: lockedOut(out), died: died(e), code: e.status ?? null }
   }
 }
 
@@ -165,7 +179,18 @@ function gitSafe(cwd, ...args) {
 // they may be seeded dependencies, and only destructive sweep treats them as a hold.
 const WORK_STATUS = ['status', '--porcelain', '--untracked-files=all']
 
-const errText = (e) => String(e.stderr ?? e.stdout ?? e.message).trim()
+// A git killed at its deadline said nothing: stderr and stdout are '' (not null, so `??` never
+// reached the message), and that empty answer was stored as a lane's conflict (2026-10-09).
+const errText = (e) =>
+  e.timedOut ||
+  [e.stderr, e.stdout].map((s) => String(s ?? '').trim()).find(Boolean) ||
+  String(e.message || e.code || 'git failed and said nothing').trim()
+
+/**
+ * A git that never answered: killed at its deadline (ETIMEDOUT, SIGKILL), stopped by a hook
+ * deadline, or never started. It has no exit status, so it said nothing about the branches.
+ */
+const died = (e) => e.status == null
 
 /**
  * A lock is not a conflict.
@@ -194,7 +219,8 @@ function lockedOut(out) {
 }
 
 // How long a .lock has to have sat untouched before it is certainly abandoned. Every git
-// this file runs is dead within GIT_TIMEOUT_MS, and a real merge holds the index for
+// this file runs that can hold one is dead within GIT_TIMEOUT_MS (push and fetch run
+// longer but take no index, HEAD or MERGE_HEAD lock), and a real merge holds the index for
 // milliseconds, so five minutes is far past anything legitimate.
 const STALE_LOCK_MS = 5 * 60_000
 
@@ -1913,9 +1939,13 @@ function catchUp(id, { keepConflict = false } = {}) {
     gitSafe(dir, 'merge', '--abort')
     return { moved: false, conflicts: [], dirty: false, blocked: 'another git is using this repository' }
   }
-  let conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
-    .out.split('\n')
-    .filter(Boolean)
+  // Same for a git that never answered, or stopped with no file unmerged: not a conflict.
+  const unmerged = m.died ? null : gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+  let conflicts = unmerged?.ok ? unmerged.out.split('\n').filter(Boolean) : []
+  if (!conflicts.length) {
+    gitSafe(dir, 'merge', '--abort')
+    return { moved: false, conflicts: [], dirty: false, blocked: `git stopped the merge with no file in disagreement: ${firstLine(m.out)}` }
+  }
   // Import-block collisions are settled here rather than being handed to whoever reads the
   // status next. They are the commonest conflict two lanes on one feature produce and the
   // only one with a right answer that needs no context.
@@ -2118,7 +2148,7 @@ function noteConflict(bag, id, detail, previous) {
  * and the hooks showed a human was four lines of rerere bookkeeping instead of "these
  * files disagree".
  */
-function mergeFiles(out) {
+function mergeFiles(out, unmerged) {
   const files = new Set()
   for (const line of out.split('\n')) {
     const conflict = /Merge conflict in (.+)$/.exec(line)
@@ -2126,7 +2156,9 @@ function mergeFiles(out) {
     if (conflict) files.add(conflict[1].trim())
     else if (preimage) files.add(preimage[1])
   }
-  return files.size ? [...files].join(', ') : out.split('\n').slice(0, 4).join('; ')
+  // Git's sentences name only content conflicts (and only on the channel errText kept);
+  // the unmerged list git itself reports always names the files.
+  return (files.size ? [...files] : unmerged).join(', ')
 }
 
 /**
@@ -2154,6 +2186,8 @@ function retryConflicts(state) {
       gitSafe(laneDir(id), 'merge', '--abort')
     }
     const caught = catchUp(id)
+    // Git busy or killed: the retry did not happen, so the conflict neither clears nor changes.
+    if (caught.blocked) continue
     // Someone left an uncommitted edit in there, so the merge cannot be done in the
     // worktree. That used to end the retry, which meant a lane whose chat stopped
     // mid-edit stayed flagged for as long as the edit sat there - the conflict could not
@@ -3691,6 +3725,35 @@ function commitsSinceVersion(version) {
  * of is "nobody could check", which may not be reported as a merge that did not happen -
  * and may not block a chat either. Only an ANSWERED `false` is a lane that did not go out.
  */
+/**
+ * Push, and when the push says it failed, ask origin before believing it.
+ *
+ * A push killed at its deadline, or one whose connection dropped after the upload, can
+ * leave origin holding exactly what was sent (videos, 2026-10-09: "refused", then "Everything
+ * up-to-date"). `ref` is what the push carries (`refs/heads/<trunk>` or `refs/tags/vX`):
+ * origin having this machine's value for it is the push having happened.
+ */
+function pushChecked(ref, ...args) {
+  const r = gitSafe(MAIN, 'push', ...args)
+  if (r.ok) return r
+  const mine = gitSafe(MAIN, 'rev-parse', ref)
+  const there = gitSafe(MAIN, 'ls-remote', 'origin', ref)
+  const theirs = there.ok ? there.out.split(/\s+/)[0] : ''
+  if (!mine.ok || !theirs || theirs !== mine.out) return r
+  // The push that died never moved this machine's idea of origin's branch either.
+  if (ref.startsWith('refs/heads/')) gitSafe(MAIN, 'update-ref', `refs/remotes/origin/${ref.slice(11)}`, theirs)
+  return { ok: true, out: r.out, landed: true }
+}
+
+/** What a failed `pushChecked` was: a push that never finished is not a refusal. */
+const pushFailed = (r) => `${r.died ? 'the push to origin did not finish' : 'origin refused the push'}: ${r.out.slice(0, 200)}`
+
+/** `pushChecked` for a push nothing can continue without: throws what went wrong. */
+function mustPush(ref, ...args) {
+  const r = pushChecked(ref, ...args)
+  if (!r.ok) throw new Error(pushFailed(r))
+}
+
 function landedOnOrigin(commit) {
   if (!commit) return null
   const remote = gitSafe(MAIN, 'ls-remote', 'origin', `refs/heads/${MB}`)
@@ -5300,7 +5363,7 @@ function resolveConflict(session, wanted) {
   }
 
   state.conflicts[id] = {
-    ...noteConflict({}, id, files.join(', '), state.conflicts),
+    ...noteConflict({}, id, files.join(', ') || 'merge open with every file settled, not yet committed', state.conflicts),
     resolver: session,
     resolverAt: now()
   }
@@ -5807,7 +5870,10 @@ function landBranch(branch, message) {
     const c = gitSafe(MAIN, 'commit-tree', tree, '-p', head.out, '-p', tip.out, '-m', message)
     if (!c.ok) return { busy: c.out }
     made = c.out
-  } catch {
+  } catch (e) {
+    // A merge-tree that never answered (killed at its deadline on a saturated machine) says
+    // nothing about the branches, and the heavier merge below would only die the same way.
+    if (died(e)) return { busy: `git did not finish the merge: ${firstLine(errText(e))}` }
     // Exit 1 is a conflict; anything else is a git without `merge-tree --write-tree` (older
     // than 2.38). Either way the real merge decides, off to the side.
     const r = scratchMerge(head.out, tip.out, message)
@@ -5836,21 +5902,22 @@ function scratchMerge(head, tip, message) {
     const index = gitSafe(dir, 'read-tree', 'HEAD')
     if (!index.ok) return { busy: firstLine(index.out) }
     const m = gitSafe(dir, '-c', 'core.longpaths=true', 'merge', '--no-ff', '--no-autostash', '-m', message, tip)
-    if (!m.ok && m.locked) return { busy: firstLine(m.out) }
+    if (!m.ok && (m.locked || m.died)) return { busy: firstLine(m.out) }
     if (!m.ok) {
+      // Only files git left unmerged are a conflict. A merge that stopped with none - git
+      // refusing, or killed part way under load - is "not now": recorded as a conflict it
+      // kept a fast-forward lane out of releases with an empty detail (clients, 2026-10-09).
+      const unmerged = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+      const open = unmerged.out.split('\n').filter(Boolean)
+      if (!unmerged.ok || !open.length) return { busy: `git stopped the merge with no file in disagreement: ${firstLine(m.out)}` }
       // Same union rule as the lane side, for the release side of the same collision:
       // two lanes that each added an import cannot both have merged cleanly, and the
       // second one to arrive here is not a decision anybody needs to make.
-      const open = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
-        .out.split('\n')
-        .filter(Boolean)
       const fixed = autoResolve(dir, open)
       for (const f of fixed) gitSafe(dir, 'add', '--', f)
-      const stuck =
-        !fixed.length ||
-        gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.trim() ||
-        !gitSafe(dir, 'commit', '--no-edit').ok
-      if (stuck) return { conflict: mergeFiles(m.out) }
+      const left = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+      const stuck = !fixed.length || left.length || !gitSafe(dir, 'commit', '--no-edit').ok
+      if (stuck) return { conflict: mergeFiles(m.out, left.length ? left : open) }
     }
     const made = gitSafe(dir, 'rev-parse', 'HEAD')
     return made.ok ? { commit: made.out } : { busy: firstLine(made.out) }
@@ -6186,6 +6253,8 @@ function ship(kind, session, { gated = false } = {}) {
         throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
     }
 
+    // The ready marks this release took. One set while it ran is not its to clear (finish).
+    const batch = { ...state.ready }
     const merged = []
     // Where master stood before any lane landed: a merged tree that does not compile goes back here.
     const beforeMerge = gitSafe(MAIN, 'rev-parse', 'HEAD').out
@@ -6217,6 +6286,8 @@ function ship(kind, session, { gated = false } = {}) {
       // Built off to the side and fast-forwarded onto, never merged in the main folder
       // (landLane says why).
       const m = landLane(id, branch)
+      // An empty conflict used to read as landed below: the lane was counted as merged.
+      if (!m.landed && !m.conflict) m.busy ||= 'git gave no answer about the merge'
       if (m.busy) {
         // Same rule as the lane side: git being busy says nothing about this branch. The
         // lane keeps its ready mark (see `finish`) and goes out of the next release, which
@@ -6323,7 +6394,13 @@ function ship(kind, session, { gated = false } = {}) {
       // reason: its work is still not out there.
       const keep = new Set(unproved.map((m) => m.lane))
       fresh.ready = Object.fromEntries(
-        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.some((b) => b.lane === id) || keep.has(id))
+        Object.entries(fresh.ready).filter(
+          ([id, mark]) =>
+            conflicts[id] || blocked.some((b) => b.lane === id) || keep.has(id) ||
+            // Marked done while this release ran (PaneForge lane b, 9 Oct 2026: "another chat is
+            // mid-release", then this line cleared a mark it had never seen): the next one ships it.
+            batch[id]?.commit !== mark.commit
+        )
       )
       fresh.conflicts = conflicts
       fresh.release = null
@@ -6351,11 +6428,11 @@ function ship(kind, session, { gated = false } = {}) {
         return { shipped: false, reason: 'nothing to release', conflicts, skipped, blocked }
       }
       if (RELEASE === 'merge') {
-        const pushed = gitSafe(MAIN, 'push')
+        const pushed = pushChecked(`refs/heads/${MB}`)
         // The lanes are already merged locally at this point, so say that rather than
         // "release failed": the work is on the branch and one `git push` finishes it.
         if (!pushed.ok)
-          throw new Error(`lanes merged into ${MB}, but origin refused the push: ${pushed.out.slice(0, 200)}`)
+          throw new Error(`lanes merged into ${MB}, but ${pushFailed(pushed)}`)
       }
       return finish(null, { by: 'skipped' })
     }
@@ -6378,8 +6455,8 @@ function ship(kind, session, { gated = false } = {}) {
       const tagOnOrigin = gitSafe(MAIN, 'ls-remote', '--tags', 'origin', `refs/tags/v${pkg.version}`)
       if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
         if (pushes) recordPushOk(state, 'version release')
-        git(MAIN, 'push')
-        git(MAIN, 'push', 'origin', `v${pkg.version}`)
+        mustPush(`refs/heads/${MB}`)
+        mustPush(`refs/tags/v${pkg.version}`, 'origin', `v${pkg.version}`)
         const resumedBuilt = publishFallback(pkg.version, () => beatRelease(session))
         const s = read()
         s.conflicts = conflicts
@@ -6423,8 +6500,8 @@ function ship(kind, session, { gated = false } = {}) {
     git(MAIN, 'commit', '-m', `release: v${next}`)
     git(MAIN, 'tag', `v${next}`)
     if (pushes) recordPushOk(state, 'version release')
-    git(MAIN, 'push')
-    git(MAIN, 'push', 'origin', `v${next}`)
+    mustPush(`refs/heads/${MB}`)
+    mustPush(`refs/tags/v${next}`, 'origin', `v${next}`)
     return finish(next, publishFallback(next, () => beatRelease(session)))
   } catch (e) {
     const s = read()
