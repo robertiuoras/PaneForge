@@ -279,6 +279,7 @@
     "test:lanecleared": "node scripts/lane-cleared-test.mjs",
     "test:lanestrand": "node scripts/lane-strand-test.mjs",
     "test:lanedamaged": "node scripts/lane-damaged-test.mjs",
+    "test:lanehookspath": "node scripts/lane-hookspath-test.mjs",
     "test:lanehalfmade": "node scripts/lane-halfmade-test.mjs",
     "test:lanetorn": "node scripts/lane-torn-test.mjs",
     "test:lanetaskdriver": "node scripts/lane-taskdriver-pc-test.mjs",

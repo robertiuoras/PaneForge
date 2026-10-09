@@ -50,6 +50,7 @@ import {
   closeSync,
   constants as fsConstants,
   copyFileSync,
+  cpSync,
   existsSync,
   linkSync,
   lstatSync,
@@ -2851,6 +2852,7 @@ function ensureWorktree(id) {
     }
   }
   excludeModules(dir)
+  shareHooksDir(dir)
   hideLane(id)
   return dir
 }
@@ -2910,6 +2912,58 @@ function excludeModules(dir) {
     writeFileSync(file, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}node_modules\n`, 'utf8')
   } catch {
     /* an exclude we cannot write is not a reason to fail the lane */
+  }
+}
+
+/**
+ * Give a lane folder the repository's generated git-hooks folder.
+ *
+ * `core.hooksPath` lives in the shared .git/config and, when it is relative, names a folder
+ * inside EACH checkout. Husky's is `.husky/_`: generated and gitignored, so it exists in the
+ * main checkout only. Git says nothing about a hooks folder that is not there - it just runs no
+ * hooks - so every commit in every lane skipped eslint, tsc and check:arch (Toolstash lanes a to
+ * h, 2026-10-09: lane a shipped two TypeScript errors and the release job then refused main).
+ *
+ * A COPY, never a link: a link is one more path into the main checkout from a folder a chat
+ * edits in, which is how a lane once took the real node_modules with it (see dropModulesLink).
+ * Only when the folder is relative, inside the repo, present in the main checkout, holds
+ * nothing git tracks (a tracked one arrives with the checkout, and copying it would only put
+ * untracked files in front of a merge) and is absent from the lane: an existing one is
+ * somebody's and is never overwritten. Copied beside the name and renamed into place, so a
+ * kill part way leaves no half-folder that would count as "already there". Run on every
+ * ensureWorktree, like excludeModules, so lanes made before this pick it up on their next claim.
+ */
+function shareHooksDir(dir) {
+  try {
+    if (!dir || samePath(dir) === samePath(MAIN)) return
+    const configured = gitSafe(MAIN, 'config', '--get', 'core.hooksPath')
+    if (!configured.ok) return
+    const rel = configured.out.trim()
+    if (!rel || isAbsolute(rel) || rel.startsWith('~')) return
+    const from = resolve(MAIN, rel)
+    const inside = relative(MAIN, from)
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) return
+    if (!existsSync(from)) return
+    const to = resolve(dir, rel)
+    try {
+      lstatSync(to)
+      return
+    } catch {
+      /* absent: the case this exists for */
+    }
+    if (gitSafe(MAIN, 'ls-files', '--', rel).out.trim()) return
+    if (!isWorktree(dir)) return
+    const part = `${to}.copying-${process.pid}`
+    try {
+      mkdirSync(dirname(to), { recursive: true })
+      rmSync(part, { recursive: true, force: true })
+      cpSync(from, part, { recursive: true, dereference: true, force: false, errorOnExist: true })
+      renameSync(part, to)
+    } catch {
+      rmSync(part, { recursive: true, force: true })
+    }
+  } catch {
+    /* a hooks folder we cannot copy is not a reason to fail the lane; git just runs no hooks, as before */
   }
 }
 
@@ -3160,6 +3214,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       if (id !== 'main') {
         try {
           if (!preservedCheckout(state, id)) ensureWorktree(id)
+          else shareHooksDir(laneDir(id))
         } catch (error) {
           if (preservedRecovery(state, id)) throw error
           /* reported by `doctor`; a claim that cannot rebuild still returns the lane */
@@ -3460,6 +3515,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
 
   const preserved = preservedCheckout(state, free)
   const dir = preserved ?? ensureWorktree(free)
+  if (preserved) shareHooksDir(preserved)
   enableRerere()
   // A lane is handed over clean and current, never mid-merge and never stale: whatever the
   // last chat left behind is settled here, before this one writes a line.

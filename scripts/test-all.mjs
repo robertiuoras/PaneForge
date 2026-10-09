@@ -242,6 +242,8 @@ const TESTS = [
   ['lanenevercopy', 'lane-never-copy-test.mjs'],
   // A copy missing most of its files is damaged, never handed to a chat (2026-10-01).
   ['lanedamaged', 'lane-damaged-test.mjs'],
+  // A lane folder gets the repo's generated git-hooks folder (husky's `_`), so lane commits run pre-commit (2026-10-09).
+  ['lanehookspath', 'lane-hookspath-test.mjs'],
   // A copy a killed checkout left half made is finished on proof or left alone (2026-10-07).
   ['lanehalfmade', 'lane-halfmade-test.mjs'],
   // A catch-up killed part way (trunk's own files, a stale lock) is finished, never a recovery chat (2026-10-08).
