@@ -104,7 +104,7 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   ancestry") when the chat now holding the lane runs `ready` or ends, but only if its pinned
   commit (and receipt commit) is in trunk, it was not pinned for uncommitted changes
   (`dirty`), and the checkout has no hand edits (`closeShippedRecovery`, `test:lanecompletion`).
-  A lane whose every commit trunk holds under another sha (`git cherry` all '-', no merge
+  A clean lane whose every commit trunk holds under another sha (`git cherry` all '-', no merge
   commit: a release rebased master) is never dispatched for recovery (`test:lanecompletion`).
   `doctor` says when parked work is done, blocked, or left by a chat that is gone, and a recovery
   item that lost the active slot is revisited and blocked, not left dispatched (`test:lanecompletion`).
