@@ -153,10 +153,10 @@ function gitSafe(cwd, ...args) {
         return { ok: true, out: git(cwd, ...args) }
       } catch (again) {
         const retried = errText(again)
-        return { ok: false, out: retried, locked: lockedOut(retried), code: again.status ?? null }
+        return { ok: false, out: retried, locked: lockedOut(retried), died: died(again), code: again.status ?? null }
       }
     }
-    return { ok: false, out, locked: lockedOut(out), code: e.status ?? null }
+    return { ok: false, out, locked: lockedOut(out), died: died(e), code: e.status ?? null }
   }
 }
 
@@ -165,7 +165,17 @@ function gitSafe(cwd, ...args) {
 // they may be seeded dependencies, and only destructive sweep treats them as a hold.
 const WORK_STATUS = ['status', '--porcelain', '--untracked-files=all']
 
-const errText = (e) => String(e.stderr ?? e.stdout ?? e.message).trim()
+// A git killed at its deadline said nothing: stderr and stdout are '' (not null, so `??` never
+// reached the message), and that empty answer was stored as a lane's conflict (2026-10-09).
+const errText = (e) =>
+  [e.stderr, e.stdout].map((s) => String(s ?? '').trim()).find(Boolean) ||
+  String(e.message || e.code || 'git failed and said nothing').trim()
+
+/**
+ * A git that never answered: killed at its deadline (ETIMEDOUT, SIGKILL), stopped by a hook
+ * deadline, or never started. It has no exit status, so it said nothing about the branches.
+ */
+const died = (e) => e.status == null
 
 /**
  * A lock is not a conflict.
@@ -1913,9 +1923,13 @@ function catchUp(id, { keepConflict = false } = {}) {
     gitSafe(dir, 'merge', '--abort')
     return { moved: false, conflicts: [], dirty: false, blocked: 'another git is using this repository' }
   }
-  let conflicts = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
-    .out.split('\n')
-    .filter(Boolean)
+  // Same for a git that never answered, or stopped with no file unmerged: not a conflict.
+  const unmerged = m.died ? null : gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+  let conflicts = unmerged?.ok ? unmerged.out.split('\n').filter(Boolean) : []
+  if (!conflicts.length) {
+    gitSafe(dir, 'merge', '--abort')
+    return { moved: false, conflicts: [], dirty: false, blocked: `git stopped the merge with no file in disagreement: ${firstLine(m.out)}` }
+  }
   // Import-block collisions are settled here rather than being handed to whoever reads the
   // status next. They are the commonest conflict two lanes on one feature produce and the
   // only one with a right answer that needs no context.
@@ -2118,7 +2132,7 @@ function noteConflict(bag, id, detail, previous) {
  * and the hooks showed a human was four lines of rerere bookkeeping instead of "these
  * files disagree".
  */
-function mergeFiles(out) {
+function mergeFiles(out, unmerged) {
   const files = new Set()
   for (const line of out.split('\n')) {
     const conflict = /Merge conflict in (.+)$/.exec(line)
@@ -2126,7 +2140,9 @@ function mergeFiles(out) {
     if (conflict) files.add(conflict[1].trim())
     else if (preimage) files.add(preimage[1])
   }
-  return files.size ? [...files].join(', ') : out.split('\n').slice(0, 4).join('; ')
+  // Git's sentences name only content conflicts (and only on the channel errText kept);
+  // the unmerged list git itself reports always names the files.
+  return (files.size ? [...files] : unmerged).join(', ')
 }
 
 /**
@@ -2154,6 +2170,8 @@ function retryConflicts(state) {
       gitSafe(laneDir(id), 'merge', '--abort')
     }
     const caught = catchUp(id)
+    // Git busy or killed: the retry did not happen, so the conflict neither clears nor changes.
+    if (caught.blocked) continue
     // Someone left an uncommitted edit in there, so the merge cannot be done in the
     // worktree. That used to end the retry, which meant a lane whose chat stopped
     // mid-edit stayed flagged for as long as the edit sat there - the conflict could not
@@ -5294,7 +5312,7 @@ function resolveConflict(session, wanted) {
   }
 
   state.conflicts[id] = {
-    ...noteConflict({}, id, files.join(', '), state.conflicts),
+    ...noteConflict({}, id, files.join(', ') || 'merge open with every file settled, not yet committed', state.conflicts),
     resolver: session,
     resolverAt: now()
   }
@@ -5801,7 +5819,10 @@ function landBranch(branch, message) {
     const c = gitSafe(MAIN, 'commit-tree', tree, '-p', head.out, '-p', tip.out, '-m', message)
     if (!c.ok) return { busy: c.out }
     made = c.out
-  } catch {
+  } catch (e) {
+    // A merge-tree that never answered (killed at its deadline on a saturated machine) says
+    // nothing about the branches, and the heavier merge below would only die the same way.
+    if (died(e)) return { busy: `git did not finish the merge: ${firstLine(errText(e))}` }
     // Exit 1 is a conflict; anything else is a git without `merge-tree --write-tree` (older
     // than 2.38). Either way the real merge decides, off to the side.
     const r = scratchMerge(head.out, tip.out, message)
@@ -5830,21 +5851,22 @@ function scratchMerge(head, tip, message) {
     const index = gitSafe(dir, 'read-tree', 'HEAD')
     if (!index.ok) return { busy: firstLine(index.out) }
     const m = gitSafe(dir, '-c', 'core.longpaths=true', 'merge', '--no-ff', '--no-autostash', '-m', message, tip)
-    if (!m.ok && m.locked) return { busy: firstLine(m.out) }
+    if (!m.ok && (m.locked || m.died)) return { busy: firstLine(m.out) }
     if (!m.ok) {
+      // Only files git left unmerged are a conflict. A merge that stopped with none - git
+      // refusing, or killed part way under load - is "not now": recorded as a conflict it
+      // kept a fast-forward lane out of releases with an empty detail (clients, 2026-10-09).
+      const unmerged = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
+      const open = unmerged.out.split('\n').filter(Boolean)
+      if (!unmerged.ok || !open.length) return { busy: `git stopped the merge with no file in disagreement: ${firstLine(m.out)}` }
       // Same union rule as the lane side, for the release side of the same collision:
       // two lanes that each added an import cannot both have merged cleanly, and the
       // second one to arrive here is not a decision anybody needs to make.
-      const open = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U')
-        .out.split('\n')
-        .filter(Boolean)
       const fixed = autoResolve(dir, open)
       for (const f of fixed) gitSafe(dir, 'add', '--', f)
-      const stuck =
-        !fixed.length ||
-        gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.trim() ||
-        !gitSafe(dir, 'commit', '--no-edit').ok
-      if (stuck) return { conflict: mergeFiles(m.out) }
+      const left = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+      const stuck = !fixed.length || left.length || !gitSafe(dir, 'commit', '--no-edit').ok
+      if (stuck) return { conflict: mergeFiles(m.out, left.length ? left : open) }
     }
     const made = gitSafe(dir, 'rev-parse', 'HEAD')
     return made.ok ? { commit: made.out } : { busy: firstLine(made.out) }
@@ -6211,6 +6233,8 @@ function ship(kind, session, { gated = false } = {}) {
       // Built off to the side and fast-forwarded onto, never merged in the main folder
       // (landLane says why).
       const m = landLane(id, branch)
+      // An empty conflict used to read as landed below: the lane was counted as merged.
+      if (!m.landed && !m.conflict) m.busy ||= 'git gave no answer about the merge'
       if (m.busy) {
         // Same rule as the lane side: git being busy says nothing about this branch. The
         // lane keeps its ready mark (see `finish`) and goes out of the next release, which
