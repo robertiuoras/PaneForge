@@ -2910,9 +2910,14 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Its own un-owned dispatched item must not stop it returning there. Another pane, or an
   // item someone already owns, gets nothing. The swap only moves the hold: no catch-up, no
   // reset, because `begin` checks HEAD === the pinned commit.
+  // The lane may carry an older blocked item beside the dispatched one (2026-10-09,
+  // paneforge-next lane e: the first preserved item shadowed it and the swap never ran), so
+  // look for the item dispatched to this pane, not merely the first preserved one.
+  const dispatchedItem = (id) => PANE ? Object.values(state.recovery?.items ?? {}).find((r) =>
+    !r.ref && r.lane === id && r.status === 'dispatched' && !r.owner && r.pane === PANE) : undefined
   const dispatchedHere = (id) => {
-    const r = PANE ? preservedRecovery(state, id) : null
-    return Boolean(r && r.status === 'dispatched' && !r.owner && r.pane === PANE)
+    if (state.recoveryError) throw new Error(state.recoveryError)
+    return Boolean(dispatchedItem(id))
   }
   // A blocked item whose pinned commit trunk already holds was only closed for a lane the
   // caller already HELD, so nothing could ever clear it and the lane stayed unclaimable (D).
@@ -2939,9 +2944,10 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // stay on its branch for the next main holder.
     if (held === 'main' && !state.lanes[prefer] && !state.conflicts[prefer] &&
         !laneWork(prefer).damaged && !squattedLanes(state, session).has(prefer)) {
-      const item = preservedRecovery(state, prefer)
+      const mine = dispatchedItem(prefer)
+      const item = mine ?? preservedRecovery(state, prefer)
       const status = gitSafe(MAIN, ...WORK_STATUS)
-      const dispatched = dispatchedHere(prefer) && gitSafe(laneDir(prefer), 'rev-parse', 'HEAD').out.trim() === item?.commit
+      const dispatched = Boolean(mine) && gitSafe(laneDir(prefer), 'rev-parse', 'HEAD').out.trim() === mine.commit
       if (item && (dispatched || !adoptRefusal(state, session, item, { holding: false })) &&
           status.ok && (!status.out || machineWrittenPaths(MAIN)) && !openOperation(MAIN) && !state.conflicts.main) {
         delete state.lanes.main
