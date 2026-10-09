@@ -14,12 +14,16 @@
 //   2. the push really does run out of time (the hook deadline cuts it short): the release
 //      says it timed out after N s, never "refused" with nothing after it;
 //   3. the push reports failure but origin has the commit (a pre-push hook that lands it and
-//      then exits 1): the release checks origin and reports the lane pushed.
+//      then exits 1): the release checks origin and reports the lane pushed;
+//   4. a lane marked done WHILE that slow release runs keeps its ready mark when the release
+//      finishes, and the next release ships it. The fix above went missing exactly this way
+//      (PaneForge lane b, 9 Oct 2026 4:17pm: "another chat is mid-release", then the running
+//      release cleared every ready mark, including one it had never seen).
 //
 //   node scripts/lane-slow-push-test.mjs
 
-import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,7 +45,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 const repo = join(root, 'demo')
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
-writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b'], release: 'merge' }, null, 2) + '\n')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c', 'd', 'e'], release: 'merge' }, null, 2) + '\n')
 installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')
@@ -141,6 +145,29 @@ const three = lane({}, 'ready', '--session', 'builder-landed')
 ok('a push that failed but landed is checked against origin', onOrigin(tip3) && /merged into master and pushed \(lanes [ab]\)/.test(three.out), three.out)
 ok('...and is not reported as refused', !/refused/.test(three.out), three.out)
 ok('...and this machine knows origin has it', git(repo, 'rev-parse', 'refs/remotes/origin/master') === originMaster(), three.out)
+
+// ------------------------------------------- 4. a lane finished while a release is pushing
+rmSync(join(repo, '.git', 'hooks', 'pre-push'), { force: true })
+hook(origin, 'pre-receive', slowFor(15))
+const ledger = () => JSON.parse(readFileSync(join(repo, '.git', 'paneforge-lanes.json'), 'utf8'))
+finishLane('first')
+const first = spawn(process.execPath, [join(repo, 'scripts', 'lane.mjs'), 'ready', '--session', 'builder-first'], { cwd: repo, env: baseEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+let firstOut = ''
+first.stdout.on('data', (d) => (firstOut += d))
+first.stderr.on('data', (d) => (firstOut += d))
+const firstDone = new Promise((r) => first.on('close', r))
+const running = waitFor(() => Boolean(ledger().release), 20_000)
+const tip4 = finishLane('second')
+const second = lane({}, 'ready', '--session', 'builder-second')
+await firstDone
+const after = ledger()
+ok('(the second lane really was marked done mid-release)', running && /mid-release/.test(second.out), `${second.out}
+${firstOut}`)
+ok('a lane marked done during a release keeps its ready mark', Object.values(after.ready ?? {}).some((m) => m.commit === tip4), JSON.stringify(after.ready) + `
+${firstOut}`)
+rmSync(join(origin, 'hooks', 'pre-receive'), { force: true })
+const next = lane({}, 'ship', '--session', 'builder-second')
+ok('...and the next release ships it', onOrigin(tip4), next.out)
 
 try {
   rmSync(root, { recursive: true, force: true })

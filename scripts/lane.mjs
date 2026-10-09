@@ -6247,6 +6247,8 @@ function ship(kind, session, { gated = false } = {}) {
         throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
     }
 
+    // The ready marks this release took. One set while it ran is not its to clear (finish).
+    const batch = { ...state.ready }
     const merged = []
     // Where master stood before any lane landed: a merged tree that does not compile goes back here.
     const beforeMerge = gitSafe(MAIN, 'rev-parse', 'HEAD').out
@@ -6386,7 +6388,13 @@ function ship(kind, session, { gated = false } = {}) {
       // reason: its work is still not out there.
       const keep = new Set(unproved.map((m) => m.lane))
       fresh.ready = Object.fromEntries(
-        Object.entries(fresh.ready).filter(([id]) => conflicts[id] || blocked.some((b) => b.lane === id) || keep.has(id))
+        Object.entries(fresh.ready).filter(
+          ([id, mark]) =>
+            conflicts[id] || blocked.some((b) => b.lane === id) || keep.has(id) ||
+            // Marked done while this release ran (PaneForge lane b, 9 Oct 2026: "another chat is
+            // mid-release", then this line cleared a mark it had never seen): the next one ships it.
+            batch[id]?.commit !== mark.commit
+        )
       )
       fresh.conflicts = conflicts
       fresh.release = null
