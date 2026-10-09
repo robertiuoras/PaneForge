@@ -118,7 +118,7 @@ ok('with a remote it installs origin/master, fetched, not the lagging local mast
 // paneforge-signing.keychain-db, `find-identity` over the list found no identity, and the
 // install re-signed PaneForge Classic ad-hoc - requirement cdhash, every permission lost.
 // The two outputs below are that Mac's real ones (hashes masked).
-const { findSigningIdentity, resignRefusal } = await import('./mac-sign.mjs')
+const { findSigningIdentity, resignRefusal, signProbe } = await import('./mac-sign.mjs')
 const KEYCHAIN = '/Users/x/Library/Keychains/paneforge-signing.keychain-db'
 const LIST_OUT = `Policy: Code Signing
   Matching identities
@@ -140,13 +140,25 @@ const FILE_OUT = `Policy: Code Signing
   Valid identities only
      0 valid identities found
 `
-const security = (byFile) => (args) => {
-  if (args[0] === 'unlock-keychain') return ''
+const security = (byFile, unlocks = true) => (args) => {
+  if (args[0] === 'unlock-keychain') {
+    if (unlocks) return ''
+    throw new Error('security: SecKeychainUnlock: The user name or passphrase you entered is not correct.')
+  }
   if (args[0] !== 'find-identity') throw new Error(`unexpected security ${args.join(' ')}`)
   return args[3] ? byFile[args[3]] ?? '' : LIST_OUT
 }
 const off = findSigningIdentity({ run: security({ [KEYCHAIN]: FILE_OUT }), keychain: KEYCHAIN })
 ok('an identity in the signing keychain is found when the search list does not name that keychain', off?.name === 'PaneForge Self-Signed' && off?.keychain === KEYCHAIN, JSON.stringify(off))
+// 2026-10-10 12:03-12:11am Sat: from a chat's shell that keychain does not unlock with the
+// empty password (over ssh it does), and every codesign then started SecurityAgent for its
+// password - a dialog on Robert's screen (the 2026-10-01 popups) whenever it is not locked.
+// A keychain that did not unlock is never handed to codesign, not even for the probe.
+ok('a keychain that unlocks is not marked locked', off?.locked === false, JSON.stringify(off))
+const shut = findSigningIdentity({ run: security({ [KEYCHAIN]: FILE_OUT }, false), keychain: KEYCHAIN })
+ok('a keychain that will not unlock is marked locked', shut?.name === 'PaneForge Self-Signed' && shut?.locked === true, JSON.stringify(shut))
+const why = shut && signProbe(shut)
+ok('and the probe refuses it without running codesign (no password dialog)', /dialog/.test(why ?? ''), why)
 const onList = findSigningIdentity({ run: security({}), keychain: null })
 ok('no keychain file and none on the list = no identity (ad-hoc)', onList === null, JSON.stringify(onList))
 const CERT = 'identifier "com.robert.paneforge" and certificate root = H"49f54a6617076f14e216b0a5512477dd7d861b38"'
