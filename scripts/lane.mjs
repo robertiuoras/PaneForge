@@ -109,6 +109,12 @@ const here = dirname(fileURLToPath(import.meta.url))
 // PaneForge rename for two days (EBUSY, no cwd in the folder - a stray handle).
 // Timing out throws, which gitSafe already reports and the callers already handle.
 const GIT_TIMEOUT_MS = 20_000
+// Push and fetch move the repository's contents over the network, and their size is the
+// user's: a release of ~55 MB of mp4 renders (videos, Mac, 2026-10-09) was killed at 20s,
+// git-remote-https finished the upload anyway, and the release reported origin as refusing
+// a push origin had taken. These get a deadline sized for a big transfer on a slow uplink.
+const NET_TIMEOUT_MS = 10 * 60_000
+const deadlineFor = (args) => (args[0] === 'push' || args[0] === 'fetch' ? NET_TIMEOUT_MS : GIT_TIMEOUT_MS)
 // A lifecycle hook's parent deadline also bounds its children. Keep 300ms for
 // the engine and canonical hook to report failure before their own timeouts.
 function hookTimeout(normal) {
@@ -120,13 +126,21 @@ function hookTimeout(normal) {
 }
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { windowsHide: true,
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: hookTimeout(GIT_TIMEOUT_MS),
-    killSignal: 'SIGKILL'
-  }).trim()
+  const timeout = hookTimeout(deadlineFor(args))
+  try {
+    return execFileSync('git', args, { windowsHide: true,
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout,
+      killSignal: 'SIGKILL'
+    }).trim()
+  } catch (e) {
+    // Said instead of whatever the killed git had printed so far, which is either nothing
+    // or a half-finished line that reads like a reason.
+    if (e.code === 'ETIMEDOUT') e.timedOut = `git ${args[0]} timed out after ${Math.round(timeout / 1000)} s`
+    throw e
+  }
 }
 /**
  * `git cherry <upstream> <head>` that skips the walk when `head` has nothing upstream lacks.
@@ -168,6 +182,7 @@ const WORK_STATUS = ['status', '--porcelain', '--untracked-files=all']
 // A git killed at its deadline said nothing: stderr and stdout are '' (not null, so `??` never
 // reached the message), and that empty answer was stored as a lane's conflict (2026-10-09).
 const errText = (e) =>
+  e.timedOut ||
   [e.stderr, e.stdout].map((s) => String(s ?? '').trim()).find(Boolean) ||
   String(e.message || e.code || 'git failed and said nothing').trim()
 
@@ -204,7 +219,8 @@ function lockedOut(out) {
 }
 
 // How long a .lock has to have sat untouched before it is certainly abandoned. Every git
-// this file runs is dead within GIT_TIMEOUT_MS, and a real merge holds the index for
+// this file runs that can hold one is dead within GIT_TIMEOUT_MS (push and fetch run
+// longer but take no index, HEAD or MERGE_HEAD lock), and a real merge holds the index for
 // milliseconds, so five minutes is far past anything legitimate.
 const STALE_LOCK_MS = 5 * 60_000
 
@@ -3703,6 +3719,35 @@ function commitsSinceVersion(version) {
  * of is "nobody could check", which may not be reported as a merge that did not happen -
  * and may not block a chat either. Only an ANSWERED `false` is a lane that did not go out.
  */
+/**
+ * Push, and when the push says it failed, ask origin before believing it.
+ *
+ * A push killed at its deadline, or one whose connection dropped after the upload, can
+ * leave origin holding exactly what was sent (videos, 2026-10-09: "refused", then "Everything
+ * up-to-date"). `ref` is what the push carries (`refs/heads/<trunk>` or `refs/tags/vX`):
+ * origin having this machine's value for it is the push having happened.
+ */
+function pushChecked(ref, ...args) {
+  const r = gitSafe(MAIN, 'push', ...args)
+  if (r.ok) return r
+  const mine = gitSafe(MAIN, 'rev-parse', ref)
+  const there = gitSafe(MAIN, 'ls-remote', 'origin', ref)
+  const theirs = there.ok ? there.out.split(/\s+/)[0] : ''
+  if (!mine.ok || !theirs || theirs !== mine.out) return r
+  // The push that died never moved this machine's idea of origin's branch either.
+  if (ref.startsWith('refs/heads/')) gitSafe(MAIN, 'update-ref', `refs/remotes/origin/${ref.slice(11)}`, theirs)
+  return { ok: true, out: r.out, landed: true }
+}
+
+/** What a failed `pushChecked` was: a push that never finished is not a refusal. */
+const pushFailed = (r) => `${r.died ? 'the push to origin did not finish' : 'origin refused the push'}: ${r.out.slice(0, 200)}`
+
+/** `pushChecked` for a push nothing can continue without: throws what went wrong. */
+function mustPush(ref, ...args) {
+  const r = pushChecked(ref, ...args)
+  if (!r.ok) throw new Error(pushFailed(r))
+}
+
 function landedOnOrigin(commit) {
   if (!commit) return null
   const remote = gitSafe(MAIN, 'ls-remote', 'origin', `refs/heads/${MB}`)
@@ -6369,11 +6414,11 @@ function ship(kind, session, { gated = false } = {}) {
         return { shipped: false, reason: 'nothing to release', conflicts, skipped, blocked }
       }
       if (RELEASE === 'merge') {
-        const pushed = gitSafe(MAIN, 'push')
+        const pushed = pushChecked(`refs/heads/${MB}`)
         // The lanes are already merged locally at this point, so say that rather than
         // "release failed": the work is on the branch and one `git push` finishes it.
         if (!pushed.ok)
-          throw new Error(`lanes merged into ${MB}, but origin refused the push: ${pushed.out.slice(0, 200)}`)
+          throw new Error(`lanes merged into ${MB}, but ${pushFailed(pushed)}`)
       }
       return finish(null, { by: 'skipped' })
     }
@@ -6396,8 +6441,8 @@ function ship(kind, session, { gated = false } = {}) {
       const tagOnOrigin = gitSafe(MAIN, 'ls-remote', '--tags', 'origin', `refs/tags/v${pkg.version}`)
       if (tagOnOrigin.ok && !tagOnOrigin.out.trim()) {
         if (pushes) recordPushOk(state, 'version release')
-        git(MAIN, 'push')
-        git(MAIN, 'push', 'origin', `v${pkg.version}`)
+        mustPush(`refs/heads/${MB}`)
+        mustPush(`refs/tags/v${pkg.version}`, 'origin', `v${pkg.version}`)
         const resumedBuilt = publishFallback(pkg.version, () => beatRelease(session))
         const s = read()
         s.conflicts = conflicts
@@ -6441,8 +6486,8 @@ function ship(kind, session, { gated = false } = {}) {
     git(MAIN, 'commit', '-m', `release: v${next}`)
     git(MAIN, 'tag', `v${next}`)
     if (pushes) recordPushOk(state, 'version release')
-    git(MAIN, 'push')
-    git(MAIN, 'push', 'origin', `v${next}`)
+    mustPush(`refs/heads/${MB}`)
+    mustPush(`refs/tags/v${next}`, 'origin', `v${next}`)
     return finish(next, publishFallback(next, () => beatRelease(session)))
   } catch (e) {
     const s = read()
