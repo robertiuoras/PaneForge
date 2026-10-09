@@ -1234,7 +1234,15 @@ function dispatchCompletion() {
         }
       }
     }
-    if (!dirt && !/^\+ /m.test(diff.out) && merged.ok) continue
+    // A release that rebased master onto origin gave a merged lane's commits new shas: the tip
+    // is no longer an ancestor, yet every commit is '-'. With no merge commit (cherry never
+    // lists merges, and one can carry content of its own) that lane holds nothing (ownsNothing).
+    // PaneForge lane a 2026-10-09: 5f440ebc dispatched a recovery chat though master held it.
+    // A git that fails to answer is "not nothing".
+    if (!dirt && !/^\+ /m.test(diff.out)) {
+      const merges = merged.ok ? null : gitSafe(MAIN, 'rev-list', '--merges', '-n1', `${MB}..${tip.out}`)
+      if (merged.ok || (merges.ok && !merges.out)) continue
+    }
     const key = `lane:${id}:${tip.out}`
     // `dirty`: the pinned work includes uncommitted changes, so trunk holding `commit` is
     // not proof it shipped (closeShippedRecovery).
