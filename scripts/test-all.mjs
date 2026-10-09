@@ -68,6 +68,7 @@ const TESTS = [
   ['laneheartbeat', 'lane-heartbeat-test.mjs'],
   ['lanereclaim', 'lane-reclaim-test.mjs'],
   ['shipimports', 'ship-imports-test.mjs'],
+  ['installengine', 'install-engine-test.mjs'],
   ['guarddeckhold', 'guarddeck-hold-test.mjs'],
   ['power', 'power-test.mjs'],
   ['vault', 'vault-test.mjs'],
