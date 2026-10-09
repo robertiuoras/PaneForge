@@ -17,7 +17,7 @@
 //   node scripts/lane-strand-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,6 +29,12 @@ const here = dirname(fileURLToPath(import.meta.url))
 // from the one under test (case).
 const root = join(realpathSync(tmpdir()), 'paneforge-lane-strand-test')
 rmSync(root, { recursive: true, force: true })
+// The hook remembers what it told each session in the system temp folder for 30 minutes
+// (`toldFile`), keyed by session id and repo path. Both repeat across runs here, so a rerun
+// within the half hour was told nothing and the "the hook tells it" checks failed. Every
+// hook and engine run in this test gets a temp folder that dies with the run.
+const hookTmp = join(root, 'tmp')
+mkdirSync(hookTmp, { recursive: true })
 mkdirSync(root, { recursive: true })
 
 let failed = 0
@@ -45,7 +51,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 /** The same folder spelled in lower case - how the pane's Claude Code cwd read. */
 const lower = (p) => join(dirname(p), basename(p).toLowerCase())
 
-function fixture(name, pool = ['main', 'a', 'b', 'c']) {
+function fixture(name, pool = ['main', 'a', 'b', 'c'], extraEnv = {}) {
   const repo = join(root, name)
   mkdirSync(join(repo, 'scripts'), { recursive: true })
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: name.toLowerCase(), version: '0.0.1' }, null, 2) + '\n')
@@ -55,6 +61,10 @@ function fixture(name, pool = ['main', 'a', 'b', 'c']) {
   writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ lanes: true, pool }, null, 2) + '\n')
   installLane(here, repo)
   copyFileSync(join(here, 'lane-hook.mjs'), join(repo, 'scripts', 'lane-hook.mjs'))
+  // On Windows the hook starts its detached release through this file beside it; without it
+  // wscript is handed a missing script and the release never runs (PC, 2026-10-09: section
+  // G's release never wrote; the app ships it beside the hook, package.json extraResources).
+  copyFileSync(join(here, 'run-hidden.vbs'), join(repo, 'scripts', 'run-hidden.vbs'))
   git(repo, 'init', '-q', '-b', 'master')
   git(repo, 'config', 'user.email', 'test@example.com')
   git(repo, 'config', 'user.name', 'test')
@@ -62,7 +72,7 @@ function fixture(name, pool = ['main', 'a', 'b', 'c']) {
   git(repo, 'commit', '-qm', 'first')
   git(repo, 'tag', 'v0.0.1')
 
-  const env = (pane) => ({ ...process.env, PF_PANE: pane, PF_RELEASE: 'version', PANEFORGE_REPO: repo, LANE_REGISTRY: join(root, `${name}.registry.json`) })
+  const env = (pane) => ({ ...process.env, PF_PANE: pane, PF_RELEASE: 'version', PANEFORGE_REPO: repo, LANE_REGISTRY: join(root, `${name}.registry.json`), TMPDIR: hookTmp, TMP: hookTmp, TEMP: hookTmp, ...extraEnv })
   /** `pane` is the PF_PANE the app gives every chat it starts; '' is a chat outside it. */
   const lane = (pane, ...args) => {
     try {
@@ -87,22 +97,23 @@ function fixture(name, pool = ['main', 'a', 'b', 'c']) {
    * A prompt through the real UserPromptSubmit hook: Claude Code's own input, with the
    * transcript under the project folder Claude Code names after the cwd it was given.
    */
-  const prompt = (pane, session, cwd) => {
+  const hook = (event, pane, session, cwd, more = {}) => {
     const transcript = join(root, 'projects', cwd.replace(/[^A-Za-z0-9-]/g, '-'), `${session}.jsonl`)
     mkdirSync(dirname(transcript), { recursive: true })
-    writeFileSync(transcript, '')
+    if (!existsSync(transcript)) writeFileSync(transcript, '')
     try {
-      return execFileSync(process.execPath, [join(repo, 'scripts', 'lane-hook.mjs'), '--event=prompt'], {
+      return execFileSync(process.execPath, [join(repo, 'scripts', 'lane-hook.mjs'), `--event=${event}`], {
         cwd,
         encoding: 'utf8',
         stdio: 'pipe',
-        input: JSON.stringify({ session_id: session, cwd, transcript_path: transcript, prompt: 'carry on' }),
+        input: JSON.stringify({ session_id: session, cwd, transcript_path: transcript, ...more }),
         env: env(pane)
       })
     } catch (e) {
       return `${e.stdout ?? ''}${e.stderr ?? ''}`
     }
   }
+  const prompt = (pane, session, cwd) => hook('prompt', pane, session, cwd, { prompt: 'carry on' })
   /**
    * SessionEnd for `/clear` as the hook runs it - the hold stamped ended in-line, then the
    * release - in the order measured on 2026-10-04: the release finished first, before the
@@ -129,7 +140,7 @@ function fixture(name, pool = ['main', 'a', 'b', 'c']) {
       return `${e.stdout ?? ''}${e.stderr ?? ''}`
     }
   }
-  return { repo, lane, state, patchState, claim, laneOf, prompt, cleared, pretool }
+  return { repo, lane, state, patchState, claim, laneOf, hook, prompt, cleared, pretool, statePath }
 }
 
 const identity = (dir) => {
@@ -297,6 +308,88 @@ const variant = (p) => (caseBlind ? lower(p) : p)
   ok('F: a new chat is given a working lane, not the recovery\'s broken one', next.lane === 'a', JSON.stringify(next))
   const asked = f.claim('pane-3', 'third', '--cwd', f.repo, '--prefer', 'c')
   ok('F: asking for that lane by name is still refused (no automatic repair)', asked.lane !== 'c' && !existsSync(`${f.repo}-c`) && /preserved recovery checkout/.test(String(asked.error)), JSON.stringify(asked))
+}
+
+// ------------------------------------------- G. a chat living in another linked worktree
+
+{
+  // 2026-10-09 9:16am, taskdriver.ai on the Mac: the pane's cwd was
+  // `taskdriver-client-monitoring`, a linked worktree of the repo on its own branch and none
+  // of the lane folders. The hook calls such a chat a visitor (its transcript lives under
+  // another project folder) and hands it a letter lane; it left uncommitted edits in lane a.
+  // The Stop hook's auto-clear typed /clear, the pane's next chat was sent to lane b, lane a
+  // sat unheld and dirty, and the completion dispatcher spent two recovery chats on it.
+  // Everything here goes through the real hooks: Stop, SessionEnd (reason "clear", its
+  // detached release waited for), then the next chat's first prompt from the same folder.
+  const base = join(root, 'Foreign-app')
+  mkdirSync(base, { recursive: true })
+  const panes = join(base, 'panes.txt')
+  const processes = join(base, 'processes.json')
+  const dispatched = join(base, 'completion.log')
+  writeFileSync(processes, '[]')
+  const f = fixture('Foreign', ['main', 'a', 'b', 'c'], { LANE_PANES_FILE: panes, LANE_PROCESSES_FILE: processes, LANE_COMPLETION_LOG: dispatched })
+  const foreign = join(root, 'client-monitoring')
+  git(f.repo, 'worktree', 'add', '-q', '-b', 'fix/client-monitoring', foreign)
+  // The app's word on which chats are alive and which pane sits where (dispatchCompletion).
+  const alive = (...chats) => {
+    mkdirSync(join(f.repo, '.git', 'paneforge-panes'), { recursive: true })
+    writeFileSync(join(f.repo, '.git', 'paneforge-panes', `pf-${process.pid}.json`), JSON.stringify({ at: Date.now(), chats }))
+    writeFileSync(panes, `1\tpane-m\tidle\tmain\t${f.repo}\n2\tpane-p\tidle\tclient monitoring\t${foreign}\n`)
+  }
+  const recoveryOf = (id) => {
+    const p = join(f.repo, '.git', 'paneforge-recovery.json')
+    const items = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')).items ?? {} : {}
+    return Object.values(items).filter((r) => r.lane === id)
+  }
+  const sent = () => (existsSync(dispatched) ? readFileSync(dispatched, 'utf8').trim() : '')
+  const dispatchedFor = (id) => sent().split('\n').filter((l) => l.includes(`"key":"lane:${id}:`))
+
+  // Somebody else is in the main copy, as on the desk that morning.
+  f.claim('pane-m', 'main-chat', '--cwd', f.repo, '--prefer', 'main')
+  f.prompt('pane-p', 'before-clear', foreign)
+  const held = f.laneOf('before-clear')
+  ok('G: (setup) the chat in the other linked worktree is handed a lane', held === 'a', JSON.stringify(f.state().lanes))
+  writeFileSync(join(`${f.repo}-a`, 'wip.js'), 'intent.ts edits, uncommitted\n')
+  f.hook('stop', 'pane-p', 'before-clear', foreign)
+
+  // SessionEnd: the hold is stamped ended in-line, then the release runs detached. The
+  // release's own write is the last change to the ledger; wait (bounded) for it.
+  const before = statSync(f.statePath).mtimeMs
+  f.hook('end', 'pane-p', 'before-clear', foreign, { reason: 'clear' })
+  const afterPark = statSync(f.statePath).mtimeMs
+  // Bounded, and the time it took is printed: Mac 475-508 ms (2026-10-09).
+  const parkedAt = Date.now()
+  let released = false
+  for (const until = parkedAt + 30_000; Date.now() < until; ) {
+    if (statSync(f.statePath).mtimeMs !== afterPark) { released = Date.now() - parkedAt; break }
+    execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 100)'])
+  }
+  ok('G: (setup) SessionEnd stamped the hold and its detached release ran', afterPark !== before && released !== false, `park wrote: ${afterPark !== before}, release wrote: ${released !== false ? `after ${released} ms` : 'not within 30s'}`)
+  if (released !== false) console.log(`      (the detached release wrote after ${released} ms)`)
+  ok('G: the dirty lane is kept for the pane through /clear', f.state().lanes.a?.session === 'before-clear' && f.state().lanes.a?.pane === 'pane-p', JSON.stringify(f.state().lanes))
+
+  // The app's 1-minute tick between the clear and the next prompt.
+  alive('main-chat')
+  f.lane('pane-m', 'retry', '--session', 'main-chat')
+  ok('G: the completion dispatcher does not take the kept lane before the next chat speaks', !dispatchedFor('a').length && !recoveryOf('a').length, sent() || JSON.stringify(recoveryOf('a')))
+
+  const said = f.prompt('pane-p', 'after-clear', foreign)
+  ok('G: the pane\'s next chat, prompting from the same linked worktree, gets lane a back', f.laneOf('after-clear') === 'a', `${said.trim()}\n${JSON.stringify(f.state().lanes)}`)
+  ok('G: and the hook tells it lane a, not a fallback', /-a \(branch lane-a\)/.test(said), said.trim() || `(the hook printed nothing) ${JSON.stringify(f.state().lanes.a)}`)
+  ok('G: its uncommitted file is still there', existsSync(join(`${f.repo}-a`, 'wip.js')))
+  const write = f.pretool('pane-p', 'after-clear', join(`${f.repo}-a`, 'wip.js'))
+  ok('G: and it may write to it', !/"deny"/.test(write), write.trim())
+
+  alive('main-chat', 'after-clear')
+  f.lane('pane-m', 'retry', '--session', 'main-chat')
+  ok('G: no recovery chat is sent at the lane while that chat is alive', !dispatchedFor('a').length && !recoveryOf('a').length, sent() || JSON.stringify(recoveryOf('a')))
+
+  // Control: the same lane with its hold gone (what the incident left) IS dispatched, so the
+  // two checks above are not passing because the dispatcher never runs in this fixture.
+  f.patchState((s) => delete s.lanes.a)
+  alive('main-chat')
+  f.lane('pane-m', 'retry', '--session', 'main-chat')
+  ok('G: (control) an unheld dirty lane a is offered to the dispatcher', dispatchedFor('a').length === 1, sent() || '(nothing dispatched)')
 }
 
 // ------------------------------------------- E. what the hook asks the engine

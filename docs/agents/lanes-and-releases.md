@@ -124,6 +124,12 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).
+- Claude Code's lane hooks run the INSTALLED copy (`<app>/Resources/scripts/lane-hook.mjs` and
+  its sibling `lane.mjs`), so a lane-engine fix on master does nothing until it is installed.
+  Without a release, install it with `node scripts/install-engine.mjs` on each machine (the whole
+  shipped set from `master`, backup, read-back, macOS re-sign; `--check` exits 1 on drift). Never
+  hand-copy a subset: on 2026-10-09 lane.mjs was copied without lane-hook.mjs, the 3 Oct hook never
+  passed `--cleared`, and a /clear stranded a dirty lane (`test:lanestrand` G, `test:installengine`).
 
 ## Two desks, one repository
 
