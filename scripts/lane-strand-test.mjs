@@ -225,12 +225,13 @@ const variant = (p) => (caseBlind ? lower(p) : p)
 // ------------------------------------------- C. what is not a /clear is unchanged
 
 {
-  // The pane closed (SessionEnd with any other reason): the dirty lane is given up exactly as
-  // before, and stays out of every automatic choice.
+  // The pane closed (SessionEnd with any other reason) and its hold names no card: the dirty
+  // lane is given up exactly as before, and stays out of every automatic choice. (A hold
+  // that names its card is kept for it: lane-repane-test.)
   const f = fixture('Closed')
   heldWithWork(f, 'pane-p', 'closing')
   f.lane('pane-p', 'park', '--session', 'closing', '--ended')
-  f.lane('pane-p', 'release', '--session', 'closing')
+  f.lane('pane-p', 'release', '--session', 'closing', '--closed')
   ok('C: a chat that ended without /clear gives its hold up', !f.state().lanes.a, JSON.stringify(f.state().lanes))
   const auto = f.claim('pane-q', 'next', '--cwd', f.repo)
   ok('C: and its dirty lane is no automatic claim\'s', auto.lane !== 'a', JSON.stringify(auto))
@@ -444,6 +445,9 @@ const variant = (p) => (caseBlind ? lower(p) : p)
     hook('end', { session_id: session, cwd: repo, ...(reason ? { reason } : {}) })
     const line = releaseLine(session)
     ok(`E: SessionEnd (${reason ?? 'no reason'}) ${want ? 'tells' : 'does not tell'} the release the chat was cleared`, Boolean(line) && /\s--cleared\b/.test(line) === want, line ?? '(no release logged within 15s)')
+    // Every other end may be the app ending the CLI to reopen the card in a new pane
+    // (lane-repane-test): the engine keeps an unfinished hold that names its card.
+    ok(`E: SessionEnd (${reason ?? 'no reason'}) ${want ? 'does not tell' : 'tells'} the release the chat was closed`, Boolean(line) && /\s--closed\b/.test(line) === !want, line ?? '(no release logged within 15s)')
   }
 
   const lowerA = variant(`${repo}-a`)
