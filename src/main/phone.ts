@@ -103,6 +103,10 @@ const ASK_WINDOW_MS = 10 * 60_000
 const DESK_ONLY = new Set([
   // Switching a CLI login changes credentials on the selected computer.
   'agents:includedAccounts',
+  // The first-run card's sign-in: which account this desk is signed in with, and the code a
+  // sign-in page shows typed into the sign-in waiting for it - both about this desk's logins.
+  'setup:accounts',
+  'setup:signInType',
   // A phone must not start a Moonlight window on the desk it is looking at, nor open or
   // steer a screen view: its frames carry the desk's connection details.
   'screen:open',
@@ -270,6 +274,8 @@ const GATED_INVOKE = new Set([
   'agents:uninstall',
   // Same class as `agents:install`: runs winget on this desk.
   'setup:installGit',
+  // Runs the assistant's own sign-in command on this desk, like an install.
+  'setup:signIn',
   // Same class as the two above: it runs an installer on this machine.
   'agents:update',
   'update:install',

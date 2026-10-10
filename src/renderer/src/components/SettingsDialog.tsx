@@ -176,7 +176,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const [rescan, setRescan] = useState(0)
   // What this machine has, read in main: a row for a thing it does not have is not drawn.
   // The saved values behind a hidden row still hold.
-  const [facts, setFacts] = useState<SettingsFacts>({ telegram: false, discord: false })
+  const [facts, setFacts] = useState<SettingsFacts>({ telegram: false, discord: false, accountManager: false })
   const paired = (config.remote?.peers ?? []).length > 0
   // Rescan, Install and Locate change what is on this machine, but the list the dialog is
   // handed is only re-read when the window does it, so the grid kept saying "not on PATH"
@@ -674,7 +674,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
           {tab === 'agents' && (
             <>
-              <IncludedAccounts />
+              {facts.accountManager && <IncludedAccounts />}
               <div className="setting">
                 <div className="setting-row">
                   <label>Agents on this machine</label>

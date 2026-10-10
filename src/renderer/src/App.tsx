@@ -29,6 +29,7 @@ import ConfirmDialog from './components/ConfirmDialog'
 import DiffDialog from './components/DiffDialog'
 import { PaneMenu } from './components/PaneMenu'
 import Welcome from './components/Welcome'
+import FirstRunCard, { useFirstRun } from './components/FirstRunCard'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
@@ -952,6 +953,7 @@ export default function App(): JSX.Element {
    * on `<html>` and styles.css does the layout.
    */
   const handheld = useHandheld(activeId)
+  const [firstRun, setFirstRun] = useFirstRun()
   // A swipe in from the left edge is the phone's Back, same gesture as iOS. Only armed
   // while a pane holds the screen, and only from the first 28px so a terminal's own
   // horizontal scrolls and selections never trigger it.
@@ -6122,7 +6124,12 @@ export default function App(): JSX.Element {
               onStart={() => setPicking(true)}
               onSearch={() => setPalette(true)}
               onTools={() => setToolsOpen(true)}
-              onLaunch={(req) => start([req])}
+              firstRun={firstRun}
+              firstRunCard={
+                handheld.handheld ? (
+                  <FirstRunCard onLaunch={(req) => start([req])} onStarted={() => setFirstRun(false)} />
+                ) : undefined
+              }
             />
           )}
         </div>
@@ -6878,7 +6885,12 @@ export default function App(): JSX.Element {
             )}
           </div>
         ))}
-        {sessions.length === 0 && (
+        {sessions.length === 0 && firstRun && !handheld.handheld && (
+          <div className="fr-stage">
+            <FirstRunCard onLaunch={(req) => start([req])} onStarted={() => setFirstRun(false)} />
+          </div>
+        )}
+        {sessions.length === 0 && firstRun === false && (
           <div className="placeholder">
             <div className="ph-logo">
               <AppLogo size={44} />

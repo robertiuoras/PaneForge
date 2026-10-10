@@ -647,15 +647,20 @@ export function quietIdleSounds(raw: {
   return raw.idleSoundsOffV1 ? { idleSoundsOffV1: true } : { soundOnIdle: false, idleSoundsOffV1: true }
 }
 
-/** The sounds each alert starts on: exactly what the app played before it had a picker. */
+/**
+ * The sounds each alert starts on: the set Robert settled on after living with the picker
+ * (2026-10-07) - a soft knock for "finished", the chime for "stuck", at half volume. Only a
+ * new install starts here: `defaults()` writes this into the config at first launch, so
+ * anyone already set up keeps what they have.
+ */
 export const DEFAULT_SOUNDS: SoundConfig = {
-  done: 'chime',
-  stall: 'fall',
+  done: 'knock',
+  stall: 'chime',
   bell: 'ping',
   ask: 'knock',
   tick: 'tick',
   move: 'bowl',
-  volume: 1,
+  volume: 0.5,
   custom: []
 }
 

@@ -7,10 +7,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { SetupRow, SetupRowId } from '@shared/setupCheck'
-import type { StartSessionRequest } from '@shared/types'
-import { showFirstRun } from '@shared/firstRun'
+import { signInAgent } from '@shared/firstRun'
 import InstallConsole from './InstallConsole'
-import FirstRunCard from './FirstRunCard'
 
 const api = window.api
 
@@ -21,39 +19,24 @@ interface WelcomeProps {
   onSearch: () => void
   /** Attention, project board, swarm, shortcuts. */
   onTools: () => void
-  /** Opens one pane straight away, the way New session does - the first-run card's button. */
-  onLaunch: (req: StartSessionRequest) => Promise<'local' | 'remote' | null>
+  /**
+   * `useFirstRun()`: this profile has never opened a pane. null while that is being read,
+   * so neither "Open a project" style nor the setup checklist flashes up and gets swapped.
+   */
+  firstRun: boolean | null
+  /**
+   * The first-run welcome, when this list is where it goes: on a narrow screen the list is
+   * the home screen and the middle of the window is not drawn at all (`handheld.ts`).
+   */
+  firstRunCard?: JSX.Element
 }
 
-export default function Welcome({ onStart, onSearch, onTools, onLaunch }: WelcomeProps): JSX.Element {
-  // null while the first read is out, so neither card flashes up and gets swapped.
-  const [firstRun, setFirstRun] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let live = true
-    api
-      .getConfig()
-      .then(async (config) => {
-        // The flag alone settles it; past sessions are only read for a profile without it.
-        const past = config.firstChatStarted ? 0 : (await api.listHistory()).length
-        const show = showFirstRun(config.firstChatStarted, past)
-        // Somebody who has used this profile before gets the flag now, so the past-session
-        // list is read once per profile rather than every time the desk empties.
-        if (!show && !config.firstChatStarted) api.setConfig({ firstChatStarted: true }).catch(() => undefined)
-        return show
-      })
-      .catch(() => false)
-      .then((show) => live && setFirstRun(show))
-    return () => {
-      live = false
-    }
-  }, [])
-
+export default function Welcome({ onStart, onSearch, onTools, firstRun, firstRunCard }: WelcomeProps): JSX.Element {
   return (
     <div className="welcome">
       <h2 className="welcome-h">What are we building today?</h2>
       <p className="welcome-sub">Open a project and it starts here, on this screen.</p>
-      {firstRun && <FirstRunCard onLaunch={onLaunch} />}
+      {firstRun && firstRunCard}
       <button className={firstRun ? 'welcome-chip' : 'primary welcome-start'} onClick={onStart}>
         <span className="plus">+</span> Open a project
       </button>
@@ -75,7 +58,7 @@ export default function Welcome({ onStart, onSearch, onTools, onLaunch }: Welcom
           See what needs you
         </button>
       </div>
-      {firstRun === false && <SetupCard onSignIn={onStart} />}
+      {firstRun === false && <SetupCard />}
     </div>
   )
 }
@@ -86,7 +69,7 @@ export default function Welcome({ onStart, onSearch, onTools, onLaunch }: Welcom
  * when the window regains focus - no polling timer, because nothing changes here on its
  * own between those two moments.
  */
-function SetupCard({ onSignIn }: { onSignIn: () => void }): JSX.Element | null {
+function SetupCard(): JSX.Element | null {
   const [rows, setRows] = useState<SetupRow[] | null>(null)
   const [log, setLog] = useState<SetupRowId | ''>('')
   const [running, setRunning] = useState<SetupRowId | ''>('')
@@ -126,15 +109,12 @@ function SetupCard({ onSignIn }: { onSignIn: () => void }): JSX.Element | null {
   if (!rows || rows.length === 0) return null
 
   const start = (id: string): void => {
-    void (id === 'git' ? api.installGit() : api.installAgent(id))
+    const signing = signInAgent(id)
+    void (id === 'git' ? api.installGit() : signing ? api.signIn(signing) : api.installAgent(id))
   }
 
   const press = (row: SetupRow): void => {
     setError('')
-    if (row.id === 'signin') {
-      onSignIn()
-      return
-    }
     setLog(row.id)
     setRunning(row.id)
     setAttempt((n) => n + 1)

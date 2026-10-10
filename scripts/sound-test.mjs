@@ -183,15 +183,16 @@ is(builtinSound('ping').voices[0].freq, 1567.98, 'the bell is still one note on 
 for (const ev of ['done', 'stall', 'bell'])
   ok(builtinSound(DEFAULT_SOUNDS[ev]), `the default for "${ev}" names a real sound`)
 
-is(soundFor(undefined, 'done').def.id, 'chime', 'a config with no sounds block still chimes')
-is(soundFor(undefined, 'stall').def.id, 'fall', 'and still falls')
+// New installs start on Robert's set (2026-10-07): knock for done, chime for stall.
+is(soundFor(undefined, 'done').def.id, 'knock', 'a config with no sounds block knocks when done')
+is(soundFor(undefined, 'stall').def.id, 'chime', 'and chimes when stuck')
 is(soundFor(undefined, 'bell').def.id, 'ping', 'and still pings')
 
 is(soundFor({ done: 'bark' }, 'done').def.id, 'bark', 'a picked sound is used')
 // The important one: every way of being wrong lands on a WORKING sound, and on the one
 // belonging to that event - a stalled turn and a finished turn stay tellable apart.
-is(soundFor({ done: 'nope' }, 'done').def.id, 'chime', 'an id from a newer version falls back')
-is(soundFor({ stall: 'custom:gone' }, 'stall').def.id, 'fall', 'a deleted upload falls back per event')
+is(soundFor({ done: 'nope' }, 'done').def.id, 'knock', 'an id from a newer version falls back')
+is(soundFor({ stall: 'custom:gone' }, 'stall').def.id, 'chime', 'a deleted upload falls back per event')
 is(soundFor({ bell: '' }, 'bell').def.id, 'ping', 'an empty pick falls back')
 
 const mine = [{ id: 'abc', name: 'Airhorn', file: 'abc.wav', addedAt: 1 }]
@@ -261,7 +262,7 @@ const drifted = {
 }
 const pruned = pruneSounds(drifted, (f) => f === 'here.wav')
 is(pruned.custom.length, 1, 'an upload whose file vanished is dropped')
-is(pruned.done, 'chime', 'and the alert that used it goes back to its own default')
+is(pruned.done, 'knock', 'and the alert that used it goes back to its own default')
 is(pruned.stall, CUSTOM_PREFIX + 'here', 'while an alert whose file survived is untouched')
 is(pruned.bell, 'ping', 'and a built-in pick is never rewritten')
 is(pruned.volume, 1, 'a corrupted volume is clamped on the way through')
@@ -348,7 +349,7 @@ rmSync(file, { force: true })
 // in-memory copy it already has - the same call in the same order the app makes it.
 pruneCustomSounds()
 is(sounds().custom.length, 0, 'an upload whose file vanished is forgotten at startup')
-is(sounds().done, 'chime', 'and the alert that used it is audible again')
+is(sounds().done, 'knock', 'and the alert that used it is audible again')
 
 writeFileSync(join(work, 'thing2.wav'), Buffer.alloc(64, 1))
 const second = addSoundFile(join(work, 'thing2.wav'))

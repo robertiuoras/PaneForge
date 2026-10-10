@@ -2073,6 +2073,8 @@ export interface SettingsFacts {
   telegram: boolean
   /** the Discord app is installed on this machine */
   discord: boolean
+  /** the saved-login switcher behind "Included-plan accounts" is on this machine */
+  accountManager: boolean
 }
 
 export interface Config {
@@ -2926,6 +2928,12 @@ export interface Api {
   checkSetup(): Promise<import('./setupCheck').SetupRow[]>
   /** Windows-only: installs Git for Windows, streamed to onInstall like an agent install. */
   installGit(): Promise<void>
+  /** The email each assistant is signed in with on this machine ('' = none or unknown). */
+  setupAccounts(): Promise<{ claude: string; codex: string }>
+  /** Runs the assistant's own sign-in (opens the web browser), streamed to onInstall under its sign-in row. */
+  signIn(agent: 'claude' | 'codex'): Promise<void>
+  /** Types the code a sign-in page shows into the sign-in that is waiting for it. */
+  signInType(agent: 'claude' | 'codex', text: string): Promise<void>
 
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
