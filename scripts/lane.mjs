@@ -1102,6 +1102,7 @@ function recoveryNextStep(state, r, session) {
     return `${what} Record a receipt for this HEAD: ${cli} --disposition verified --receipt <json: commit, checks [{command, exitCode: 0}], review {reviewer: <another chat>, result: "accepted"}>.`
   if (r.owner && ['owned', 'verified'].includes(r.status))
     return `${what} If that chat is gone and this lane carries its work, take it over: ${cli} --disposition adopt, then verify.`
+  if (r.held) return `${what} It waits for Robert's "release" and needs no new verification. Once he says release, record his words: ${cli} --disposition reviewed --receipt <json with "reason">, then ready.`
   if (r.owner) return `${what} Only its owner can record it; it closes by itself once trunk holds ${r.commit}.`
   if (r.status === 'blocked')
     return `${what} If this lane already carries that work, record it: ${cli} --disposition reviewed --receipt <json with "reason">.`
@@ -1204,6 +1205,33 @@ Bind this recovery after the ownership readback: ${cli('recover')} --key ${JSON.
 Review intent and content equivalence, finish only intended work, run the repository's required PC checks (no Mac build/full-check fallback), obtain independent review, and commit verified work. Save a JSON receipt with commit, nonempty checks array of {command, exitCode: 0}, and review: {reviewer: <independent owner>, result: "accepted"}. Then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition verified --receipt <json-file>; normal ready requires this pinned verification before integration.
 Run ${cli('ready')} --session <actual-native-id> --lane <owned-slot>. Read the real merge/push outcome and remote inclusion, then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition complete. A ready flag is not completion. Version-mode publication remains for Robert's publisher.
 If blocked or content already equivalent, save a JSON receipt with reason/evidence and use --disposition blocked or reviewed with --receipt <file>. Keep the pinned work preserved. Do not leave an acknowledgment loop or silently abandon this pane.`
+}
+
+// Why landing lane work at `commit` waits for Robert, or null. Where every trunk push goes
+// live and the Opus review of the work says RISKY, finishing it waits for his "release", so a
+// chat sent to finish it can only ask him again. liftgym lane a fc4dd41, 10-11 Oct 2026: the
+// login change was held for him, then two "Finish preserved work" chats re-verified it
+// overnight and the second only re-asked him, as a notification about abandoned work.
+// claude-config's decider answers (`release-held`). No decider on this machine, or one that
+// does not answer, holds nothing: the work gets its chat as before. `LANE_DECIDER` stands
+// in for it in tests; a fixture repo in the temp folder never asks the real one.
+function releaseHold(commit) {
+  const decider = process.env.LANE_DECIDER || (inTempFolder(MAIN) ? null : [
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'decider.mjs'),
+    ...(process.platform === 'win32' ? [join(homedir(), 'Desktop', 'Projects', 'claude-memory', 'claude-config', 'decider.mjs')] : [])
+  ].find((p) => existsSync(p)))
+  if (!decider) return null
+  // The app's timer runs this under Electron-as-node; the decider is plain node.
+  const r = spawnSync(process.execPath, [decider, 'release-held', '--repo', MAIN, '--ref', commit], {
+    encoding: 'utf8',
+    timeout: 30_000,
+    windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+  })
+  try {
+    const v = JSON.parse(r.stdout)
+    return v.held === true ? String(v.reason || 'held for Robert\'s "release"') : null
+  } catch { return null }
 }
 
 function dispatchCompletion() {
@@ -1314,7 +1342,14 @@ function dispatchCompletion() {
     if (merged.code !== 1) continue
     candidates.push({ ...(resume?.key === key ? resume : {}), key, ref: p.ref, commit: p.commit, lane: null })
   }
-  const r = candidates[0]
+  // Work held for Robert's release is not abandoned: record why and open no chat for it.
+  let r = null
+  for (const c of candidates) {
+    const held = c.lane && !c.problem && !c.dirty ? releaseHold(c.commit) : null
+    if (!held) { r = c; break }
+    items[c.key] = { ...items[c.key], ...c, owner: null, status: 'blocked', held: true, reason: held, at: now() }
+    if (state.recovery.active === c.key) delete state.recovery.active
+  }
   if (!r) { writeRecovery(state); return null }
   const ctl = join(here, 'pf-ctl.mjs')
   const log = process.env.LANE_COMPLETION_LOG

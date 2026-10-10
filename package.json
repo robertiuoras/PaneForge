@@ -141,7 +141,7 @@
     "test:laneslowpush": "node scripts/lane-slow-push-test.mjs",
     "test:lanemergeitself": "node scripts/lane-merge-itself-test.mjs",
     "test:lanelivemerge": "node scripts/lane-livemerge-test.mjs",
-    "test:lanecompletion": "node scripts/lane-completion-test.mjs && node scripts/lane-completion-owner-test.mjs && node scripts/lane-completion-adopt-test.mjs",
+    "test:lanecompletion": "node scripts/lane-completion-test.mjs && node scripts/lane-completion-owner-test.mjs && node scripts/lane-completion-adopt-test.mjs && node scripts/lane-release-held-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
     "test:rail": "node scripts/rail-test.mjs",
     "test:railclick": "node scripts/rail-click-test.mjs",

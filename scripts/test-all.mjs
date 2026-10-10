@@ -418,6 +418,7 @@ const TESTS = [
   ['lanecompletion', 'lane-completion-test.mjs'],
   ['lanecompletionowner', 'lane-completion-owner-test.mjs'],
   ['lanecompletionadopt', 'lane-completion-adopt-test.mjs'],
+  ['lanereleaseheld', 'lane-release-held-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -516,7 +517,7 @@ const SERIAL = new Set([
  * always runs.
  */
 const LANE_ONLY = new Set([
-  'gate', 'lanecompletion', 'lanecompletionowner', 'lanecompletionadopt', 'lanecleared',
+  'gate', 'lanecompletion', 'lanecompletionowner', 'lanecompletionadopt', 'lanereleaseheld', 'lanecleared',
   'conflict', 'lanedispatch', 'lanemergeitself', 'lanedamaged', 'lanehalfmade', 'laneproof',
   'laneorphan', 'lanemergehold', 'promote', 'lanesleep', 'lanenevercopy', 'laneuntracked',
   'lanevisitor', 'laneparked', 'laneledger', 'lanedevice', 'lanestrand', 'lanerepane', 'pushgate'
