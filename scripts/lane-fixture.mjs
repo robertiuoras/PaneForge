@@ -36,6 +36,8 @@ export function installLane(here, repo) {
   // `claim` drops every other hold wearing the same pane - so four "chats" collapsed into
   // one and tentative-lane-test failed only when run from inside PaneForge (2026-09-07).
   delete process.env.PF_PANE
+  // Same for the card id (`PF_CHAT`): two holds naming one card are one chat to `claim`.
+  delete process.env.PF_CHAT
   const names = laneScripts(here)
   for (const f of names) copyFileSync(join(here, f), join(repo, 'scripts', f))
   return names

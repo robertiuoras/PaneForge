@@ -699,6 +699,24 @@ const DEVICE = refSafe(process.env.PF_DEVICE || hostname(), 40)
 /** The pane this chat is running in, when the app started it. Survives `/clear`, which the
  * session id does not - see the hold-per-pane rule in `claim`. */
 const PANE = (process.env.PF_PANE || '').trim()
+/** The app's card for this chat (PaneForge `PF_CHAT`). The pane id does NOT survive a reopen:
+ * when the app ends a chat's CLI to move it and starts the same conversation again (a failed
+ * move to the PC, 2026-10-10 videos), the new terminal is a new pane. The card is the same. */
+const CHAT = (process.env.PF_CHAT || '').trim()
+
+/** This hold was worn by the chat running here, or by an earlier chat in the same pane or
+ * the same card. Where both sides name a card, the card decides: one card is one chat. */
+function sameChatPlace(c) {
+  if (CHAT && c.chat) return c.chat === CHAT
+  return Boolean(PANE) && c.pane === PANE
+}
+
+/** Record where this chat runs now, on a hold it holds. */
+function wearPlace(c) {
+  if (PANE) c.pane = PANE
+  if (CHAT) c.chat = CHAT
+  else if (PANE) delete c.chat
+}
 
 /** Repos with no remote never had lanes to share, and have no channel to share them on. */
 let originKnown
@@ -3192,7 +3210,12 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // What is not carried is dropped only when it has ALSO been given up - parked by its own
   // Stop hook, or still tentative - and its lane holds no uncommitted work and no commits
   // of its own. Nothing here can lose work.
-  if (PANE) {
+  //
+  // "The same pane" includes the same CARD (`PF_CHAT`): the app reopens a card in a new
+  // terminal when it ends the CLI to move it and the move fails (2026-10-10, videos lane c,
+  // 39 uncommitted files: a hold worn by pane 64257da2, the card reopened in 10d6b2fa, /clear
+  // there, and its next chat was handed lane d while every write to c was refused).
+  if (PANE || CHAT) {
     const hasWork = (id) => {
       const w = laneWork(id)
       return w.dirty || w.ahead > 0 || Boolean(state.ready[id]) || Boolean(state.conflicts[id])
@@ -3200,7 +3223,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     const earlier = Object.entries(state.lanes)
       // A folder missing most of its files (damageOf) is not work to carry on: the pane's
       // new chat takes another lane and the earlier hold stays where it is for a person.
-      .filter(([id, c]) => c.pane === PANE && c.session !== session && c.ended && !laneWork(id).damaged)
+      .filter(([id, c]) => sameChatPlace(c) && c.session !== session && c.ended && !laneWork(id).damaged)
       .map(([id, c]) => ({ id, c, work: hasWork(id) }))
       // Work first, then the most recently heard from.
       .sort((x, y) => y.work - x.work || (y.c.seen ?? 0) - (x.c.seen ?? 0))
@@ -3216,7 +3239,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       if (cwd) carry.c.cwd = cwd
     }
     for (const [id, c] of Object.entries(state.lanes)) {
-      if (c.pane !== PANE || c.session === session) continue
+      if (!sameChatPlace(c) || c.session === session) continue
       // A sleeping hold is not given up just because it also reads parked/tentative -
       // it is kept for the press that wakes it, not for the tidy ledger.
       if (c.asleep) continue
@@ -3268,8 +3291,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // only kind the strip draws. Later claims carry the folder, so take the first one
       // that does rather than leaving the hold anonymous for its whole life.
       if (cwd && !c.cwd) c.cwd = cwd
-      // Claimed before this chat was cleared, or before the pane id was recorded at all.
-      if (PANE) c.pane = PANE
+      // Claimed before this chat was cleared or reopened, or before the pane id was recorded.
+      wearPlace(c)
       // Once a chat has written in its lane the lane is really held, and a later prompt
       // that happens not to mention PaneForge must not hand it back.
       if (!tentative) delete c.tentative
@@ -3574,6 +3597,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     device: DEVICE,
     // Which pane, when the app started this chat: the one identity that survives a clear.
     ...(PANE ? { pane: PANE } : {}),
+    // Which card: the identity that survives the app reopening the chat in a new pane.
+    ...(CHAT ? { chat: CHAT } : {}),
     claimed: now(),
     seen: now(),
     ...(tentative ? { tentative: true } : {}),
@@ -3654,6 +3679,9 @@ function guard(session, path) {
     delete holder.tentative
     delete holder.parked
     delete holder.ended
+    // A conversation the app reopened in a new pane writes from there: the hold follows it,
+    // or the pane's next chat after a /clear cannot carry it (sameChatPlace in claim).
+    wearPlace(holder)
     write(state)
     return null
   }
@@ -3667,10 +3695,12 @@ function guard(session, path) {
     write(state)
     return null
   }
-  if (!holder) {
-    // Unclaimed checkout: claim THIS one for the session rather than refusing. An
-    // agent that opened the repo directly, or was already working here before lanes
-    // existed, should simply carry on.
+  // Unclaimed checkout: claim THIS one for the session rather than refusing. An agent that
+  // opened the repo directly, or was already working here before lanes existed, should
+  // simply carry on. So does the next chat of the pane or card whose ended chat held it: a
+  // chat that writes into another repo is never claimed for it by its prompt hook, and its
+  // first write is the first the engine hears of it (claim carries the hold, or refuses).
+  if (!holder || (holder.ended && sameChatPlace(holder))) {
     try {
       const got = claim(session, dirname(target), lane.id)
       if (got.lane === lane.id) return null
@@ -5653,8 +5683,12 @@ function ready(session, wanted) {
  * `cleared` is the chat's own SessionEnd for `/clear` (lane-hook passes it for reason
  * "clear"): the same pane goes on with a new session id, so its unfinished lane is kept for
  * that next chat to carry (claim) instead of being given up - see below.
+ *
+ * `closed` is that SessionEnd for any other reason (lane-hook passes it): the app ending the
+ * CLI may reopen the same card in a new pane, so an unfinished hold that names its card is
+ * kept for it the same way.
  */
-function releaseClaim(session, { gone = false, cleared = false } = {}) {
+function releaseClaim(session, { gone = false, cleared = false, closed = false } = {}) {
   const state = reap(read())
   // The chat is going. Whatever this device told the other one on its behalf stops being
   // true now rather than in PEER_STALE_MS - otherwise the desk that ends its day first
@@ -5699,7 +5733,13 @@ function releaseClaim(session, { gone = false, cleared = false } = {}) {
       // pane wore, and a pane the app says is gone are given up exactly as before; claim
       // carries a kept hold only to the SAME pane, so nobody else can take it.
       // On `--gone` markReady is skipped on purpose: marking clean-ahead work ready at /clear is the recorded bug (memory bug_clear_mid_recovery_marks_lane_ready_2026-10-02); unready orphan work belongs to the completion dispatcher.
-      if (cleared && c.pane && !gone && (w.dirty || (id !== 'main' && w.ahead > 0 && !state.ready[id]))) {
+      // `closed` is the same SessionEnd for any other reason - the app ending the CLI to move
+      // the chat, or to restart it (2026-10-10, videos lane c, 41 uncommitted files: a failed
+      // move to the PC ended the CLI, this release gave the lane up, and the card reopened in
+      // a new pane to find it unheld). Kept only for a hold that names its card (`chat`):
+      // claim carries it to that card and nobody else, and the app's `--gone` sweep frees it
+      // once no open card hosts it. A chat started outside the app is given up as before.
+      if (((cleared && c.pane) || (closed && c.chat)) && !gone && (w.dirty || (id !== 'main' && w.ahead > 0 && !state.ready[id]))) {
         c.ended ??= now()
         closeLaneApps(laneDir(id))
         continue
@@ -7175,6 +7215,7 @@ function statusOf(state, session, held) {
         // must not start a new copy for a chat (the prompt hook, in a repo that never gets
         // lanes) reads them to tell "that pane's earlier chat" from "somebody else".
         pane: state.lanes[id]?.pane ?? null,
+        chat: state.lanes[id]?.chat ?? null,
         ended: state.lanes[id]?.ended ?? null,
         // When the HOLD was last refreshed - a heartbeat bumped by that chat's turns
         // ending, so it says how long ago the chat was last alive rather than anything
@@ -8270,8 +8311,8 @@ try {
   } else if (cmd === 'release') {
     // `--gone` is passed only by the app's reclaim sweep (src/main/laneBoard.ts), which has
     // asked every running copy and found no pane hosting this chat. `--cleared` only by
-    // lane-hook's SessionEnd for /clear.
-    const r = releaseClaim(session, { gone: argv.includes('--gone'), cleared: argv.includes('--cleared') })
+    // lane-hook's SessionEnd for /clear, `--closed` by it for every other end.
+    const r = releaseClaim(session, { gone: argv.includes('--gone'), cleared: argv.includes('--cleared'), closed: argv.includes('--closed') })
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
     // The chat let go of its folder: the moment a finished copy becomes removable.
