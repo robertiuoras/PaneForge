@@ -50,6 +50,7 @@ import {
   closeSync,
   constants as fsConstants,
   copyFileSync,
+  cpSync,
   existsSync,
   linkSync,
   lstatSync,
@@ -153,6 +154,22 @@ function gitCherry(cwd, upstream, head) {
   const own = gitSafe(cwd, 'rev-list', '-n1', `${upstream}..${head}`)
   if (own.ok && !own.out) return { ok: true, out: '' }
   return gitSafe(cwd, 'cherry', upstream, head)
+}
+/**
+ * True when every commit `tip` has past trunk is a merge and merging `tip` into trunk leaves
+ * trunk's tree as it is: a catch-up merge of trunk into a lane whose own work trunk already
+ * holds. PaneForge lane c 2026-10-09: 29c3264c ("Merge branch 'master' into lane-c", tree
+ * equal to trunk's) was pinned as abandoned work, its recovery pane never opened, and the
+ * blocked item then refused every later `ready` on the lane. A merge that resolved anything
+ * its own way changes the tree and stays preserved; a git that fails to answer (merge-tree
+ * --write-tree needs 2.38) is "not nothing".
+ */
+function mergesAddNothing(tip) {
+  const own = gitSafe(MAIN, 'rev-list', '--no-merges', '-n1', `${MB}..${tip}`)
+  if (!own.ok || own.out) return false
+  const merged = gitSafe(MAIN, 'merge-tree', '--write-tree', MB, tip)
+  const trunk = gitSafe(MAIN, 'rev-parse', `${MB}^{tree}`)
+  return merged.ok && trunk.ok && merged.out.split('\n')[0] === trunk.out
 }
 function gitSafe(cwd, ...args) {
   try {
@@ -1056,6 +1073,23 @@ function preservedRecovery(state, lane) {
   return Object.values(state.recovery?.items ?? {}).find((r) => !r.ref && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
 }
 
+// What `ready` tells a chat whose lane carries a preserved item it cannot pass yet: the item,
+// its state, and the one command that moves it. The bare refusal named none of these, and
+// lane c's next chat (2026-10-09) had to read lane.mjs to find `recover`.
+function recoveryNextStep(state, r, session) {
+  const key = r.key ?? Object.keys(state.recovery?.items ?? {}).find((k) => state.recovery.items[k] === r)
+  const cli = `node ${JSON.stringify(join(here, 'lane.mjs'))} recover --repo ${JSON.stringify(MAIN)} --key ${JSON.stringify(key)} --session ${session}`
+  const what = `item ${key} is ${r.status}${r.owner ? ` (owner ${r.owner})` : ''}${r.reason ? `: ${r.reason}` : ''}.`
+  if (r.owner === session)
+    return `${what} Record a receipt for this HEAD: ${cli} --disposition verified --receipt <json: commit, checks [{command, exitCode: 0}], review {reviewer: <another chat>, result: "accepted"}>.`
+  if (r.owner && ['owned', 'verified'].includes(r.status))
+    return `${what} If that chat is gone and this lane carries its work, take it over: ${cli} --disposition adopt, then verify.`
+  if (r.owner) return `${what} Only its owner can record it; it closes by itself once trunk holds ${r.commit}.`
+  if (r.status === 'blocked')
+    return `${what} If this lane already carries that work, record it: ${cli} --disposition reviewed --receipt <json with "reason">.`
+  return `${what} Bind it to this chat first: ${cli} --disposition begin.`
+}
+
 // Trunk holds the item's pinned commit and, when it has one, its receipt commit.
 function inTrunkRecovery(r) {
   const inTrunk = (c) => typeof c === 'string' && /^[a-f0-9]{40,64}$/.test(c) && gitSafe(MAIN, 'merge-base', '--is-ancestor', c, MB).ok
@@ -1241,7 +1275,7 @@ function dispatchCompletion() {
     // A git that fails to answer is "not nothing".
     if (!dirt && !/^\+ /m.test(diff.out)) {
       const merges = merged.ok ? null : gitSafe(MAIN, 'rev-list', '--merges', '-n1', `${MB}..${tip.out}`)
-      if (merged.ok || (merges.ok && !merges.out)) continue
+      if (merged.ok || (merges.ok && !merges.out) || mergesAddNothing(tip.out)) continue
     }
     const key = `lane:${id}:${tip.out}`
     // `dirty`: the pinned work includes uncommitted changes, so trunk holding `commit` is
@@ -1582,7 +1616,13 @@ function reap(state) {
       reaped = true
     }
   }
-  if (state.release && now() - state.release.at > LOCK_MS) state.release = null
+  // A release whose process is gone is over: killed or crashed, it can never clear its own
+  // marker, and every chat's release waited the full LOCK_MS behind it (2026-10-10 12:13am
+  // Sat, a `ready` stopped mid-suite). A live one heartbeats `at` (beatRelease).
+  if (state.release && (now() - state.release.at > LOCK_MS || (state.release.pid > 0 && !processAlive(state.release.pid)))) {
+    state.release = null
+    reaped = true
+  }
   // A conflict or a ready mark for work master already has is noise that never clears
   // itself: it made `status` report a lane as conflicted long after the conflict was
   // resolved, and left chats resolving something that had already gone out. Usually
@@ -2325,6 +2365,71 @@ function inTempFolder(dir) {
 }
 
 /**
+ * Write this chat's hold down where the SessionEnd hook looks for it.
+ *
+ * The hook (lane-hook.mjs) gives back only the repos listed under `sessions[<chat>]` in
+ * ~/.claude/lane-repos.json, and until now only the hook's own prompt/guard claims wrote
+ * there. A hold taken by `lane.mjs claim` from a chat's shell (the engine's own CLI) was
+ * never listed, so when that chat ended nothing parked it as `ended`, and the pane's next
+ * chat after /clear could not carry it (carry needs `c.ended`): the lane sat stranded under
+ * the dead chat's id with its work (Toolstash lane c, 2026-10-09).
+ *
+ * Only `sessions` is touched - `repos` is the guard's cache of "this repo has lanes" and
+ * its `release`/`own` come from the hook's own look at the claim. Same tmp-then-rename as
+ * the hook's writeRegistry so a half-written file cannot blind the guard. Never throws, and
+ * a registry that exists but does not parse is left alone rather than overwritten. A repo in
+ * the temp folder (every suite's fixtures) is skipped unless LANE_REGISTRY points the write
+ * at a scratch file, so no test can leave a throwaway repo in the real registry.
+ */
+function registerSession(session) {
+  try {
+    if (!session) return
+    const override = process.env.LANE_REGISTRY
+    if (!override && inTempFolder(MAIN)) return
+    const path = override || join(homedir(), '.claude', 'lane-repos.json')
+    let reg = { repos: {}, sessions: {} }
+    if (existsSync(path)) {
+      try {
+        reg = JSON.parse(readFileSync(path, 'utf8'))
+      } catch {
+        return
+      }
+      if (!reg || typeof reg !== 'object' || Array.isArray(reg)) return
+    } else {
+      mkdirSync(dirname(path), { recursive: true })
+    }
+    if (!reg.repos || typeof reg.repos !== 'object') reg.repos = {}
+    if (!reg.sessions || typeof reg.sessions !== 'object') reg.sessions = {}
+    let repo = MAIN
+    try {
+      repo = realpathSync(MAIN)
+    } catch {
+      /* keep the path as given */
+    }
+    const fold = process.platform === 'win32' || process.platform === 'darwin'
+    const key = (p) => (fold ? String(p).toLowerCase() : String(p))
+    const mine = Array.isArray(reg.sessions[session]) ? reg.sessions[session] : []
+    if (mine.some((p) => key(p) === key(repo))) return
+    reg.sessions[session] = [...mine, repo]
+    const tmp = `${path}.${process.pid}.tmp`
+    try {
+      writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n', 'utf8')
+      renameSync(tmp, path)
+    } catch (e) {
+      // A lost rename must not leave this pid's tmp behind (the hook's writer left ~90).
+      try {
+        unlinkSync(tmp)
+      } catch {
+        /* already gone, or never written */
+      }
+      throw e
+    }
+  } catch {
+    /* the hook still gives back what it registered itself, which is the old behaviour */
+  }
+}
+
+/**
  * Raise ONE card for each conflict nobody is going to settle.
  *
  * This used to open a resolver chat of its own ("Settle lane X"). Measured from the
@@ -2785,6 +2890,8 @@ function ensureWorktree(id) {
       /* npm install in the lane still works, it is just slower */
     }
   }
+  // Before excludeModules/hideLane: lane-hidden-test pins those two as adjacent lines.
+  shareHooksDir(dir)
   excludeModules(dir)
   hideLane(id)
   return dir
@@ -2845,6 +2952,58 @@ function excludeModules(dir) {
     writeFileSync(file, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}node_modules\n`, 'utf8')
   } catch {
     /* an exclude we cannot write is not a reason to fail the lane */
+  }
+}
+
+/**
+ * Give a lane folder the repository's generated git-hooks folder.
+ *
+ * `core.hooksPath` lives in the shared .git/config and, when it is relative, names a folder
+ * inside EACH checkout. Husky's is `.husky/_`: generated and gitignored, so it exists in the
+ * main checkout only. Git says nothing about a hooks folder that is not there - it just runs no
+ * hooks - so every commit in every lane skipped eslint, tsc and check:arch (Toolstash lanes a to
+ * h, 2026-10-09: lane a shipped two TypeScript errors and the release job then refused main).
+ *
+ * A COPY, never a link: a link is one more path into the main checkout from a folder a chat
+ * edits in, which is how a lane once took the real node_modules with it (see dropModulesLink).
+ * Only when the folder is relative, inside the repo, present in the main checkout, holds
+ * nothing git tracks (a tracked one arrives with the checkout, and copying it would only put
+ * untracked files in front of a merge) and is absent from the lane: an existing one is
+ * somebody's and is never overwritten. Copied beside the name and renamed into place, so a
+ * kill part way leaves no half-folder that would count as "already there". Run on every
+ * ensureWorktree, like excludeModules, so lanes made before this pick it up on their next claim.
+ */
+function shareHooksDir(dir) {
+  try {
+    if (!dir || samePath(dir) === samePath(MAIN)) return
+    const configured = gitSafe(MAIN, 'config', '--get', 'core.hooksPath')
+    if (!configured.ok) return
+    const rel = configured.out.trim()
+    if (!rel || isAbsolute(rel) || rel.startsWith('~')) return
+    const from = resolve(MAIN, rel)
+    const inside = relative(MAIN, from)
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) return
+    if (!existsSync(from)) return
+    const to = resolve(dir, rel)
+    try {
+      lstatSync(to)
+      return
+    } catch {
+      /* absent: the case this exists for */
+    }
+    if (gitSafe(MAIN, 'ls-files', '--', rel).out.trim()) return
+    if (!isWorktree(dir)) return
+    const part = `${to}.copying-${process.pid}`
+    try {
+      mkdirSync(dirname(to), { recursive: true })
+      rmSync(part, { recursive: true, force: true })
+      cpSync(from, part, { recursive: true, dereference: true, force: false, errorOnExist: true })
+      renameSync(part, to)
+    } catch {
+      rmSync(part, { recursive: true, force: true })
+    }
+  } catch {
+    /* a hooks folder we cannot copy is not a reason to fail the lane; git just runs no hooks, as before */
   }
 }
 
@@ -3095,6 +3254,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       if (id !== 'main') {
         try {
           if (!preservedCheckout(state, id)) ensureWorktree(id)
+          else shareHooksDir(laneDir(id))
         } catch (error) {
           if (preservedRecovery(state, id)) throw error
           /* reported by `doctor`; a claim that cannot rebuild still returns the lane */
@@ -3127,6 +3287,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
         else delete c.tentative
       }
       write(state)
+      registerSession(session)
       return {
         lane: id,
         dir: laneDir(id),
@@ -3394,6 +3555,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
 
   const preserved = preservedCheckout(state, free)
   const dir = preserved ?? ensureWorktree(free)
+  if (preserved) shareHooksDir(preserved)
   enableRerere()
   // A lane is handed over clean and current, never mid-merge and never stale: whatever the
   // last chat left behind is settled here, before this one writes a line.
@@ -3421,6 +3583,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // at the moment it becomes true rather than on a timer.
   if (free === 'main') publishClaim(state, 'main', session)
   write(state)
+  registerSession(session)
   return {
     lane: free,
     dir,
@@ -3458,7 +3621,22 @@ function guard(session, path) {
   const inside = (dir) => restUnder(target, dir) !== null
 
   const owned = POOL.map((id) => ({ id, dir: laneDir(id) })).filter((l) => inside(l.dir))
-  if (!owned.length) return null
+  if (!owned.length) {
+    // A pool without `main` says the main folder is not a working copy (2026-10-10: the
+    // paneforge-next folder is the live app's own, and files left there stopped every app
+    // update three times). No lane owns a path in it, so without this an edit went through
+    // unguarded. Ignored paths (node_modules, dist, .local-runtime) stay allowed.
+    if (POOL.includes('main') || !inside(MAIN)) return null
+    try { execFileSync('git', ['-C', MAIN, 'check-ignore', '-q', '--', target], { windowsHide: true, stdio: 'ignore', timeout: hookTimeout(10000) }); return null }
+    catch (e) { if (e?.status !== 1) return `${basename(MAIN)}: the main folder is not a working copy here and git could not say whether ${target} is tracked, so the write is refused: ${e?.message ?? e}` }
+    try {
+      const got = claim(session, dirname(target))
+      return `${basename(MAIN)}: the main folder is not a working copy here (the app runs from it, so a change left there holds its updates). This session's copy is ${got.dir}; make the change there.`
+    } catch (e) {
+      // Same rule as below: a claim that throws refuses, it never waves the write through.
+      return `${basename(MAIN)}: the main folder is not a working copy here and no other copy could be given to this chat, so the write is refused: ${e?.message ?? e}`
+    }
+  }
   // Longest path wins: <repo>-a also starts with <repo> on the string level only, but
   // resolve()+sep already prevents that. Sort anyway for nested oddities.
   owned.sort((x, y) => y.dir.length - x.dir.length)
@@ -5376,6 +5554,10 @@ function resolveConflict(session, wanted) {
     resolverAt: now()
   }
   write(state)
+  // An adopted merge is this chat's to finish, and the hook gives it back at SessionEnd
+  // (dropClaims) only from the repos listed for the chat - resolve is typed by hand, often
+  // from another repo's chat, exactly like the CLI claim above.
+  registerSession(session)
   return { lane: id, dir, resolved: false, files, adopted: !mine }
 }
 
@@ -5409,7 +5591,7 @@ function ready(session, wanted) {
     recovery = preservedRecovery(state, id)
   }
   if (recovery && (recovery.owner !== session || recovery.status !== 'verified' || recovery.receipt?.commit !== gitSafe(laneDir(id), 'rev-parse', 'HEAD').out)) {
-    throw new Error('recovered work requires a current verification receipt and independent review before ready')
+    throw new Error(`recovered work requires a current verification receipt and independent review before ready - ${recoveryNextStep(state, recovery, session)}`)
   }
   // Declaring work finished is the other way a reservation becomes real.
   if (state.lanes[id]) delete state.lanes[id].tentative
@@ -5942,7 +6124,15 @@ function scratchMerge(head, tip, message) {
  * Taskdriver PC has its own proof, and a repo with no suite is not held to one.
  */
 function pushGateApplies() {
-  if (!OWN || TASKDRIVER_PC) return false
+  if (TASKDRIVER_PC) return false
+  // Not only from this file's own checkout. Every chat's hook runs the copy installed in the
+  // app, outside the repo, and origin's pre-push hook (ours, naming the repo's own copy)
+  // refuses an untested trunk all the same: skipping the merged-tree suite there pushed
+  // straight into that refusal and left master holding an unpushed merge (2026-10-09).
+  if (!OWN) {
+    const hook = prePushPath()
+    if (!hook || prePushState(hook).kind !== 'ours') return false
+  }
   try {
     const script = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8')).scripts?.test
     return !!script && !/no test specified/i.test(script)

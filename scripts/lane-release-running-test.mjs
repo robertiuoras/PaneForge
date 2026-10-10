@@ -128,6 +128,28 @@ console.log('\n2. a release whose process is gone is cleared as before')
   ok(claimsOf('s2').length === 0, 'and every claim the chat published is withdrawn')
 }
 
+// 2026-10-10 12:13am Sat: a `ready` stopped mid-suite (its process killed) left its marker,
+// and every other chat's release then read "another chat is mid-release" until the marker
+// aged out twenty minutes later. A dead process can never clear its own marker.
+console.log('\n3. another chat is not held by a release whose process is gone')
+{
+  const mark = (session, pid) => {
+    const s = ledger()
+    s.release = { session, at: Date.now(), pid }
+    writeFileSync(ledgerPath, JSON.stringify(s, null, 2))
+  }
+  mark('s3', process.pid)
+  const held = lane('autoship', '--session', 's4')
+  ok(/mid-release/.test(held.out), `a live release still holds another chat's (said: ${held.out.slice(0, 120)})`)
+  ok(ledger().release?.session === 's3', 'and keeps its marker')
+
+  mark('s3', spawnSync(process.execPath, ['-e', '0']).pid)
+  const free = lane('autoship', '--session', 's4')
+  ok(!/mid-release/.test(free.out), `a dead one does not (said: ${free.out.slice(0, 120)})`)
+  lane('status')
+  ok(ledger().release?.session !== 's3', `and \`status\` throws its marker away (got ${JSON.stringify(ledger().release)})`)
+}
+
 // Same cleanup as lane-device-test.mjs: a transient Windows handle on the temp dir is noise
 // about disk cleanup, never the assertions above.
 try {

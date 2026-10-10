@@ -152,11 +152,17 @@ try {
     /cdhash/.test(mod.designatedRequirement(app))
   )
 
-  const identity = mod.signingIdentity()
+  const found = mod.findSigningIdentity()
+  const identity = found?.name
+  // A keychain this shell cannot unlock is never handed to codesign: it would ask for the
+  // password in a dialog on Robert's screen (a chat's shell; over ssh it unlocks).
+  const cannot = found && mod.signProbe(found)
   if (!identity) {
     console.log('  (no signing identity on this machine - run `node scripts/mac-cert.mjs create`)')
+  } else if (cannot) {
+    console.log(`  (certificate half skipped: ${cannot}; run it over ssh)`)
   } else {
-    mod.signBundle(app, identity)
+    mod.signBundle(app, identity, found.keychain)
     const dr = mod.designatedRequirement(app)
     ok('a certificate-signed bundle has no cdhash in its requirement', !/cdhash/.test(dr), dr)
     ok('and is identified by the certificate root instead', /certificate root = H"/.test(dr), dr)
@@ -170,7 +176,7 @@ try {
     // that version of this test failed on the signature rather than on the assertion. A
     // new binary is what a new release actually is, anyway.
     copyFileSync('/bin/ls', join(macos, 'PaneForge'))
-    mod.signBundle(app, identity)
+    mod.signBundle(app, identity, found.keychain)
     ok(
       'and the requirement is unchanged after the app changes',
       mod.designatedRequirement(app) === dr,

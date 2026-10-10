@@ -60,51 +60,116 @@
 // re-asks for permissions still beats no app at all.
 // `scripts/mac-cert.mjs` creates the identity and prints what CI needs.
 
-import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/**
- * Unlock the signing keychain, if there is one.
- *
- * `mac-cert.mjs` cannot reliably turn a new keychain's 300-second auto-lock off - doing
- * that needs the Security agent, and a shell with no GUI session cannot answer it. An
- * Electron build is longer than 300 seconds, so by the time afterPack runs the keychain
- * created at the start of the job may well have relocked, and codesign would report
- * `errSecInternalComponent` - which says nothing about keychains. Unlocking here costs
- * milliseconds and happens a moment before the signature, so the timeout cannot expire in
- * between.
- */
-function unlockKeychain() {
-  const keychain =
+/** The keychain file `mac-cert.mjs` puts the identity in (CI's temp one first), or null. */
+function signingKeychain() {
+  return (
     process.env.PF_KEYCHAIN ||
     [
       join(tmpdir(), 'pf-signing.keychain-db'),
       join(homedir(), 'Library/Keychains/paneforge-signing.keychain-db')
-    ].find((p) => existsSync(p))
-  if (!keychain) return
-  try {
-    execFileSync('security', ['unlock-keychain', '-p', '', keychain], { stdio: 'ignore' })
-  } catch {
-    /* already unlocked, or not ours - signing will say so if it matters */
-  }
+    ].find((p) => existsSync(p)) ||
+    null
+  )
 }
 
-/** The signing identity, or null when the keychain has none and we must go ad-hoc. */
-export function signingIdentity() {
+const security = (args) =>
+  execFileSync('security', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+
+/**
+ * The signing identity as `{ name, keychain, locked }`, or null when there is none and we
+ * must go ad-hoc. `keychain` is the file it was found in (null = the user's keychain search
+ * list), and codesign must be handed it with `--keychain` (`signBundle`). `locked` = that
+ * file would not unlock with the empty password, so codesign would ask for the password in
+ * a dialog (`signProbe` refuses it).
+ *
+ * The keychain FILE is searched first, not only the search list: on 2026-10-09 the Mac's
+ * list no longer named paneforge-signing (another project's `security list-keychains -s`
+ * had replaced it), so `find-identity` found nothing, the identity read as missing and
+ * install-engine re-signed the installed app ad-hoc - its designated requirement became a
+ * cdhash and every macOS permission it held was lost until it was re-signed by hand.
+ * `run` is for the test, which cannot rewrite a real search list.
+ */
+export function findSigningIdentity({ run = security, keychain = signingKeychain() } = {}) {
   const name = process.env.PF_SIGN_IDENTITY || 'PaneForge Self-Signed'
-  unlockKeychain()
+  // `mac-cert.mjs` cannot reliably turn a new keychain's 300-second auto-lock off - doing
+  // that needs the Security agent, and a shell with no GUI session cannot answer it. An
+  // Electron build is longer than 300 seconds, so by the time afterPack runs the keychain
+  // created at the start of the job may well have relocked, and codesign would report
+  // `errSecInternalComponent` - which says nothing about keychains. Unlocking here costs
+  // milliseconds and happens a moment before the signature, so the timeout cannot expire
+  // in between.
+  // From a chat's shell the Mac's paneforge-signing keychain does NOT unlock this way while
+  // the same command over ssh does (2026-10-10 12:05am Sat), and a codesign on a locked
+  // keychain starts SecurityAgent: a password dialog on Robert's screen (2026-10-01), or
+  // errSecInternalComponent while the screen is locked.
+  let locked = false
+  if (keychain) {
+    try {
+      run(['unlock-keychain', '-p', '', keychain])
+    } catch {
+      locked = true
+    }
+  }
+  for (const file of keychain ? [keychain, null] : [null]) {
+    try {
+      // Not `-v`: a self-signed root is untrusted, so `-v` filters it out - while codesign
+      // signs with it perfectly well. Matching on the quoted name avoids picking up another
+      // project's certificate that happens to sit in the same keychain.
+      const out = run(['find-identity', '-p', 'codesigning', ...(file ? [file] : [])])
+      // A hit on the search list is not unlock-tested: that is the login keychain, open
+      // while Robert is signed in, and the way this signed before 2026-10-09.
+      if (out.includes(`"${name}"`)) return { name, keychain: file, locked: file ? locked : false }
+    } catch {
+      /* not in this one */
+    }
+  }
+  return null
+}
+
+/**
+ * Why re-signing an installed app with `found` (or ad-hoc, when null) must not happen, or
+ * null when it may. An app whose designated requirement names a certificate keeps its
+ * macOS permissions only while it stays signed by that certificate; ad-hoc turns the
+ * requirement into a cdhash and loses them all (2026-10-09, install-engine). An ad-hoc app
+ * re-signed ad-hoc loses nothing it had.
+ */
+export function resignRefusal(designated, found) {
+  if (found || !designated || /cdhash/.test(designated)) return null
+  return (
+    `the installed app is signed with a certificate (${designated}) and no signing ` +
+    `identity was found (${signingKeychain() ?? 'no signing keychain file'}, then the ` +
+    'keychain search list); re-signing it ad-hoc would make macOS forget every permission it holds.'
+  )
+}
+
+/** codesign's arguments that pick `found` (null = ad-hoc). */
+export function identityArgs(found) {
+  return found ? [...(found.keychain ? ['--keychain', found.keychain] : []), '--sign', found.name] : ['--sign', '-']
+}
+
+/**
+ * Why codesign cannot sign as `found` from this process, or null when it can: a test-sign
+ * of a scratch copy of a system binary. A chat's shell gets errSecInternalComponent for
+ * this key while the same command over ssh signs (2026-10-10 12:10am Sat), and a real
+ * re-sign that fails that way has already broken the bundle's old seal. Bounded, so a
+ * keychain prompt nobody answers cannot hang a build.
+ */
+export function signProbe(found) {
+  // Never handed to codesign at all: that is what would open the dialog.
+  if (found?.locked) return `${found.keychain} does not unlock without its password here, and codesign would ask for it in a dialog`
+  const dir = mkdtempSync(join(tmpdir(), 'pf-sign-probe-'))
   try {
-    // Not `-v`: a self-signed root is untrusted, so `-v` filters it out - while codesign
-    // signs with it perfectly well. Matching on the quoted name avoids picking up another
-    // project's certificate that happens to sit in the same keychain.
-    const out = execFileSync('security', ['find-identity', '-p', 'codesigning'], {
-      encoding: 'utf8'
-    })
-    return out.includes(`"${name}"`) ? name : null
-  } catch {
-    return null
+    copyFileSync('/usr/bin/true', join(dir, 'probe'))
+    const r = spawnSync('codesign', ['--force', ...identityArgs(found), '--timestamp=none', join(dir, 'probe')], { encoding: 'utf8', timeout: 30_000 })
+    if (r.status === 0) return null
+    return (r.error?.message ?? r.stderr ?? '').trim().split('\n').pop() || `codesign exited ${r.status}`
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -131,17 +196,16 @@ function nested(app) {
 
 /**
  * Sign every nested item and then the bundle. `identity` is a keychain identity name, or
- * `-` for ad-hoc.
+ * `-` for ad-hoc; `keychain` is the file `findSigningIdentity` found it in.
  */
-export function signBundle(app, identity = '-') {
+export function signBundle(app, identity = '-', keychain = null) {
   const targets = [...nested(app), app]
   for (const target of targets) {
     execFileSync(
       'codesign',
       [
         '--force',
-        '--sign',
-        identity,
+        ...identityArgs(identity === '-' ? null : { name: identity, keychain }),
         // Without this a re-sign keeps the stale entitlements blob from Electron's own
         // signature, and the outer app then disagrees with its helpers.
         '--preserve-metadata=entitlements',
@@ -188,8 +252,21 @@ export default async function afterPack(context) {
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   if (!existsSync(app)) throw new Error(`afterPack: no bundle at ${app}`)
 
-  const identity = signingIdentity()
-  const n = signBundle(app, identity ?? '-')
+  let found = findSigningIdentity()
+  // A fork without the secrets builds ad-hoc on purpose (mac-cert.mjs); a job that HAS
+  // them and still finds no identity would ship a release that resets every permission.
+  if (!found && process.env.CI && process.env.PF_CERT_P12)
+    throw new Error('afterPack: PF_CERT_P12 is set but no signing identity was found after mac-cert.mjs import.')
+  const cannot = found && signProbe(found)
+  if (cannot) {
+    // A release has to carry the certificate: every installed Mac copy's permissions hang
+    // on it. Only a local build falls back to ad-hoc.
+    if (process.env.CI) throw new Error(`afterPack: found "${found.name}" but codesign cannot use it (${cannot}).`)
+    console.log(`  ! found "${found.name}" but codesign cannot use it here (${cannot}); signing ad-hoc.`)
+    found = null
+  }
+  const identity = found?.name ?? null
+  const n = signBundle(app, identity ?? '-', found?.keychain)
 
   if (identity) {
     console.log(`  • signed ${n} nested items in ${app} as "${identity}"`)

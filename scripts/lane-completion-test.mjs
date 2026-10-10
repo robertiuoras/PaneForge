@@ -2,7 +2,7 @@
 // clock, parked snapshots, lock contenders, the guard hook, trust and dispatched panes.
 // The rest: lane-completion-owner-test.mjs, lane-completion-adopt-test.mjs.
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { here, root, check, git, fixture, shadow, finish } from './lane-completion-fixture.mjs'
 
@@ -179,6 +179,41 @@ callHook('end', 'guard-owner')
 check('guard-only SessionEnd stamps the actual owner ended synchronously', Number.isFinite(hook.state().lanes.a?.ended))
 const carried = hook.run('claim', '--prefer', 'a', '--cwd', hook.dir, '--session', 'next-native-owner')
 check('same pane after clear carries guard-only dirty work', carried.code === 0 && JSON.parse(carried.out).lane === 'a' && hook.state().lanes.a.session === 'next-native-owner' && readFileSync(join(hook.dir, 'source.txt'), 'utf8') === 'dirty guard-only intent', carried.err)
+
+// A hold taken by `lane.mjs claim` from the chat's own shell, with no hook claim before it,
+// has to be given back when that chat ends. Only the hook wrote the registry SessionEnd reads,
+// so such a hold was never stamped ended and the pane's next chat after /clear could not carry
+// it: Toolstash lane c sat stranded under a dead chat with its work (2026-10-09).
+const cliHold = fixture('cli-registry')
+cliHold.run('release', '--session', 'original', '--gone')
+renameSync(cliHold.cli, join(cliHold.repo, 'scripts', 'lane-real.mjs'))
+writeFileSync(cliHold.cli, "if (process.argv[2] !== 'release') await import('./lane-real.mjs')\n")
+copyFileSync(join(here, 'run-hidden.vbs'), join(cliHold.repo, 'scripts', 'run-hidden.vbs'))
+cliHold.env.PF_PANE = 'same-pane'
+writeFileSync(cliHold.panes, `1\tcli-pane\tworking\ttitle\t${cliHold.dir}\n`)
+const cliClaimed = cliHold.run('claim', '--prefer', 'a', '--cwd', cliHold.dir, '--session', 'cli-owner')
+writeFileSync(join(cliHold.dir, 'source.txt'), 'dirty cli-claim intent')
+const cliRegistry = () => existsSync(cliHold.env.LANE_REGISTRY) ? JSON.parse(readFileSync(cliHold.env.LANE_REGISTRY, 'utf8')) : { repos: {}, sessions: {} }
+check('a CLI claim writes the chat into the SessionEnd registry', cliClaimed.code === 0 && JSON.parse(cliClaimed.out).lane === 'a' && (cliRegistry().sessions['cli-owner'] ?? []).includes(realpathSync(cliHold.repo)), `${cliClaimed.err}\n${JSON.stringify(cliRegistry())}`)
+spawnSync(process.execPath, [join(cliHold.repo, 'scripts', 'lane-hook.mjs'), '--event=end'], { cwd: cliHold.dir, env: cliHold.env, encoding: 'utf8', input: JSON.stringify({ session_id: 'cli-owner', cwd: cliHold.dir }) })
+check('SessionEnd stamps a CLI-claimed hold ended', Number.isFinite(cliHold.state().lanes.a?.ended), JSON.stringify(cliHold.state().lanes.a))
+const cliCarried = cliHold.run('claim', '--prefer', 'a', '--cwd', cliHold.dir, '--session', 'next-chat')
+check('same pane after clear carries the CLI-claimed dirty work', cliCarried.code === 0 && JSON.parse(cliCarried.out).lane === 'a' && cliHold.state().lanes.a.session === 'next-chat' && readFileSync(join(cliHold.dir, 'source.txt'), 'utf8') === 'dirty cli-claim intent', `${cliCarried.err}\n${cliCarried.out}`)
+
+// A registry write that loses its rename (Windows refuses while another process has the file
+// open; here the target is a folder, which fails the same way everywhere) must not leave its
+// `lane-repos.json.<pid>.tmp` behind: 89 of them had piled up in ~/.claude by 2026-10-09.
+{
+  const t = fixture('tmp-registry')
+  t.run('release', '--session', 'original', '--gone')
+  t.env.PF_PANE = 'same-pane'
+  writeFileSync(t.panes, `1\ttmp-pane\tworking\ttitle\t${t.dir}\n`)
+  const blocked = join(t.repo, '.git', 'registry-blocked')
+  mkdirSync(blocked)
+  spawnSync(process.execPath, [join(t.repo, 'scripts', 'lane-hook.mjs'), '--event=pretool'], { cwd: t.dir, env: { ...t.env, LANE_REGISTRY: blocked }, encoding: 'utf8', input: JSON.stringify({ session_id: 'tmp-owner', cwd: t.dir, tool_name: 'Write', tool_input: { file_path: join(t.dir, 'source.txt') } }) })
+  const left = readdirSync(join(t.repo, '.git')).filter((n) => /^registry-blocked\..*\.tmp$/.test(n))
+  check('a registry write that cannot rename leaves no tmp file behind', left.length === 0 && t.state().lanes.a?.session === 'tmp-owner', JSON.stringify({ left, lane: t.state().lanes.a }))
+}
 
 // The completion pane is the one pane lane.mjs still opens, so it is where seedTrust is
 // pinned (the conflict path raises a card now and opens nothing): the pane's folder gets

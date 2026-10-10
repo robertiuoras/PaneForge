@@ -26,7 +26,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -138,12 +138,19 @@ function readRegistry() {
 }
 
 function writeRegistry(r) {
+  // Two chats can claim at the same moment; a half-written file would blind the guard.
+  const tmp = `${REGISTRY}.${process.pid}.tmp`
   try {
-    // Two chats can claim at the same moment; a half-written file would blind the guard.
-    const tmp = `${REGISTRY}.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(r, null, 2) + '\n', 'utf8')
     renameSync(tmp, REGISTRY)
   } catch {
+    // A rename that lost (Windows refuses while another process has the file open) used to
+    // leave this pid's tmp behind for good: ~90 of them by 2026-10-09.
+    try {
+      unlinkSync(tmp)
+    } catch {
+      /* already gone, or never written */
+    }
     /* the guard degrades to "no lanes known", which is the old behaviour */
   }
 }
