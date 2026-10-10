@@ -31,7 +31,10 @@ import { mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fingerprint, passesFile, planRun, readPasses, recordPass, retryAlone, suiteInputs, summary } from './suite-plan.mjs'
+import {
+  dispatcher, fingerprint, passesFile, planRun, readPasses, readTimes, recordPass, recordTimes, retryAlone,
+  suiteInputs, summary, timesFile
+} from './suite-plan.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -42,8 +45,9 @@ if (process.platform !== 'win32') {
   process.exit(remote.status ?? 1)
 }
 
-// name -> the script file, in the order they run. Cheapest first is deliberate: a broken
-// build should say so in a second rather than after the slow ones.
+// name -> the script file, cheapest first. Two workers take them in this order, so a broken
+// build still says so in a second; the rest start the suites that took longest last time
+// first (`dispatcher` in suite-plan.mjs). Results always print in this order.
 const TESTS = [
   ['freshreplay', 'fresh-replay-test.mjs'],
   ['codexworkers', 'codex-workers-test.mjs'],
@@ -412,6 +416,8 @@ const TESTS = [
   ['lanedispatch', 'lane-dispatch-test.mjs'],
   ['lanemergeitself', 'lane-merge-itself-test.mjs'],
   ['lanecompletion', 'lane-completion-test.mjs'],
+  ['lanecompletionowner', 'lane-completion-owner-test.mjs'],
+  ['lanecompletionadopt', 'lane-completion-adopt-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -510,10 +516,10 @@ const SERIAL = new Set([
  * always runs.
  */
 const LANE_ONLY = new Set([
-  'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
-  'lanedamaged', 'lanehalfmade', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
-  'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice',
-  'lanestrand', 'lanerepane', 'pushgate'
+  'gate', 'lanecompletion', 'lanecompletionowner', 'lanecompletionadopt', 'lanecleared',
+  'conflict', 'lanedispatch', 'lanemergeitself', 'lanedamaged', 'lanehalfmade', 'laneproof',
+  'laneorphan', 'lanemergehold', 'promote', 'lanesleep', 'lanenevercopy', 'laneuntracked',
+  'lanevisitor', 'laneparked', 'laneledger', 'lanedevice', 'lanestrand', 'lanerepane', 'pushgate'
 ])
 const PASSES = passesFile()
 const plan = planRun(run, {
@@ -649,24 +655,29 @@ function report(res) {
   console.log(res.out ? `\n${res.out}\n` : `\n  (no output; exit ${res.status})\n`)
 }
 
+const TIMES = timesFile()
+const times = readTimes(TIMES)
+
 // Lines are printed in the order the suites are LISTED, never the order they finish - a
 // run whose output reshuffles itself between two runs cannot be diffed against the last one.
 async function pool(list, width) {
   const results = new Array(list.length)
-  let next = 0
+  const take = dispatcher(list.map(([name]) => name), times, Math.min(width, list.length))
   let printed = 0
   const flush = () => {
     while (printed < results.length && results[printed]) report(results[printed++])
   }
   await Promise.all(
-    Array.from({ length: Math.min(width, list.length) }, async () => {
-      for (let i = next++; i < list.length; i = next++) {
+    Array.from({ length: Math.min(width, list.length) }, async (_, worker) => {
+      for (let i = take(worker); i >= 0; i = take(worker)) {
         results[i] = await runOne(list[i])
         flush()
       }
     })
   )
   flush()
+  // Only a first-run pass is a time worth planning on: a failure can stop at any point.
+  try { recordTimes(TIMES, Object.fromEntries(results.filter((r) => r.ok).map((r) => [r.name, Number(r.secs)]))) } catch {}
 }
 
 const alone = plan.run.filter(([n]) => SERIAL.has(n))

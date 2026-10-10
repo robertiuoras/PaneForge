@@ -77,15 +77,72 @@ export function readPasses(path) {
 
 const KEEP = 20
 
+/** Whole-file replace, so a reader never sees half a record. */
+function writeRecord(path, value) {
+  mkdirSync(dirname(path), { recursive: true })
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(value))
+  renameSync(tmp, path)
+}
+
 /** Record a pass. Two runs finishing together can lose one entry; that only means a rerun. */
 export function recordPass(path, name, fp, at = Date.now()) {
   const all = readPasses(path)
   const prior = Array.isArray(all[name]) ? all[name].filter((p) => p?.fp !== fp) : []
   all[name] = [...prior, { fp, at }].slice(-KEEP)
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(all))
-  renameSync(tmp, path)
+  writeRecord(path, all)
+}
+
+/*
+ * Which suite a free worker takes next. Measured on the PC (full run 9b0d5a35, 9 Oct 2026):
+ * 1108s wall for 3520s of suite time, and lanecompletion alone took 659s - but it is listed
+ * 314th of 325, so the cheapest-first pool only started it ~450s in and everything waited on
+ * it. Replaying that run's own times: longest-first on all but two workers, the two kept on
+ * the cheap suites in listed order, finishes the pool in ~659s instead of ~937s, and every
+ * cheap suite has still started by ~226s - a broken build still says so early.
+ */
+
+/** Where this machine remembers how long each suite took the last time it passed. */
+export const timesFile = () => join(homedir(), '.cache', 'paneforge', 'suite-times.json')
+
+/** `{ suite: seconds }`. Missing or torn reads as nothing known - never a throw. */
+export function readTimes(path) {
+  try {
+    const v = JSON.parse(readFileSync(path, 'utf8'))
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+    return Object.fromEntries(Object.entries(v).filter(([, s]) => Number.isFinite(s) && s >= 0))
+  } catch {
+    return {}
+  }
+}
+
+/** Merge in `{ suite: seconds }`. Two runs finishing together can lose one; that only costs order. */
+export function recordTimes(path, secs) {
+  if (!Object.keys(secs).length) return
+  writeRecord(path, { ...readTimes(path), ...secs })
+}
+
+/** A suite this slow or slower is started as early as possible. */
+export const LONG_SECS = 30
+/** Workers that take the cheap suites first, so early failures still come early. */
+export const CHEAP_WORKERS = 2
+
+/**
+ * `take(worker)` -> the next index into `names` for that worker, or -1 when none is left.
+ * Long suites go longest first; cheap and never-timed ones stay in listed order. With no
+ * times known every worker takes the listed order, which is the pool as it always was.
+ */
+export function dispatcher(names, secs, width) {
+  const all = names.map((_, i) => i)
+  const long = all.filter((i) => (secs[names[i]] ?? 0) >= LONG_SECS)
+    .sort((a, b) => secs[names[b]] - secs[names[a]] || a - b)
+  const isLong = new Set(long)
+  const cheap = all.filter((i) => !isLong.has(i))
+  const longWorkers = Math.max(1, width - CHEAP_WORKERS)
+  return (worker) => {
+    const [first, then] = worker < longWorkers ? [long, cheap] : [cheap, long]
+    return first.length ? first.shift() : then.length ? then.shift() : -1
+  }
 }
 
 /**
