@@ -35,6 +35,10 @@ ok(gate.includes('scripts/lane.mjs'), 'the gate suite spawns lane.mjs by name, s
 ok(gate.includes('scripts/lane-merge.mjs'), 'and what lane.mjs imports is an input too', gate)
 const completion = suiteInputs(root, 'lane-completion-test.mjs')
 ok(completion.includes('scripts/pf-ctl-lib.mjs'), 'lanecompletion reaches pf-ctl-lib.mjs through pf-ctl.mjs', completion)
+for (const part of ['lane-completion-test.mjs', 'lane-completion-owner-test.mjs', 'lane-completion-adopt-test.mjs']) {
+  const inputs = suiteInputs(root, part)
+  ok(inputs.includes('scripts/lane-completion-fixture.mjs') && inputs.includes('scripts/lane.mjs'), `${part} re-runs when the shared fixture or lane.mjs changes`, inputs)
+}
 ok(gate.every((f) => f.startsWith('scripts/')), 'the gate suite runs nothing outside scripts/', gate)
 
 // --- a fixture repo whose suite names one script that imports another -------------------

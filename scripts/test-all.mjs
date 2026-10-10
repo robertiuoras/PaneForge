@@ -406,6 +406,8 @@ const TESTS = [
   ['lanedispatch', 'lane-dispatch-test.mjs'],
   ['lanemergeitself', 'lane-merge-itself-test.mjs'],
   ['lanecompletion', 'lane-completion-test.mjs'],
+  ['lanecompletionowner', 'lane-completion-owner-test.mjs'],
+  ['lanecompletionadopt', 'lane-completion-adopt-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -504,10 +506,10 @@ const SERIAL = new Set([
  * always runs.
  */
 const LANE_ONLY = new Set([
-  'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
-  'lanedamaged', 'lanehalfmade', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
-  'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice',
-  'lanestrand', 'pushgate'
+  'gate', 'lanecompletion', 'lanecompletionowner', 'lanecompletionadopt', 'lanecleared',
+  'conflict', 'lanedispatch', 'lanemergeitself', 'lanedamaged', 'lanehalfmade', 'laneproof',
+  'laneorphan', 'lanemergehold', 'promote', 'lanesleep', 'lanenevercopy', 'laneuntracked',
+  'lanevisitor', 'laneparked', 'laneledger', 'lanedevice', 'lanestrand', 'pushgate'
 ])
 const PASSES = passesFile()
 const plan = planRun(run, {
