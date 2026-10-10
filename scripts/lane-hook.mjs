@@ -326,7 +326,10 @@ function giveBack(repo) {
     // windowless; conhost --headless was tried first and silently never ran the child.
     // `/clear` (Claude Code's SessionEnd reason "clear") is the same pane carrying on, so
     // the engine keeps an unfinished lane's hold for the pane's next chat (releaseClaim).
-    const args = [ENGINE, 'release', '--session', session, '--repo', repo, ...(input.reason === 'clear' ? ['--cleared'] : [])]
+    // Any other SessionEnd may be the app ending the CLI to move the chat and reopening the
+    // same card in a new pane (`--closed`: kept only for a hold that names its card).
+    const end = event === 'end' ? [input.reason === 'clear' ? '--cleared' : '--closed'] : []
+    const args = [ENGINE, 'release', '--session', session, '--repo', repo, ...end]
     const win = process.platform === 'win32'
     const vbs = fileURLToPath(new URL('run-hidden.vbs', import.meta.url))
     spawn(
@@ -364,9 +367,12 @@ function holdCopy(repo, letter, visitor) {
   // `claim --prefer` for a copy somebody else holds is NOT a no-op: it hands the asker a
   // different lane, which can mean building a new copy. So a copy held by another chat, or
   // conflicted (never handed out), is left exactly as it is. The one hold that is
-  // inherited is the same pane's earlier chat after a /clear (what `claim` carries).
+  // inherited is the same pane's or card's earlier chat after it ended (what `claim`
+  // carries; where both name a card, the card decides).
   const pane = process.env.PF_PANE
-  const mine = row.heldBy === session || (Boolean(pane) && row.pane === pane && Boolean(row.ended))
+  const card = process.env.PF_CHAT
+  const place = card && row.chat ? row.chat === card : Boolean(pane) && row.pane === pane
+  const mine = row.heldBy === session || (place && Boolean(row.ended))
   if (!mine && (row.heldBy || row.conflicted)) return
   const r = lane(
     repo,

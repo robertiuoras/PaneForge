@@ -24,6 +24,10 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   ordinary claimed lane and its normal validation before `ready` (`node scripts/lane-parked-test.mjs`).
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`; `state.passed`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
+  "Same pane" includes the same card (`PF_CHAT`, PaneForge's chat id, unchanged when a failed
+  move reopens the card in a new pane); where both name a card, the card decides. An ended
+  card's unfinished hold is kept for it (`release --closed`, any SessionEnd but /clear) and
+  carried by its next chat's claim or first write; `--gone` frees it (`test:lanerepane`).
 - A prompt returning to its original letter checkout may relinquish an unused fallback
   only when both checkouts are empty and the original is unheld. Startup can reclaim an
   empty former app owner's checkout only when the all-copy native inventory includes the

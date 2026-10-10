@@ -237,6 +237,7 @@ const TESTS = [
   // /clear keeps an unfinished lane for the pane's next chat; lane folders match in any case;
   // the pool skips a recovery lane whose folder is broken (2026-10-04).
   ['lanestrand', 'lane-strand-test.mjs'],
+  ['lanerepane', 'lane-repane-test.mjs'],
   // A lane claimed by hand from another repo's chat is given back at /clear and carried by
   // the pane's next chat (2026-10-09).
   ['laneclaimend', 'lane-claim-end-test.mjs'],
@@ -512,7 +513,7 @@ const LANE_ONLY = new Set([
   'gate', 'lanecompletion', 'lanecleared', 'conflict', 'lanedispatch', 'lanemergeitself',
   'lanedamaged', 'lanehalfmade', 'laneproof', 'laneorphan', 'lanemergehold', 'promote', 'lanesleep',
   'lanenevercopy', 'laneuntracked', 'lanevisitor', 'laneparked', 'laneledger', 'lanedevice',
-  'lanestrand', 'pushgate'
+  'lanestrand', 'lanerepane', 'pushgate'
 ])
 const PASSES = passesFile()
 const plan = planRun(run, {
